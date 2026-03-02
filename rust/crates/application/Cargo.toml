@@ -1,0 +1,15 @@
+[package]
+name = "sre_application"
+version = "0.1.0"
+edition = "2024"
+license = "ISC"
+
+[dependencies]
+async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+sre_shared = { path = "../shared" }
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "sync"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

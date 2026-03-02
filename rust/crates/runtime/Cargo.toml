@@ -1,0 +1,8 @@
+[package]
+name = "sre_runtime"
+version = "0.1.0"
+edition = "2024"
+license = "ISC"
+
+[dependencies]
+thiserror = "2"

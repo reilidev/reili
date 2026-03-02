@@ -204,7 +204,7 @@ const modelSettings: ModelSettings = {
 		summary: "auto",
 	},
 	text: {
-		verbosity: "low",
+		verbosity: "medium",
 	},
 	parallelToolCalls: true,
 };

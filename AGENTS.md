@@ -15,7 +15,7 @@ The SRE AI Agent is a service that responds to Slack alerts and GitHub activity 
 
 ```
 src/                                # Root implementation directory for the SRE Agent
-├── app/                            # Application bootstrap and runtime wiring
+├── runtime/                        # Application bootstrap and runtime wiring
 │   ├── bootstrap/                  # Shared dependency construction and DI helpers
 │   ├── config/                     # Environment/config loading and validation
 │   ├── ingress/                    # Ingress app entrypoint (Slack Events API receiver)

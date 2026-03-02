@@ -1,0 +1,25 @@
+[package]
+name = "sre_adapters"
+version = "0.1.0"
+edition = "2024"
+license = "ISC"
+
+[dependencies]
+async-trait = "0.1"
+axum = { version = "0.8", default-features = false }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["clock"] }
+jsonwebtoken = "9"
+octocrab = "0.39"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+ring = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sre_shared = { path = "../shared" }
+tokio = { version = "1", features = ["macros", "rt", "sync", "test-util", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+
+[dev-dependencies]
+serde_json = "1"
+wiremock = "0.6"

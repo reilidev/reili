@@ -55,21 +55,9 @@ export function loadIngressConfig(): IngressConfig {
 		}),
 		workerBaseUrl: readRequiredEnv("WORKER_BASE_URL"),
 		workerInternalToken: readRequiredEnv("WORKER_INTERNAL_TOKEN"),
-		jobMaxRetry: readPositiveInt({
-			name: "JOB_MAX_RETRY",
-			value: process.env.JOB_MAX_RETRY,
-			defaultValue: DEFAULT_JOB_MAX_RETRY,
-		}),
-		jobBackoffMs: readPositiveInt({
-			name: "JOB_BACKOFF_MS",
-			value: process.env.JOB_BACKOFF_MS,
-			defaultValue: DEFAULT_JOB_BACKOFF_MS,
-		}),
-		workerDispatchTimeoutMs: readPositiveInt({
-			name: "WORKER_DISPATCH_TIMEOUT_MS",
-			value: process.env.WORKER_DISPATCH_TIMEOUT_MS,
-			defaultValue: DEFAULT_WORKER_DISPATCH_TIMEOUT_MS,
-		}),
+		jobMaxRetry: DEFAULT_JOB_MAX_RETRY,
+		jobBackoffMs: DEFAULT_JOB_BACKOFF_MS,
+		workerDispatchTimeoutMs: DEFAULT_WORKER_DISPATCH_TIMEOUT_MS,
 	};
 }
 
@@ -83,21 +71,9 @@ export function loadWorkerConfig(): WorkerConfig {
 			defaultValue: DEFAULT_WORKER_PORT,
 		}),
 		workerInternalToken: readRequiredEnv("WORKER_INTERNAL_TOKEN"),
-		workerConcurrency: readPositiveInt({
-			name: "WORKER_CONCURRENCY",
-			value: process.env.WORKER_CONCURRENCY,
-			defaultValue: DEFAULT_WORKER_CONCURRENCY,
-		}),
-		jobMaxRetry: readPositiveInt({
-			name: "JOB_MAX_RETRY",
-			value: process.env.JOB_MAX_RETRY,
-			defaultValue: DEFAULT_JOB_MAX_RETRY,
-		}),
-		jobBackoffMs: readPositiveInt({
-			name: "JOB_BACKOFF_MS",
-			value: process.env.JOB_BACKOFF_MS,
-			defaultValue: DEFAULT_JOB_BACKOFF_MS,
-		}),
+		workerConcurrency: DEFAULT_WORKER_CONCURRENCY,
+		jobMaxRetry: DEFAULT_JOB_MAX_RETRY,
+		jobBackoffMs: DEFAULT_JOB_BACKOFF_MS,
 		github: readGitHubAppConfig(),
 	};
 }

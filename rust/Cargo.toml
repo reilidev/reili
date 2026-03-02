@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "crates/shared",
+    "crates/runtime",
+    "crates/adapters",
+    "crates/application",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "ISC"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
