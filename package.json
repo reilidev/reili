@@ -14,7 +14,8 @@
     "dev": "pnpm dev:ingress",
     "start": "pnpm start:ingress",
     "typecheck": "tsc --noEmit",
-    "format": "biome check --write src"
+    "format": "biome check --write src",
+    "lint:deps": "depcruise --config .dependency-cruiser.js src"
   },
   "keywords": [],
   "author": "",
@@ -36,6 +37,7 @@
     "@biomejs/biome": "2.4.3",
     "@types/express": "5.0.6",
     "@types/node": "24.4.0",
+    "dependency-cruiser": "17.3.8",
     "nodemon": "3.1.13",
     "tsx": "4.21.0",
     "typescript": "5.9.3",

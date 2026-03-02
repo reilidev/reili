@@ -1,4 +1,4 @@
-import type { AlertContext } from "../../capabilities/core/alert-intake/extract-alert-context";
+import type { AlertContext } from "../../shared/types/alert-context";
 import type { InvestigationResult } from "../../shared/types/investigation";
 import type { LlmUsageSnapshot } from "../../shared/types/investigation-llm-telemetry";
 import type { InvestigationContext } from "./investigation-context";

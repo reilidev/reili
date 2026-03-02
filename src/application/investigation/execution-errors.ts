@@ -1,10 +1,10 @@
-import { createEmptyLlmUsageSnapshot } from "../../capabilities/integration/investigation/build-llm-telemetry";
 import { isCoordinatorRunFailedError } from "../../ports/outbound/investigation-coordinator-runner";
 import { isSynthesizerRunFailedError } from "../../ports/outbound/investigation-synthesizer-runner";
 import type {
 	InvestigationLlmTelemetry,
 	LlmUsageSnapshot,
 } from "../../shared/types/investigation-llm-telemetry";
+import { createEmptyLlmUsageSnapshot } from "./services/build-llm-telemetry";
 
 const INVESTIGATION_EXECUTION_FAILED_ERROR_CODE =
 	"INVESTIGATION_EXECUTION_FAILED";

@@ -1,5 +1,4 @@
 import { type Agent, RunContext, run } from "@openai/agents";
-import type { AlertContext } from "../../../capabilities/core/alert-intake/extract-alert-context";
 import type { InvestigationContext } from "../../../ports/outbound/investigation-context";
 import {
 	CoordinatorRunFailedError,
@@ -12,6 +11,7 @@ import {
 	type InvestigationProgressEventCallback,
 } from "../../../ports/outbound/investigation-progress-event";
 import type { Logger } from "../../../shared/observability/logger";
+import type { AlertContext } from "../../../shared/types/alert-context";
 import { mapOpenAiUsageToLlmUsageSnapshot } from "./openai-llm-usage-mapper";
 import { mapOpenAiRunStreamEventToProgressEvent } from "./openai-progress-event-mapper";
 import {

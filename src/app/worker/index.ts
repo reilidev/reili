@@ -5,12 +5,12 @@ import {
 	workerInternalJobPath,
 } from "../../adapters/inbound/http/worker-internal-job-routes";
 import { InMemoryJobQueue } from "../../adapters/outbound/queue/in-memory-job-queue";
+import { ProcessAlertInvestigationJobUseCase } from "../../application/investigation/process-alert-investigation-job";
+import { StartInvestigationWorkerRunnerUseCase } from "../../application/start-investigation-worker-runner";
 import type { InvestigationJobQueuePort } from "../../ports/outbound/investigation-job-queue";
 import { createLogger } from "../../shared/observability/logger";
 import type { InvestigationJob } from "../../shared/types/investigation-job";
 import { toErrorMessage } from "../../shared/utils/to-error-message";
-import { ProcessAlertInvestigationJobUseCase } from "../../usecases/investigation/process-alert-investigation-job";
-import { StartInvestigationWorkerRunnerUseCase } from "../../usecases/start-investigation-worker-runner";
 import { buildWorkerRuntimeDeps } from "../bootstrap/build-shared-deps";
 import { loadWorkerConfig } from "../config/env";
 

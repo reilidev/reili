@@ -1,5 +1,4 @@
 import { type Agent, RunContext, run } from "@openai/agents";
-import type { AlertContext } from "../../../capabilities/core/alert-intake/extract-alert-context";
 import { SYNTHESIZER_PROGRESS_OWNER_ID } from "../../../ports/outbound/investigation-progress-event";
 import {
 	type InvestigationSynthesizerRunnerPort,
@@ -7,6 +6,7 @@ import {
 	SynthesizerRunFailedError,
 	type SynthesizerRunReport,
 } from "../../../ports/outbound/investigation-synthesizer-runner";
+import type { AlertContext } from "../../../shared/types/alert-context";
 import type { InvestigationResult } from "../../../shared/types/investigation";
 import { mapOpenAiUsageToLlmUsageSnapshot } from "./openai-llm-usage-mapper";
 import { mapOpenAiRunStreamEventToProgressEvent } from "./openai-progress-event-mapper";

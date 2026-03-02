@@ -1,10 +1,3 @@
-import {
-	type AlertContext,
-	extractAlertContext,
-} from "../../capabilities/core/alert-intake/extract-alert-context";
-import { buildInvestigationLlmTelemetry } from "../../capabilities/integration/investigation/build-llm-telemetry";
-import { CoordinatorProgressEventHandler } from "../../capabilities/integration/investigation/coordinator-progress-event-handler";
-import { createInvestigationProgressStreamSessionFactory } from "../../capabilities/integration/investigation/investigation-progress-stream-session";
 import type {
 	InvestigationContext,
 	InvestigationResources,
@@ -26,16 +19,21 @@ import type { SlackProgressStreamPort } from "../../ports/outbound/slack-progres
 import type { SlackThreadHistoryPort } from "../../ports/outbound/slack-thread-history";
 import type { SlackThreadReplyPort } from "../../ports/outbound/slack-thread-reply";
 import type { Logger } from "../../shared/observability/logger";
+import type { AlertContext } from "../../shared/types/alert-context";
 import type {
 	InvestigationJobPayload,
 	InvestigationJobType,
 } from "../../shared/types/investigation-job";
 import type { InvestigationLlmTelemetry } from "../../shared/types/investigation-llm-telemetry";
 import { toErrorMessage } from "../../shared/utils/to-error-message";
+import { extractAlertContext } from "../alert-intake/extract-alert-context";
 import {
 	createInvestigationExecutionFailedError,
 	resolveInvestigationFailureError,
 } from "./execution-errors";
+import { buildInvestigationLlmTelemetry } from "./services/build-llm-telemetry";
+import { CoordinatorProgressEventHandler } from "./services/coordinator-progress-event-handler";
+import { createInvestigationProgressStreamSessionFactory } from "./services/investigation-progress-stream-session";
 import { SlackThreadContextLoader } from "./slack-thread-context-loader";
 
 const INVESTIGATION_TIMEOUT_MS = 1200 * 1000;

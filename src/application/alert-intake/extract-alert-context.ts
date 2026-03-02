@@ -1,10 +1,5 @@
-import type { SlackThreadMessage } from "../../../shared/types/slack-thread-message";
-
-export interface AlertContext {
-	rawText: string;
-	triggerMessageText: string;
-	threadTranscript: string;
-}
+import type { AlertContext } from "../../shared/types/alert-context";
+import type { SlackThreadMessage } from "../../shared/types/slack-thread-message";
 
 export interface ExtractAlertContextInput {
 	triggerMessageText: string;

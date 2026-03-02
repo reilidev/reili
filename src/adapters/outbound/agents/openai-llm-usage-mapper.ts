@@ -1,5 +1,5 @@
 import type { Usage } from "@openai/agents";
-import { createEmptyLlmUsageSnapshot } from "../../../capabilities/integration/investigation/build-llm-telemetry";
+import { createEmptyLlmUsageSnapshot } from "../../../application/investigation/services/build-llm-telemetry";
 import type { LlmUsageSnapshot } from "../../../shared/types/investigation-llm-telemetry";
 
 export function mapOpenAiUsageToLlmUsageSnapshot(
