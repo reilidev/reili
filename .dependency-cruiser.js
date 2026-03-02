@@ -35,6 +35,18 @@ module.exports = {
 				path: "^src/application",
 			},
 		},
+		{
+			name: "no-shared-to-other-layers",
+			comment:
+				"shared must remain independent from app/application/ports/adapters layers",
+			severity: "error",
+			from: {
+				path: "^src/shared",
+			},
+			to: {
+				path: "^src/(app|application|ports|adapters)",
+			},
+		},
 	],
 	options: {
 		doNotFollow: {

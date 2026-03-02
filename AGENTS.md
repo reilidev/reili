@@ -16,14 +16,15 @@ The SRE AI Agent is a service that responds to Slack alerts and GitHub activity 
 ```
 src/                                # Root implementation directory for the SRE Agent
 ├── app/                            # Application bootstrap and runtime wiring
+│   ├── bootstrap/                  # Shared dependency construction and DI helpers
 │   ├── config/                     # Environment/config loading and validation
-│   └── server/                     # Web server startup and endpoint exposure
-├── usecases/                       # Flow control for end-to-end use cases
-│   └── incident-handler/           # Planning and execution of alert investigation workflow
-├── capabilities/                   # Business logic split by functional capability
-│   ├── alert-intake/               # Intake and normalization of Slack/Datadog alerts
-│   ├── investigation/              # Analysis of logs, metrics, and GitHub activity
-│   └── response/                   # Building structured cause/remediation responses
+│   ├── ingress/                    # Ingress app entrypoint (Slack Events API receiver)
+│   └── worker/                     # Worker app entrypoint (job processing runtime)
+├── application/                    # Application layer orchestration and workflow rules
+│   ├── alert-intake/               # Alert context normalization for investigation flow
+│   ├── investigation/              # Investigation execution orchestration
+│   │   └── services/               # Investigation-specific application services
+│   └── enqueue/start-*             # Job enqueue and worker runner orchestration
 ├── ports/                          # Contracts abstracting external boundaries from core logic
 │   ├── inbound/                    # Input-side interfaces (event intake contracts)
 │   └── outbound/                   # Output-side interfaces (external API contracts)
@@ -34,11 +35,15 @@ src/                                # Root implementation directory for the SRE 
 │   └── outbound/                   # Integrations for investigation and notification delivery
 │       ├── datadog/                # Datadog API client integration
 │       ├── slack/                  # Slack message and thread reply integration
-│       └── agents/                 # OpenAPI Agents SDK integration
+│       ├── github/                 # GitHub API integration
+│       ├── queue/                  # Job queue adapter implementations
+│       ├── worker/                 # Worker dispatch adapter implementations
+│       └── agents/                 # OpenAI Agents SDK integration
 └── shared/                         # Reusable cross-cutting components
     ├── types/                      # Shared domain/DTO type definitions
     ├── errors/                     # Common error types and exception mapping
     ├── observability/              # Logging, metrics, and tracing helpers
+    ├── validation/                 # Shared schema validation
     └── utils/                      # Generic utility helpers
 ```
 
@@ -55,7 +60,7 @@ src/                                # Root implementation directory for the SRE 
 
 * Write tests together with implementation changes.
 * Place test files in the same directory as the implementation and name them `*.test.ts`.
-* When you modify the code, run `pnpm test` to format it.
+* When you modify the code, run `pnpm test`.
 
 ## Format
 
@@ -63,4 +68,4 @@ When you modify the code, run `pnpm format` to format it.
 
 ## Linting
 
-When you modify the code, `lint:deps` to lint dependencies.
+When you modify the code, run `pnpm lint:deps` to lint layer dependencies.
