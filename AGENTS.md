@@ -60,3 +60,7 @@ src/                                # Root implementation directory for the SRE 
 ## Format
 
 When you modify the code, run `pnpm format` to format it.
+
+## Linting
+
+When you modify the code, `lint:deps` to lint dependencies.
