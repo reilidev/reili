@@ -2,12 +2,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use sre_shared::ports::outbound::slack_progress_stream::{
+    SlackMarkdownTextChunk, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
+};
 use sre_shared::ports::outbound::{
     AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort, SlackThreadReplyInput,
     SlackThreadReplyPort, StartSlackProgressStreamInput, StopSlackProgressStreamInput,
-};
-use sre_shared::ports::outbound::slack_progress_stream::{
-    SlackMarkdownTextChunk, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
 };
 
 use crate::investigation::logger::InvestigationLogger;
@@ -30,7 +30,8 @@ pub struct InvestigationProgressTaskUpdateInput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvestigationProgressReasoningInput {
     pub owner_id: String,
-    pub summary_text: String,
+    pub title: String,
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,10 +148,9 @@ impl SlackInvestigationProgressStreamSession {
         let task_ownership_key = build_task_ownership_key(&input.owner_id, &input.task_id);
         if let Some(existing_scope_id) =
             self.reasoning_scope_id_by_task_key.get(&task_ownership_key)
+            && self.reasoning_scope_by_id.contains_key(existing_scope_id)
         {
-            if self.reasoning_scope_by_id.contains_key(existing_scope_id) {
-                return existing_scope_id.clone();
-            }
+            return existing_scope_id.clone();
         }
 
         if let Some(active_scope_id) = self
@@ -177,10 +177,9 @@ impl SlackInvestigationProgressStreamSession {
         let task_ownership_key = build_task_ownership_key(&input.owner_id, &input.task_id);
         if let Some(existing_scope_id) =
             self.reasoning_scope_id_by_task_key.get(&task_ownership_key)
+            && self.reasoning_scope_by_id.contains_key(existing_scope_id)
         {
-            if self.reasoning_scope_by_id.contains_key(existing_scope_id) {
-                return Some(existing_scope_id.clone());
-            }
+            return Some(existing_scope_id.clone());
         }
 
         self.input.logger.warn(
@@ -631,14 +630,14 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
     }
 
     async fn post_reasoning(&mut self, input: InvestigationProgressReasoningInput) {
-        let Some(formatted_summary) = parse_reasoning_summary(&input.summary_text) else {
+        if input.title.trim().is_empty() {
             return;
-        };
+        }
 
         self.complete_active_reasoning_scope_if_idle(&input.owner_id)
             .await;
 
-        let scope_id = self.create_reasoning_scope(&input.owner_id, &formatted_summary.title);
+        let scope_id = self.create_reasoning_scope(&input.owner_id, &input.title);
         self.active_reasoning_scope_id_by_owner_id
             .insert(input.owner_id, scope_id.clone());
 
@@ -646,7 +645,7 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
             self.append_reasoning_scope_update(
                 &scope,
                 ReasoningScopeStatus::InProgress,
-                formatted_summary.details,
+                normalize_reasoning_summary(&input.summary),
             )
             .await;
         }
@@ -796,36 +795,13 @@ fn build_tool_detail_line(tool_name: &str) -> String {
     format!("{tool_name}\n")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ParsedReasoningSummary {
-    title: String,
-    details: Option<String>,
-}
-
-fn parse_reasoning_summary(summary_text: &str) -> Option<ParsedReasoningSummary> {
-    let trimmed_summary = summary_text.trim();
+fn normalize_reasoning_summary(summary: &str) -> Option<String> {
+    let trimmed_summary = summary.trim();
     if trimmed_summary.is_empty() {
         return None;
     }
 
-    let lines: Vec<String> = trimmed_summary
-        .split('\n')
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(ToString::to_string)
-        .collect();
-    if lines.is_empty() {
-        return None;
-    }
-
-    let title = lines[0].clone();
-    let details = if lines.len() >= 2 {
-        Some(format!("{}\n", lines[1]))
-    } else {
-        None
-    };
-
-    Some(ParsedReasoningSummary { title, details })
+    Some(format!("{trimmed_summary}\n"))
 }
 
 fn is_permanent_stream_append_error(error_message: &str) -> bool {
@@ -833,6 +809,7 @@ fn is_permanent_stream_append_error(error_message: &str) -> bool {
     lower_message.contains("invalid_ts")
         || lower_message.contains("message_not_found")
         || lower_message.contains("channel_not_found")
+        || lower_message.contains("invalid_arguments")
 }
 
 fn is_message_not_in_streaming_state_error(error_message: &str) -> bool {
@@ -848,18 +825,19 @@ mod tests {
 
     use async_trait::async_trait;
     use sre_shared::errors::PortError;
+    use sre_shared::ports::outbound::slack_progress_stream::SlackTaskUpdateStatus;
     use sre_shared::ports::outbound::{
         AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort,
         SlackThreadReplyInput, SlackThreadReplyPort, StartSlackProgressStreamInput,
         StartSlackProgressStreamOutput, StopSlackProgressStreamInput,
     };
-    use sre_shared::ports::outbound::slack_progress_stream::SlackTaskUpdateStatus;
 
     use super::{
         CreateInvestigationProgressStreamSessionFactoryInput,
-        CreateInvestigationProgressStreamSessionInput, InvestigationProgressReasoningInput,
+        CreateInvestigationProgressStreamSessionInput,
+        InvestigationProgressMessageOutputCreatedInput, InvestigationProgressReasoningInput,
         InvestigationProgressStreamSessionFactory,
-        create_investigation_progress_stream_session_factory,
+        create_investigation_progress_stream_session_factory, is_permanent_stream_append_error,
     };
     use crate::investigation::logger::InvestigationLogger;
 
@@ -1062,7 +1040,8 @@ mod tests {
         session
             .post_reasoning(InvestigationProgressReasoningInput {
                 owner_id: "coordinator".to_string(),
-                summary_text: "Collect evidence\nInspect logs".to_string(),
+                title: "Collect evidence".to_string(),
+                summary: "Inspect logs".to_string(),
             })
             .await;
         session.stop_as_succeeded().await;
@@ -1129,7 +1108,8 @@ mod tests {
         session
             .post_reasoning(InvestigationProgressReasoningInput {
                 owner_id: "coordinator".to_string(),
-                summary_text: "Collect evidence".to_string(),
+                title: "Collect evidence".to_string(),
+                summary: String::new(),
             })
             .await;
         session.stop_as_succeeded().await;
@@ -1153,5 +1133,84 @@ mod tests {
             .iter()
             .any(|(message, _)| message == "slack_stream_fallback_mode");
         assert!(fallback_logged);
+    }
+
+    #[tokio::test]
+    async fn completes_scope_with_reasoning_and_message_output_created_events_only() {
+        let stream_port = Arc::new(MockSlackProgressStreamPort::new());
+        stream_port.push_start_response(Ok(StartSlackProgressStreamOutput {
+            stream_ts: "stream-1".to_string(),
+        }));
+        stream_port.push_append_response(Ok(()));
+        stream_port.push_append_response(Ok(()));
+        stream_port.push_stop_response(Ok(()));
+
+        let reply_port = Arc::new(MockSlackThreadReplyPort::default());
+        let logger = Arc::new(MockLogger::default());
+
+        let factory = create_investigation_progress_stream_session_factory(
+            CreateInvestigationProgressStreamSessionFactoryInput {
+                slack_stream_reply_port: Arc::clone(&stream_port)
+                    as Arc<dyn SlackProgressStreamPort>,
+                reply_port: Arc::clone(&reply_port) as Arc<dyn SlackThreadReplyPort>,
+                logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+            },
+        );
+        let mut session =
+            factory.create_for_thread(CreateInvestigationProgressStreamSessionInput {
+                channel: CHANNEL.to_string(),
+                thread_ts: THREAD_TS.to_string(),
+                recipient_user_id: RECIPIENT_USER_ID.to_string(),
+                recipient_team_id: None,
+            });
+
+        session.start().await;
+        session
+            .post_reasoning(InvestigationProgressReasoningInput {
+                owner_id: "coordinator".to_string(),
+                title: "Collect evidence".to_string(),
+                summary: "Inspect logs".to_string(),
+            })
+            .await;
+        session
+            .post_message_output_created(InvestigationProgressMessageOutputCreatedInput {
+                owner_id: "coordinator".to_string(),
+            })
+            .await;
+        session.stop_as_succeeded().await;
+
+        let append_calls = stream_port.append_calls();
+        assert_eq!(append_calls.len(), 2);
+
+        let initial_chunks = append_calls[0].chunks.clone().unwrap_or_default();
+        assert_eq!(initial_chunks.len(), 1);
+        match &initial_chunks[0] {
+            SlackAnyChunk::TaskUpdate(chunk) => {
+                assert_eq!(chunk.title, "Collect evidence");
+                assert_eq!(chunk.status, SlackTaskUpdateStatus::InProgress);
+                assert_eq!(chunk.details.as_deref(), Some("Inspect logs\n"));
+                assert_eq!(chunk.output, None);
+            }
+            _ => panic!("expected task update chunk"),
+        }
+
+        let completed_chunks = append_calls[1].chunks.clone().unwrap_or_default();
+        assert_eq!(completed_chunks.len(), 1);
+        match &completed_chunks[0] {
+            SlackAnyChunk::TaskUpdate(chunk) => {
+                assert_eq!(chunk.title, "Collect evidence");
+                assert_eq!(chunk.status, SlackTaskUpdateStatus::Complete);
+                assert_eq!(chunk.details, None);
+                assert_eq!(chunk.output.as_deref(), Some("done"));
+            }
+            _ => panic!("expected task update chunk"),
+        }
+    }
+
+    #[test]
+    fn treats_invalid_arguments_as_permanent_append_error() {
+        assert!(is_permanent_stream_append_error(
+            "Slack API returned error: method=chat.appendStream error=invalid_arguments"
+        ));
     }
 }

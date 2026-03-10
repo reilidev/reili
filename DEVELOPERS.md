@@ -56,13 +56,13 @@ Run two processes in separate terminals.
 Terminal 1 (worker):
 
 ```bash
-pnpm dev:worker
+bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p sre_runtime -- --mode worker"'
 ```
 
 Terminal 2 (ingress):
 
 ```bash
-pnpm dev:ingress
+bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p sre_runtime -- --mode ingress"'
 ```
 
 Production-like start:

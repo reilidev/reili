@@ -17,7 +17,6 @@ pub struct SlackProgressStreamAdapter {
 }
 
 impl SlackProgressStreamAdapter {
-    #[must_use]
     pub fn new(client: Arc<SlackWebApiClient>) -> Self {
         Self { client }
     }
@@ -139,9 +138,12 @@ mod tests {
     use std::sync::Arc;
 
     use serde_json::json;
+    use sre_shared::ports::outbound::slack_progress_stream::{
+        SlackTaskUpdateChunk, SlackTaskUpdateStatus,
+    };
     use sre_shared::ports::outbound::{
-        AppendSlackProgressStreamInput, SlackProgressStreamPort, StartSlackProgressStreamInput,
-        StopSlackProgressStreamInput,
+        AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort,
+        StartSlackProgressStreamInput, StopSlackProgressStreamInput,
     };
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -252,6 +254,48 @@ mod tests {
             })
             .await
             .expect("stop stream");
+    }
+
+    #[tokio::test]
+    async fn append_task_update_omits_none_optional_fields() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat.appendStream"))
+            .and(body_json(json!({
+                "channel": "C123",
+                "ts": "1710000000.000100",
+                "chunks": [
+                    {
+                        "type": "task_update",
+                        "id": "reasoning-1",
+                        "title": "Collect evidence",
+                        "status": "in_progress",
+                    }
+                ],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true
+            })))
+            .mount(&server)
+            .await;
+
+        let adapter = SlackProgressStreamAdapter::new(Arc::new(create_client(&server.uri())));
+        adapter
+            .append(AppendSlackProgressStreamInput {
+                channel: "C123".to_string(),
+                stream_ts: "1710000000.000100".to_string(),
+                markdown_text: None,
+                chunks: Some(vec![SlackAnyChunk::TaskUpdate(SlackTaskUpdateChunk {
+                    id: "reasoning-1".to_string(),
+                    title: "Collect evidence".to_string(),
+                    status: SlackTaskUpdateStatus::InProgress,
+                    details: None,
+                    output: None,
+                    sources: None,
+                })]),
+            })
+            .await
+            .expect("append stream");
     }
 
     fn create_client(base_url: &str) -> SlackWebApiClient {

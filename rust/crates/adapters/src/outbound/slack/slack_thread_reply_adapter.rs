@@ -13,7 +13,6 @@ pub struct SlackThreadReplyAdapter {
 }
 
 impl SlackThreadReplyAdapter {
-    #[must_use]
     pub fn new(client: Arc<SlackWebApiClient>) -> Self {
         Self { client }
     }

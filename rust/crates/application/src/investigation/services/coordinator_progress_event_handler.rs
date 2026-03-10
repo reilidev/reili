@@ -17,6 +17,7 @@ pub struct CoordinatorProgressEventHandler {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
@@ -42,8 +43,8 @@ mod tests {
 
         async fn post_reasoning(&mut self, input: InvestigationProgressReasoningInput) {
             self.events.lock().expect("lock events").push(format!(
-                "reasoning:{}:{}",
-                input.owner_id, input.summary_text
+                "reasoning:{}:{}:{}",
+                input.owner_id, input.title, input.summary
             ));
         }
 
@@ -91,7 +92,8 @@ mod tests {
             .handle(InvestigationProgressEventInput {
                 owner_id: "coordinator".to_string(),
                 event: InvestigationProgressEvent::ReasoningSummaryCreated {
-                    summary_text: "Collect evidence".to_string(),
+                    title: "Collect evidence".to_string(),
+                    summary: "Inspect logs".to_string(),
                 },
             })
             .await;
@@ -123,7 +125,7 @@ mod tests {
         assert_eq!(
             events.lock().expect("lock events").clone(),
             vec![
-                "reasoning:coordinator:Collect evidence".to_string(),
+                "reasoning:coordinator:Collect evidence:Inspect logs".to_string(),
                 "tool_started:coordinator:task-1".to_string(),
                 "tool_completed:coordinator:task-1".to_string(),
                 "message_output:coordinator".to_string(),
@@ -146,7 +148,8 @@ mod tests {
             .handle(InvestigationProgressEventInput {
                 owner_id: "coordinator".to_string(),
                 event: InvestigationProgressEvent::ReasoningSummaryCreated {
-                    summary_text: "  ".to_string(),
+                    title: "  ".to_string(),
+                    summary: "Inspect logs".to_string(),
                 },
             })
             .await;
@@ -156,7 +159,6 @@ mod tests {
 }
 
 impl CoordinatorProgressEventHandler {
-    #[must_use]
     pub fn new(input: CoordinatorProgressEventHandlerInput) -> Self {
         Self {
             progress_session: input.progress_session,
@@ -165,10 +167,11 @@ impl CoordinatorProgressEventHandler {
 
     pub async fn handle(&self, input: InvestigationProgressEventInput) {
         match input.event {
-            InvestigationProgressEvent::ReasoningSummaryCreated { summary_text } => {
+            InvestigationProgressEvent::ReasoningSummaryCreated { title, summary } => {
                 self.post_reasoning(InvestigationProgressReasoningInput {
                     owner_id: input.owner_id,
-                    summary_text,
+                    title,
+                    summary,
                 })
                 .await;
             }
@@ -198,7 +201,7 @@ impl CoordinatorProgressEventHandler {
     }
 
     async fn post_reasoning(&self, input: InvestigationProgressReasoningInput) {
-        if input.summary_text.trim().is_empty() {
+        if input.title.trim().is_empty() {
             return;
         }
 

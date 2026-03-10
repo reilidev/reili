@@ -17,7 +17,6 @@ pub struct SlackThreadHistoryAdapter {
 }
 
 impl SlackThreadHistoryAdapter {
-    #[must_use]
     pub fn new(client: Arc<SlackWebApiClient>) -> Self {
         Self { client }
     }

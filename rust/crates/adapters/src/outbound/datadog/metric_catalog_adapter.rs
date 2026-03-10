@@ -14,7 +14,6 @@ pub struct DatadogMetricCatalogAdapter {
 }
 
 impl DatadogMetricCatalogAdapter {
-    #[must_use]
     pub fn new(http_client: Arc<DatadogHttpClient>) -> Self {
         Self { http_client }
     }

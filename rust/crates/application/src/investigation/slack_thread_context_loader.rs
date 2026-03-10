@@ -32,7 +32,6 @@ pub struct SlackThreadContextLoader {
 }
 
 impl SlackThreadContextLoader {
-    #[must_use]
     pub fn new(deps: SlackThreadContextLoaderDeps) -> Self {
         Self { deps }
     }

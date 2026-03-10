@@ -135,7 +135,7 @@ fn parse_signature_header(signature: &str) -> Result<Vec<u8>, PortError> {
 }
 
 fn decode_hex(value: &str) -> Result<Vec<u8>, PortError> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return Err(PortError::new("Slack signature header is not valid hex"));
     }
 

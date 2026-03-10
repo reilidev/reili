@@ -9,7 +9,7 @@ pub const SYNTHESIZER_PROGRESS_OWNER_ID: &str = "synthesizer";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InvestigationProgressEvent {
-    ReasoningSummaryCreated { summary_text: String },
+    ReasoningSummaryCreated { title: String, summary: String },
     ToolCallStarted { task_id: String, title: String },
     ToolCallCompleted { task_id: String, title: String },
     MessageOutputCreated,

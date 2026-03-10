@@ -248,7 +248,8 @@ async fn run_investigation(
         session
             .post_reasoning(InvestigationProgressReasoningInput {
                 owner_id: SYNTHESIZER_PROGRESS_OWNER_ID.to_string(),
-                summary_text: "Reporting".to_string(),
+                title: "Reporting".to_string(),
+                summary: String::new(),
             })
             .await;
     }
@@ -468,9 +469,8 @@ mod tests {
         GithubIssueSearchResultItem, GithubPullRequestDiff, GithubPullRequestParams,
         GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
         GithubRepositoryContentParams, GithubSearchParams, GithubSearchPort,
-        InvestigationCoordinatorRunnerPort, InvestigationResources,
-        InvestigationSynthesizerRunnerPort, InvestigationRuntime, RunCoordinatorInput,
-        RunSynthesizerInput,
+        InvestigationCoordinatorRunnerPort, InvestigationResources, InvestigationRuntime,
+        InvestigationSynthesizerRunnerPort, RunCoordinatorInput, RunSynthesizerInput,
         SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput,
         SlackThreadReplyPort, StartSlackProgressStreamInput, StartSlackProgressStreamOutput,
         SynthesizerRunReport,

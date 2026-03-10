@@ -1,0 +1,755 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use async_trait::async_trait;
+use sre_shared::errors::PortError;
+use sre_shared::ports::outbound::{
+    CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailStatus,
+    SlackThreadReplyInput, SlackThreadReplyPort,
+};
+use sre_shared::types::{InvestigationJob, InvestigationJobType, SlackMessage};
+use tokio::task::spawn;
+use tokio::time::sleep;
+
+use crate::investigation::{
+    ExecuteInvestigationJobError, InvestigationLogger, ProcessAlertInvestigationJobUseCase,
+};
+
+const IDLE_WAIT_MS: u64 = 150;
+
+#[async_trait]
+pub trait AlertInvestigationJobProcessorPort: Send + Sync {
+    async fn handle(&self, job: InvestigationJob) -> Result<(), ExecuteInvestigationJobError>;
+}
+
+#[async_trait]
+impl AlertInvestigationJobProcessorPort for ProcessAlertInvestigationJobUseCase {
+    async fn handle(&self, job: InvestigationJob) -> Result<(), ExecuteInvestigationJobError> {
+        ProcessAlertInvestigationJobUseCase::handle(self, job).await
+    }
+}
+
+pub struct StartInvestigationWorkerRunnerUseCaseDeps {
+    pub job_queue: Arc<InvestigationJobQueuePort>,
+    pub alert_investigation_processor: Arc<dyn AlertInvestigationJobProcessorPort>,
+    pub slack_reply_port: Arc<dyn SlackThreadReplyPort>,
+    pub logger: Arc<dyn InvestigationLogger>,
+    pub worker_concurrency: u32,
+    pub job_max_retry: u32,
+    pub job_backoff_ms: u64,
+}
+
+pub struct StartInvestigationWorkerRunnerUseCase {
+    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+    is_running: Arc<AtomicBool>,
+}
+
+impl StartInvestigationWorkerRunnerUseCase {
+    pub fn new(deps: StartInvestigationWorkerRunnerUseCaseDeps) -> Self {
+        Self {
+            deps: Arc::new(deps),
+            is_running: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn start(&self) {
+        if self.is_running.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        if self.deps.worker_concurrency == 0 {
+            self.is_running.store(false, Ordering::SeqCst);
+            return;
+        }
+
+        for worker_index in 0..self.deps.worker_concurrency {
+            spawn(run_investigation_worker_loop(WorkerLoopInput {
+                deps: Arc::clone(&self.deps),
+                is_running: Arc::clone(&self.is_running),
+                worker_index,
+            }));
+        }
+    }
+
+    pub fn stop(&self) {
+        self.is_running.store(false, Ordering::SeqCst);
+    }
+}
+
+struct WorkerLoopInput {
+    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+    is_running: Arc<AtomicBool>,
+    worker_index: u32,
+}
+
+async fn run_investigation_worker_loop(input: WorkerLoopInput) {
+    while input.is_running.load(Ordering::SeqCst) {
+        run_worker_iteration(RunWorkerIterationInput {
+            deps: Arc::clone(&input.deps),
+            worker_index: input.worker_index,
+        })
+        .await;
+    }
+}
+
+struct RunWorkerIterationInput {
+    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+    worker_index: u32,
+}
+
+async fn run_worker_iteration(input: RunWorkerIterationInput) {
+    match input.deps.job_queue.claim().await {
+        Ok(Some(job)) => {
+            process_claimed_job(ProcessClaimedJobInput {
+                deps: Arc::clone(&input.deps),
+                worker_index: input.worker_index,
+                job,
+            })
+            .await;
+        }
+        Ok(None) => {
+            sleep(Duration::from_millis(IDLE_WAIT_MS)).await;
+        }
+        Err(error) => {
+            input.deps.logger.error(
+                "Failed to claim worker job",
+                BTreeMap::from([
+                    ("workerIndex".to_string(), input.worker_index.to_string()),
+                    ("error".to_string(), error.message),
+                ]),
+            );
+            sleep(Duration::from_millis(IDLE_WAIT_MS)).await;
+        }
+    }
+}
+
+struct ProcessClaimedJobInput {
+    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+    worker_index: u32,
+    job: InvestigationJob,
+}
+
+async fn process_claimed_job(input: ProcessClaimedJobInput) {
+    let started_at = Instant::now();
+
+    match input
+        .deps
+        .alert_investigation_processor
+        .handle(input.job.clone())
+        .await
+    {
+        Ok(()) => {
+            match input
+                .deps
+                .job_queue
+                .complete(CompleteJobInput {
+                    job_id: input.job.job_id.clone(),
+                })
+                .await
+            {
+                Ok(()) => {
+                    let queue_depth = read_worker_queue_depth(ReadWorkerQueueDepthInput {
+                        deps: Arc::clone(&input.deps),
+                        worker_index: input.worker_index,
+                    })
+                    .await;
+
+                    input.deps.logger.info(
+                        "Completed worker job",
+                        BTreeMap::from([
+                            ("workerIndex".to_string(), input.worker_index.to_string()),
+                            (
+                                "jobType".to_string(),
+                                investigation_job_type_to_string(&input.job.job_type),
+                            ),
+                            (
+                                "slackEventId".to_string(),
+                                input.job.payload.slack_event_id.clone(),
+                            ),
+                            ("jobId".to_string(), input.job.job_id),
+                            (
+                                "channel".to_string(),
+                                input.job.payload.message.channel.clone(),
+                            ),
+                            (
+                                "threadTs".to_string(),
+                                thread_ts_for_message(&input.job.payload.message),
+                            ),
+                            (
+                                "attempt".to_string(),
+                                input.job.retry_count.saturating_add(1).to_string(),
+                            ),
+                            (
+                                "worker_job_duration_ms".to_string(),
+                                started_at.elapsed().as_millis().to_string(),
+                            ),
+                            ("worker_queue_depth".to_string(), queue_depth),
+                        ]),
+                    );
+                }
+                Err(error) => {
+                    handle_failed_claimed_job(HandleFailedClaimedJobInput {
+                        deps: Arc::clone(&input.deps),
+                        worker_index: input.worker_index,
+                        job: input.job,
+                        started_at,
+                        error_message: error.message,
+                    })
+                    .await;
+                }
+            }
+        }
+        Err(error) => {
+            handle_failed_claimed_job(HandleFailedClaimedJobInput {
+                deps: Arc::clone(&input.deps),
+                worker_index: input.worker_index,
+                job: input.job,
+                started_at,
+                error_message: error.to_string(),
+            })
+            .await;
+        }
+    }
+}
+
+struct HandleFailedClaimedJobInput {
+    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+    worker_index: u32,
+    job: InvestigationJob,
+    started_at: Instant,
+    error_message: String,
+}
+
+async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
+    let fail_result = input
+        .deps
+        .job_queue
+        .fail(FailJobInput {
+            job_id: input.job.job_id.clone(),
+            reason: input.error_message.clone(),
+            max_retry: input.deps.job_max_retry,
+            backoff_ms: input.deps.job_backoff_ms,
+        })
+        .await;
+
+    let fail_result = match fail_result {
+        Ok(value) => value,
+        Err(queue_fail_error) => {
+            input.deps.logger.error(
+                "Failed worker job",
+                BTreeMap::from([
+                    ("workerIndex".to_string(), input.worker_index.to_string()),
+                    (
+                        "jobType".to_string(),
+                        investigation_job_type_to_string(&input.job.job_type),
+                    ),
+                    (
+                        "slackEventId".to_string(),
+                        input.job.payload.slack_event_id.clone(),
+                    ),
+                    ("jobId".to_string(), input.job.job_id),
+                    (
+                        "channel".to_string(),
+                        input.job.payload.message.channel.clone(),
+                    ),
+                    (
+                        "threadTs".to_string(),
+                        thread_ts_for_message(&input.job.payload.message),
+                    ),
+                    (
+                        "attempt".to_string(),
+                        input.job.retry_count.saturating_add(1).to_string(),
+                    ),
+                    (
+                        "worker_job_duration_ms".to_string(),
+                        input.started_at.elapsed().as_millis().to_string(),
+                    ),
+                    ("status".to_string(), "queue_fail_error".to_string()),
+                    ("error".to_string(), queue_fail_error.message),
+                ]),
+            );
+            return;
+        }
+    };
+
+    let queue_depth = read_worker_queue_depth(ReadWorkerQueueDepthInput {
+        deps: Arc::clone(&input.deps),
+        worker_index: input.worker_index,
+    })
+    .await;
+
+    input.deps.logger.error(
+        "Failed worker job",
+        BTreeMap::from([
+            ("workerIndex".to_string(), input.worker_index.to_string()),
+            (
+                "jobType".to_string(),
+                investigation_job_type_to_string(&input.job.job_type),
+            ),
+            (
+                "slackEventId".to_string(),
+                input.job.payload.slack_event_id.clone(),
+            ),
+            ("jobId".to_string(), input.job.job_id.clone()),
+            (
+                "channel".to_string(),
+                input.job.payload.message.channel.clone(),
+            ),
+            (
+                "threadTs".to_string(),
+                thread_ts_for_message(&input.job.payload.message),
+            ),
+            (
+                "attempt".to_string(),
+                input.job.retry_count.saturating_add(1).to_string(),
+            ),
+            (
+                "worker_job_duration_ms".to_string(),
+                input.started_at.elapsed().as_millis().to_string(),
+            ),
+            ("worker_queue_depth".to_string(), queue_depth),
+            ("worker_job_failure_total".to_string(), "1".to_string()),
+            (
+                "status".to_string(),
+                job_fail_status_to_string(&fail_result.status),
+            ),
+            ("error".to_string(), input.error_message.clone()),
+        ]),
+    );
+
+    if fail_result.status == JobFailStatus::DeadLetter
+        && let Err(dead_letter_error) =
+            post_dead_letter_failure_message(PostDeadLetterFailureMessageInput {
+                slack_reply_port: Arc::clone(&input.deps.slack_reply_port),
+                job: fail_result.job.clone(),
+                error_message: input.error_message.clone(),
+            })
+            .await
+    {
+        input.deps.logger.error(
+            "Failed dead-letter notification",
+            BTreeMap::from([
+                (
+                    "jobType".to_string(),
+                    investigation_job_type_to_string(&fail_result.job.job_type),
+                ),
+                (
+                    "slackEventId".to_string(),
+                    fail_result.job.payload.slack_event_id,
+                ),
+                ("jobId".to_string(), fail_result.job.job_id),
+                (
+                    "channel".to_string(),
+                    fail_result.job.payload.message.channel.clone(),
+                ),
+                (
+                    "threadTs".to_string(),
+                    thread_ts_for_message(&fail_result.job.payload.message),
+                ),
+                ("error".to_string(), dead_letter_error.message),
+            ]),
+        );
+    }
+}
+
+struct ReadWorkerQueueDepthInput {
+    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+    worker_index: u32,
+}
+
+async fn read_worker_queue_depth(input: ReadWorkerQueueDepthInput) -> String {
+    match input.deps.job_queue.get_depth().await {
+        Ok(value) => value.to_string(),
+        Err(error) => {
+            input.deps.logger.error(
+                "Failed to read worker queue depth",
+                BTreeMap::from([
+                    ("workerIndex".to_string(), input.worker_index.to_string()),
+                    ("error".to_string(), error.message),
+                ]),
+            );
+            "unknown".to_string()
+        }
+    }
+}
+
+struct PostDeadLetterFailureMessageInput {
+    slack_reply_port: Arc<dyn SlackThreadReplyPort>,
+    job: InvestigationJob,
+    error_message: String,
+}
+
+async fn post_dead_letter_failure_message(
+    input: PostDeadLetterFailureMessageInput,
+) -> Result<(), PortError> {
+    input
+        .slack_reply_port
+        .post_thread_reply(SlackThreadReplyInput {
+            channel: input.job.payload.message.channel.clone(),
+            thread_ts: thread_ts_for_message(&input.job.payload.message),
+            text: format!(
+                "Investigation failed after retries: {}",
+                input.error_message
+            ),
+        })
+        .await
+}
+
+fn thread_ts_for_message(message: &SlackMessage) -> String {
+    message
+        .thread_ts
+        .clone()
+        .unwrap_or_else(|| message.ts.clone())
+}
+
+fn investigation_job_type_to_string(value: &InvestigationJobType) -> String {
+    match value {
+        InvestigationJobType::AlertInvestigation => "alert_investigation".to_string(),
+    }
+}
+
+fn job_fail_status_to_string(value: &JobFailStatus) -> String {
+    match value {
+        JobFailStatus::Requeued => "requeued".to_string(),
+        JobFailStatus::DeadLetter => "dead_letter".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AlertInvestigationJobProcessorPort, Arc, BTreeMap, ExecuteInvestigationJobError,
+        InvestigationJob, InvestigationJobQueuePort, InvestigationJobType, InvestigationLogger,
+        JobFailStatus, PortError, ProcessClaimedJobInput, SlackMessage, SlackThreadReplyInput,
+        SlackThreadReplyPort, StartInvestigationWorkerRunnerUseCaseDeps, handle_failed_claimed_job,
+        process_claimed_job,
+    };
+    use async_trait::async_trait;
+    use sre_shared::ports::outbound::{
+        CompleteJobInput, FailJobInput, JobFailResult, JobQueuePort,
+    };
+    use sre_shared::types::{InvestigationJobPayload, SlackTriggerType};
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    #[derive(Debug, Clone)]
+    struct LogEntry {
+        message: String,
+        meta: BTreeMap<String, String>,
+    }
+
+    #[derive(Default)]
+    struct MockInvestigationProcessor {
+        results: Mutex<VecDeque<Result<(), ExecuteInvestigationJobError>>>,
+    }
+
+    #[async_trait]
+    impl AlertInvestigationJobProcessorPort for MockInvestigationProcessor {
+        async fn handle(&self, _job: InvestigationJob) -> Result<(), ExecuteInvestigationJobError> {
+            let mut lock = self.results.lock().expect("lock processor results");
+            match lock.pop_front() {
+                Some(result) => result,
+                None => Ok(()),
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct MockJobQueue {
+        complete_inputs: Mutex<Vec<CompleteJobInput>>,
+        fail_inputs: Mutex<Vec<FailJobInput>>,
+        fail_results: Mutex<VecDeque<Result<JobFailResult<InvestigationJob>, PortError>>>,
+        depth_results: Mutex<VecDeque<Result<usize, PortError>>>,
+    }
+
+    impl MockJobQueue {
+        fn complete_inputs(&self) -> Vec<CompleteJobInput> {
+            self.complete_inputs
+                .lock()
+                .expect("lock complete inputs")
+                .clone()
+        }
+
+        fn fail_inputs(&self) -> Vec<FailJobInput> {
+            self.fail_inputs.lock().expect("lock fail inputs").clone()
+        }
+
+        fn with_fail_results(
+            &self,
+            values: Vec<Result<JobFailResult<InvestigationJob>, PortError>>,
+        ) {
+            let mut lock = self.fail_results.lock().expect("lock fail results");
+            *lock = VecDeque::from(values);
+        }
+
+        fn with_depth_results(&self, values: Vec<Result<usize, PortError>>) {
+            let mut lock = self.depth_results.lock().expect("lock depth results");
+            *lock = VecDeque::from(values);
+        }
+    }
+
+    #[async_trait]
+    impl JobQueuePort<InvestigationJob> for MockJobQueue {
+        async fn enqueue(&self, _job: InvestigationJob) -> Result<(), PortError> {
+            Ok(())
+        }
+
+        async fn claim(&self) -> Result<Option<InvestigationJob>, PortError> {
+            Ok(None)
+        }
+
+        async fn complete(&self, input: CompleteJobInput) -> Result<(), PortError> {
+            self.complete_inputs
+                .lock()
+                .expect("lock complete inputs")
+                .push(input);
+            Ok(())
+        }
+
+        async fn fail(
+            &self,
+            input: FailJobInput,
+        ) -> Result<JobFailResult<InvestigationJob>, PortError> {
+            self.fail_inputs
+                .lock()
+                .expect("lock fail inputs")
+                .push(input);
+            let mut lock = self.fail_results.lock().expect("lock fail results");
+            match lock.pop_front() {
+                Some(result) => result,
+                None => Err(PortError::new("missing configured fail result")),
+            }
+        }
+
+        async fn get_depth(&self) -> Result<usize, PortError> {
+            let mut lock = self.depth_results.lock().expect("lock depth results");
+            match lock.pop_front() {
+                Some(result) => result,
+                None => Ok(0),
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct MockSlackThreadReplyPort {
+        posted_replies: Mutex<Vec<SlackThreadReplyInput>>,
+    }
+
+    impl MockSlackThreadReplyPort {
+        fn posted_replies(&self) -> Vec<SlackThreadReplyInput> {
+            self.posted_replies
+                .lock()
+                .expect("lock posted replies")
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl SlackThreadReplyPort for MockSlackThreadReplyPort {
+        async fn post_thread_reply(&self, input: SlackThreadReplyInput) -> Result<(), PortError> {
+            self.posted_replies
+                .lock()
+                .expect("lock posted replies")
+                .push(input);
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct MockLogger {
+        infos: Mutex<Vec<LogEntry>>,
+        errors: Mutex<Vec<LogEntry>>,
+    }
+
+    impl MockLogger {
+        fn infos(&self) -> Vec<LogEntry> {
+            self.infos.lock().expect("lock infos").clone()
+        }
+
+        fn errors(&self) -> Vec<LogEntry> {
+            self.errors.lock().expect("lock errors").clone()
+        }
+    }
+
+    impl InvestigationLogger for MockLogger {
+        fn info(&self, message: &str, meta: BTreeMap<String, String>) {
+            self.infos.lock().expect("lock infos").push(LogEntry {
+                message: message.to_string(),
+                meta,
+            });
+        }
+
+        fn warn(&self, _message: &str, _meta: BTreeMap<String, String>) {}
+
+        fn error(&self, message: &str, meta: BTreeMap<String, String>) {
+            self.errors.lock().expect("lock errors").push(LogEntry {
+                message: message.to_string(),
+                meta,
+            });
+        }
+    }
+
+    struct TestContext {
+        deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+        job_queue: Arc<MockJobQueue>,
+        slack_reply_port: Arc<MockSlackThreadReplyPort>,
+        logger: Arc<MockLogger>,
+    }
+
+    fn create_context() -> TestContext {
+        let job_queue = Arc::new(MockJobQueue::default());
+        let processor = Arc::new(MockInvestigationProcessor::default());
+        let slack_reply_port = Arc::new(MockSlackThreadReplyPort::default());
+        let logger = Arc::new(MockLogger::default());
+        let deps = Arc::new(StartInvestigationWorkerRunnerUseCaseDeps {
+            job_queue: Arc::clone(&job_queue) as Arc<InvestigationJobQueuePort>,
+            alert_investigation_processor: processor as Arc<dyn AlertInvestigationJobProcessorPort>,
+            slack_reply_port: Arc::clone(&slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
+            logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+            worker_concurrency: 1,
+            job_max_retry: 2,
+            job_backoff_ms: 1_000,
+        });
+
+        TestContext {
+            deps,
+            job_queue,
+            slack_reply_port,
+            logger,
+        }
+    }
+
+    fn create_job(input: CreateJobInput) -> InvestigationJob {
+        InvestigationJob {
+            job_id: input.job_id,
+            job_type: InvestigationJobType::AlertInvestigation,
+            received_at: "2026-03-04T00:00:00.000Z".to_string(),
+            payload: InvestigationJobPayload {
+                slack_event_id: "Ev001".to_string(),
+                message: SlackMessage {
+                    slack_event_id: "Ev001".to_string(),
+                    team_id: Some("T001".to_string()),
+                    trigger: SlackTriggerType::Message,
+                    channel: "C001".to_string(),
+                    user: "U001".to_string(),
+                    text: "alert".to_string(),
+                    ts: "1710000000.000001".to_string(),
+                    thread_ts: input.thread_ts,
+                },
+            },
+            retry_count: input.retry_count,
+        }
+    }
+
+    struct CreateJobInput {
+        job_id: String,
+        retry_count: u32,
+        thread_ts: Option<String>,
+    }
+
+    #[tokio::test]
+    async fn process_claimed_job_completes_and_logs() {
+        let context = create_context();
+        context.job_queue.with_depth_results(vec![Ok(3)]);
+
+        process_claimed_job(ProcessClaimedJobInput {
+            deps: Arc::clone(&context.deps),
+            worker_index: 0,
+            job: create_job(CreateJobInput {
+                job_id: "job-1".to_string(),
+                retry_count: 0,
+                thread_ts: None,
+            }),
+        })
+        .await;
+
+        assert_eq!(context.job_queue.complete_inputs().len(), 1);
+        assert_eq!(context.job_queue.fail_inputs().len(), 0);
+        let info_logs = context.logger.infos();
+        assert_eq!(info_logs.len(), 1);
+        assert_eq!(info_logs[0].message, "Completed worker job");
+        assert_eq!(
+            info_logs[0].meta.get("worker_queue_depth"),
+            Some(&"3".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_failed_claimed_job_requeues_and_logs() {
+        let context = create_context();
+        context.job_queue.with_fail_results(vec![Ok(JobFailResult {
+            status: JobFailStatus::Requeued,
+            job: create_job(CreateJobInput {
+                job_id: "job-1".to_string(),
+                retry_count: 1,
+                thread_ts: None,
+            }),
+        })]);
+        context.job_queue.with_depth_results(vec![Ok(2)]);
+
+        handle_failed_claimed_job(super::HandleFailedClaimedJobInput {
+            deps: Arc::clone(&context.deps),
+            worker_index: 0,
+            job: create_job(CreateJobInput {
+                job_id: "job-1".to_string(),
+                retry_count: 0,
+                thread_ts: None,
+            }),
+            started_at: std::time::Instant::now(),
+            error_message: "processing failed".to_string(),
+        })
+        .await;
+
+        let fail_inputs = context.job_queue.fail_inputs();
+        assert_eq!(fail_inputs.len(), 1);
+        assert_eq!(fail_inputs[0].reason, "processing failed");
+        assert_eq!(fail_inputs[0].max_retry, 2);
+        assert_eq!(fail_inputs[0].backoff_ms, 1_000);
+
+        let error_logs = context.logger.errors();
+        assert_eq!(error_logs.len(), 1);
+        assert_eq!(error_logs[0].message, "Failed worker job");
+        assert_eq!(
+            error_logs[0].meta.get("status"),
+            Some(&"requeued".to_string())
+        );
+        assert_eq!(context.slack_reply_port.posted_replies().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn handle_failed_claimed_job_posts_dead_letter_message() {
+        let context = create_context();
+        context.job_queue.with_fail_results(vec![Ok(JobFailResult {
+            status: JobFailStatus::DeadLetter,
+            job: create_job(CreateJobInput {
+                job_id: "job-1".to_string(),
+                retry_count: 2,
+                thread_ts: Some("1710000000.000001".to_string()),
+            }),
+        })]);
+        context.job_queue.with_depth_results(vec![Ok(0)]);
+
+        handle_failed_claimed_job(super::HandleFailedClaimedJobInput {
+            deps: Arc::clone(&context.deps),
+            worker_index: 0,
+            job: create_job(CreateJobInput {
+                job_id: "job-1".to_string(),
+                retry_count: 2,
+                thread_ts: Some("1710000000.000001".to_string()),
+            }),
+            started_at: std::time::Instant::now(),
+            error_message: "fatal failure".to_string(),
+        })
+        .await;
+
+        let posted_replies = context.slack_reply_port.posted_replies();
+        assert_eq!(posted_replies.len(), 1);
+        assert_eq!(
+            posted_replies[0].text,
+            "Investigation failed after retries: fatal failure"
+        );
+        assert_eq!(posted_replies[0].thread_ts, "1710000000.000001");
+    }
+}

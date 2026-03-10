@@ -12,7 +12,6 @@ pub struct ProcessAlertInvestigationJobUseCase {
 }
 
 impl ProcessAlertInvestigationJobUseCase {
-    #[must_use]
     pub fn new(deps: ProcessAlertInvestigationJobUseCaseDeps) -> Self {
         Self { deps }
     }

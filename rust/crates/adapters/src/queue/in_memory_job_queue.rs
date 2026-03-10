@@ -67,7 +67,6 @@ impl<TJob> InMemoryJobQueue<TJob>
 where
     TJob: QueueJob,
 {
-    #[must_use]
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(InnerState::default())),

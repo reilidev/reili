@@ -45,8 +45,11 @@ pub struct SlackTaskUpdateChunk {
     pub id: String,
     pub title: String,
     pub status: SlackTaskUpdateStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sources: Option<Vec<SlackChunkSource>>,
 }
 
@@ -62,6 +65,7 @@ pub enum SlackAnyChunk {
 pub struct SlackStreamBlock {
     #[serde(rename = "type")]
     pub block_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub block_id: Option<String>,
 }
 
@@ -113,6 +117,8 @@ pub trait SlackProgressStreamPort: Send + Sync {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::{
         SlackAnyChunk, SlackChunkSource, SlackChunkSourceType, SlackTaskUpdateChunk,
         SlackTaskUpdateStatus,
@@ -137,5 +143,28 @@ mod tests {
         let restored: SlackAnyChunk = serde_json::from_str(&json).expect("deserialize slack chunk");
 
         assert_eq!(restored, value);
+    }
+
+    #[test]
+    fn omits_optional_task_update_fields_when_none() {
+        let value = SlackAnyChunk::TaskUpdate(SlackTaskUpdateChunk {
+            id: "task-1".to_string(),
+            title: "Query metrics".to_string(),
+            status: SlackTaskUpdateStatus::InProgress,
+            details: None,
+            output: None,
+            sources: None,
+        });
+
+        let json_value = serde_json::to_value(&value).expect("serialize slack chunk");
+        assert_eq!(
+            json_value,
+            json!({
+                "type": "task_update",
+                "id": "task-1",
+                "title": "Query metrics",
+                "status": "in_progress",
+            })
+        );
     }
 }
