@@ -16,6 +16,7 @@ use super::tools::{
     GetRepositoryContentTool, ListDatadogMetricsCatalogTool, QueryDatadogMetricsTool,
     ReportProgressTool, ReportProgressToolInput, SearchDatadogEventsTool, SearchDatadogLogsTool,
     SearchGithubCodeTool, SearchGithubIssuesAndPullRequestsTool, SearchGithubReposTool,
+    SearchWebTool,
 };
 use super::{
     progress_event_hook::ProgressEventHook,
@@ -118,6 +119,7 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
             EVENTS_PROGRESS_OWNER_ID.to_string(),
             Arc::clone(&input.on_progress_event),
         ))
+        .tool(SearchWebTool::new(Arc::clone(&input.resources)))
         .tool(ProgressReportingSubAgentTool::new(
             github_agent,
             GITHUB_PROGRESS_OWNER_ID.to_string(),
@@ -204,7 +206,8 @@ fn build_logs_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
             on_progress_event: Arc::clone(&input.on_progress_event),
             owner_id: input.owner_id,
         }))
-        .tool(SearchDatadogLogsTool::new(input.resources))
+        .tool(SearchDatadogLogsTool::new(Arc::clone(&input.resources)))
+        .tool(SearchWebTool::new(input.resources))
         .build()
 }
 
@@ -225,7 +228,8 @@ fn build_metrics_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
             on_progress_event: Arc::clone(&input.on_progress_event),
             owner_id: input.owner_id,
         }))
-        .tool(QueryDatadogMetricsTool::new(input.resources))
+        .tool(QueryDatadogMetricsTool::new(Arc::clone(&input.resources)))
+        .tool(SearchWebTool::new(input.resources))
         .build()
 }
 
@@ -246,7 +250,8 @@ fn build_events_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
             on_progress_event: Arc::clone(&input.on_progress_event),
             owner_id: input.owner_id,
         }))
-        .tool(SearchDatadogEventsTool::new(input.resources))
+        .tool(SearchDatadogEventsTool::new(Arc::clone(&input.resources)))
+        .tool(SearchWebTool::new(input.resources))
         .build()
 }
 
@@ -279,7 +284,8 @@ fn build_github_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
         )))
         .tool(GetRepositoryContentTool::new(Arc::clone(&input.resources)))
         .tool(GetPullRequestTool::new(Arc::clone(&input.resources)))
-        .tool(GetPullRequestDiffTool::new(input.resources))
+        .tool(GetPullRequestDiffTool::new(Arc::clone(&input.resources)))
+        .tool(SearchWebTool::new(input.resources))
         .build()
 }
 
@@ -336,6 +342,10 @@ You orchestrate investigation end-to-end.
 - Use aggregate_datadog_logs_by_facet and list_datadog_metrics_catalog early to understand service scope.
 - Delegate detailed work to investigate_logs / investigate_metrics / investigate_events / investigate_github as needed.
 - Run independent tool calls in parallel where possible.
+
+Web search:
+- Use search_web to check whether external dependencies (cloud providers, CDNs, DNS, third-party APIs, SaaS platforms) are experiencing outages or degraded performance that could explain the symptoms observed internally.
+- When internal metrics or logs suggest connectivity issues, elevated error rates toward external endpoints, or timeouts on third-party calls, proactively search for recent public incident reports or status page updates for those services.
 
 Final answer requirements:
 - In investigation mode, provide several plausible findings with evidence and confidence.
@@ -517,5 +527,24 @@ mod tests {
             assert!(instructions.contains("title and summary fields"));
             assert!(instructions.contains("Do not post consecutive report_progress"));
         }
+    }
+
+    #[test]
+    fn coordinator_instructions_include_web_search_rules() {
+        let instructions = build_coordinator_instructions(BuildCoordinatorInstructionsInput {
+            datadog_site: "datadoghq.com".to_string(),
+            github_scope_org: "acme".to_string(),
+            runtime: InvestigationRuntime {
+                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+                channel: "C123".to_string(),
+                thread_ts: "123.456".to_string(),
+                retry_count: 0,
+            },
+            language: "Japanese".to_string(),
+        });
+
+        assert!(instructions.contains("search_web"));
+        assert!(instructions.contains("external dependencies"));
+        assert!(instructions.contains("public incident reports or status page"));
     }
 }

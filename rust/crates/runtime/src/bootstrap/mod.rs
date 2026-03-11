@@ -13,6 +13,7 @@ use sre_adapters::outbound::datadog::{
     DatadogLogSearchAdapter, DatadogMetricCatalogAdapter, DatadogMetricQueryAdapter,
 };
 use sre_adapters::outbound::github::{GitHubSearchAdapter, GitHubSearchAdapterConfig};
+use sre_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use sre_adapters::outbound::slack::{
     SlackProgressStreamAdapter, SlackThreadHistoryAdapter, SlackThreadReplyAdapter,
     SlackWebApiClient, SlackWebApiClientConfig,
@@ -27,7 +28,7 @@ use sre_shared::ports::outbound::{
     DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
     DatadogMetricCatalogPort, DatadogMetricQueryPort, GithubSearchPort,
     InvestigationCoordinatorRunnerPort, InvestigationResources, InvestigationSynthesizerRunnerPort,
-    SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyPort,
+    SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyPort, WebSearchPort,
 };
 use sre_shared::types::DatadogApiRetryConfig;
 use thiserror::Error;
@@ -156,6 +157,13 @@ pub fn build_worker_runtime_deps(
             base_url: None,
         })?);
 
+    let web_search_port: Arc<dyn WebSearchPort> =
+        Arc::new(OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
+            api_key: config.openai_api_key.clone(),
+            model: config.openai_web_search.model.clone(),
+            timeout_ms: config.openai_web_search.timeout_ms,
+        }));
+
     let investigation_resources = InvestigationResources {
         log_aggregate_port,
         log_search_port,
@@ -165,6 +173,7 @@ pub fn build_worker_runtime_deps(
         datadog_site: config.datadog_site.clone(),
         github_scope_org: config.github.scope_org.clone(),
         github_search_port,
+        web_search_port,
     };
     let coordinator_runner: Arc<dyn InvestigationCoordinatorRunnerPort> = Arc::new(
         OpenAiInvestigationCoordinatorRunner::new(OpenAiInvestigationCoordinatorRunnerInput {

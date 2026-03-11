@@ -14,6 +14,7 @@ mod search_datadog_logs_tool;
 mod search_github_code_tool;
 mod search_github_issues_and_pull_requests_tool;
 mod search_github_repos_tool;
+mod search_web_tool;
 mod status_code_parser;
 mod tool_json;
 
@@ -29,3 +30,4 @@ pub use search_datadog_logs_tool::SearchDatadogLogsTool;
 pub use search_github_code_tool::SearchGithubCodeTool;
 pub use search_github_issues_and_pull_requests_tool::SearchGithubIssuesAndPullRequestsTool;
 pub use search_github_repos_tool::SearchGithubReposTool;
+pub use search_web_tool::SearchWebTool;

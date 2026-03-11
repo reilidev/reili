@@ -8,6 +8,8 @@ const DEFAULT_LANGUAGE: &str = "English";
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
 const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
 const DEFAULT_WORKER_DISPATCH_TIMEOUT_MS: u64 = 3_000;
+const DEFAULT_OPENAI_WEB_SEARCH_MODEL: &str = "gpt-5.4";
+const DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS: u64 = 20_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackAuthConfig {
@@ -45,6 +47,12 @@ pub struct IngressConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenAiWebSearchConfig {
+    pub model: String,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerConfig {
     pub slack_bot_token: String,
     pub slack_signing_secret: String,
@@ -59,6 +67,7 @@ pub struct WorkerConfig {
     pub job_max_retry: u32,
     pub job_backoff_ms: u64,
     pub github: GitHubAppConfig,
+    pub openai_web_search: OpenAiWebSearchConfig,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -126,6 +135,7 @@ fn load_worker_config_with_env(
         job_max_retry: DEFAULT_JOB_MAX_RETRY,
         job_backoff_ms: DEFAULT_JOB_BACKOFF_MS,
         github: read_github_app_config(env)?,
+        openai_web_search: read_openai_web_search_config(env),
     })
 }
 
@@ -161,6 +171,21 @@ fn read_github_app_config(env: &dyn EnvironmentReader) -> Result<GitHubAppConfig
         )?,
         scope_org: read_required_env(env, "GITHUB_SEARCH_SCOPE_ORG")?,
     })
+}
+
+fn read_openai_web_search_config(env: &dyn EnvironmentReader) -> OpenAiWebSearchConfig {
+    OpenAiWebSearchConfig {
+        model: read_or_default(
+            env,
+            "OPENAI_WEB_SEARCH_MODEL",
+            DEFAULT_OPENAI_WEB_SEARCH_MODEL,
+        ),
+        timeout_ms: env
+            .get("OPENAI_WEB_SEARCH_TIMEOUT_MS")
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS),
+    }
 }
 
 fn read_required_env(env: &dyn EnvironmentReader, name: &str) -> Result<String, EnvConfigError> {

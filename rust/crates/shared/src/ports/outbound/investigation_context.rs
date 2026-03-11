@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::{
     DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
-    DatadogMetricCatalogPort, DatadogMetricQueryPort, GithubSearchPort,
+    DatadogMetricCatalogPort, DatadogMetricQueryPort, GithubSearchPort, WebSearchPort,
 };
 
 pub struct InvestigationResources {
@@ -14,6 +14,7 @@ pub struct InvestigationResources {
     pub datadog_site: String,
     pub github_scope_org: String,
     pub github_search_port: Arc<dyn GithubSearchPort>,
+    pub web_search_port: Arc<dyn WebSearchPort>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

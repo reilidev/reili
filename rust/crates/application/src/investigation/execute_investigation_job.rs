@@ -398,6 +398,7 @@ pub(super) fn clone_investigation_resources(
         datadog_site: resources.datadog_site.clone(),
         github_scope_org: resources.github_scope_org.clone(),
         github_search_port: Arc::clone(&resources.github_search_port),
+        web_search_port: Arc::clone(&resources.web_search_port),
     }
 }
 
@@ -473,7 +474,7 @@ mod tests {
         InvestigationSynthesizerRunnerPort, RunCoordinatorInput, RunSynthesizerInput,
         SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput,
         SlackThreadReplyPort, StartSlackProgressStreamInput, StartSlackProgressStreamOutput,
-        SynthesizerRunReport,
+        SynthesizerRunReport, WebSearchInput, WebSearchPort, WebSearchResult,
     };
     use sre_shared::types::{
         AlertContext, InvestigationJobPayload, InvestigationJobType, LlmUsageSnapshot,
@@ -755,6 +756,13 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl WebSearchPort for UnusedResourcesPort {
+        async fn search(&self, _input: WebSearchInput) -> Result<WebSearchResult, PortError> {
+            Err(PortError::new("unused"))
+        }
+    }
+
     fn create_resources() -> InvestigationResources {
         let port = Arc::new(UnusedResourcesPort);
 
@@ -767,6 +775,7 @@ mod tests {
             datadog_site: "datadoghq.com".to_string(),
             github_scope_org: "acme".to_string(),
             github_search_port: Arc::clone(&port) as Arc<dyn GithubSearchPort>,
+            web_search_port: Arc::clone(&port) as Arc<dyn WebSearchPort>,
         }
     }
 
