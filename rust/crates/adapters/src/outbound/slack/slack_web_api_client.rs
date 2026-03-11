@@ -2,6 +2,8 @@ use serde::Serialize;
 use serde_json::Value;
 use sre_shared::errors::PortError;
 
+use crate::json_utils::read_non_empty_json_string;
+
 const DEFAULT_BASE_URL: &str = "https://slack.com/api";
 const MAX_ERROR_BODY_PREVIEW_CHARS: usize = 1_000;
 
@@ -82,7 +84,7 @@ impl SlackWebApiClient {
         })?;
 
         if json.get("ok").and_then(Value::as_bool) == Some(false) {
-            let error_code = read_non_empty_string(json.get("error"))
+            let error_code = read_non_empty_json_string(json.get("error"))
                 .unwrap_or_else(|| "unknown_error".to_string());
             return Err(PortError::new(format!(
                 "Slack API returned error: method={method_path} error={error_code}"
@@ -91,14 +93,6 @@ impl SlackWebApiClient {
 
         Ok(json)
     }
-}
-
-fn read_non_empty_string(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(ToString::to_string)
 }
 
 fn normalize_base_url(value: &str) -> Result<String, PortError> {

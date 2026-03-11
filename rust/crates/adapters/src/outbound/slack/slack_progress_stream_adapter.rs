@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Serialize;
-use serde_json::Value;
 use sre_shared::errors::PortError;
 use sre_shared::ports::outbound::{
     AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort, SlackStreamBlock,
@@ -10,6 +9,7 @@ use sre_shared::ports::outbound::{
 };
 
 use super::slack_web_api_client::SlackWebApiClient;
+use crate::json_utils::read_non_empty_json_string;
 
 #[derive(Debug, Clone)]
 pub struct SlackProgressStreamAdapter {
@@ -50,7 +50,7 @@ impl SlackProgressStreamPort for SlackProgressStreamAdapter {
             )
             .await?;
 
-        let stream_ts = read_non_empty_string(response.get("ts"))
+        let stream_ts = read_non_empty_json_string(response.get("ts"))
             .ok_or_else(|| PortError::new("Slack stream start response did not contain ts"))?;
         Ok(StartSlackProgressStreamOutput { stream_ts })
     }
@@ -123,14 +123,6 @@ struct StopSlackProgressStreamRequest {
     chunks: Option<Vec<SlackAnyChunk>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     blocks: Option<Vec<SlackStreamBlock>>,
-}
-
-fn read_non_empty_string(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(ToString::to_string)
 }
 
 #[cfg(test)]

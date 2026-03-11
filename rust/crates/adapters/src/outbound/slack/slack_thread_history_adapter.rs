@@ -7,6 +7,7 @@ use sre_shared::ports::outbound::{FetchSlackThreadHistoryInput, SlackThreadHisto
 use sre_shared::types::SlackThreadMessage;
 
 use super::slack_web_api_client::SlackWebApiClient;
+use crate::json_utils::read_non_empty_json_string;
 
 const THREAD_HISTORY_PAGE_LIMIT: usize = 15;
 const THREAD_HISTORY_MAX_MESSAGES: usize = 200;
@@ -62,14 +63,14 @@ impl SlackThreadHistoryPort for SlackThreadHistoryAdapter {
                     break;
                 }
 
-                let ts = match read_non_empty_string(page_message.get("ts")) {
+                let ts = match read_non_empty_json_string(page_message.get("ts")) {
                     Some(value) => value,
                     None => continue,
                 };
 
                 messages.push(SlackThreadMessage {
                     ts,
-                    user: read_non_empty_string(page_message.get("user")),
+                    user: read_non_empty_json_string(page_message.get("user")),
                     text: page_message
                         .get("text")
                         .and_then(Value::as_str)
@@ -82,7 +83,7 @@ impl SlackThreadHistoryPort for SlackThreadHistoryAdapter {
                 break;
             }
 
-            cursor = read_non_empty_string(response.pointer("/response_metadata/next_cursor"));
+            cursor = read_non_empty_json_string(response.pointer("/response_metadata/next_cursor"));
             if cursor.is_none() {
                 break;
             }
@@ -90,14 +91,6 @@ impl SlackThreadHistoryPort for SlackThreadHistoryAdapter {
 
         Ok(messages)
     }
-}
-
-fn read_non_empty_string(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(ToString::to_string)
 }
 
 #[cfg(test)]

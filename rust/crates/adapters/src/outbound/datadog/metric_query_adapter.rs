@@ -11,6 +11,7 @@ use sre_shared::ports::outbound::{
 };
 
 use super::datadog_http_client::{DatadogApiVersion, DatadogHttpClient, DatadogRequestInput};
+use crate::json_utils::read_non_empty_json_string;
 
 #[derive(Debug, Clone)]
 pub struct DatadogMetricQueryAdapter {
@@ -232,15 +233,15 @@ fn to_unit_label(value: Option<&Value>) -> Option<String> {
 
 fn to_single_unit_label(value: Option<&Value>) -> Option<String> {
     let unit = value?.as_object()?;
-    read_non_empty_string(unit.get("short_name"))
-        .or_else(|| read_non_empty_string(unit.get("name")))
+    read_non_empty_json_string(unit.get("short_name"))
+        .or_else(|| read_non_empty_json_string(unit.get("name")))
 }
 
 fn to_group_tags(value: Option<&Value>) -> Option<Vec<String>> {
     let tags = value.and_then(Value::as_array)?;
     let mut mapped = Vec::new();
     for tag in tags {
-        if let Some(text) = read_non_empty_string(Some(tag)) {
+        if let Some(text) = read_non_empty_json_string(Some(tag)) {
             mapped.push(text);
         }
     }
@@ -253,8 +254,8 @@ fn to_group_tags(value: Option<&Value>) -> Option<Vec<String>> {
 }
 
 fn read_metric_name(value: &Value) -> Option<String> {
-    read_non_empty_string(value.get("metric"))
-        .or_else(|| read_non_empty_string(value.get("display_name")))
+    read_non_empty_json_string(value.get("metric"))
+        .or_else(|| read_non_empty_json_string(value.get("display_name")))
 }
 
 struct TimeRangeInput {
@@ -280,14 +281,6 @@ fn to_epoch_ms(value: &str) -> Result<i64, PortError> {
     })?;
 
     Ok(parsed.timestamp_millis())
-}
-
-fn read_non_empty_string(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(ToString::to_string)
 }
 
 #[cfg(test)]

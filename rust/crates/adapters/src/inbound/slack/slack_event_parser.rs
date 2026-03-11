@@ -2,6 +2,8 @@ use serde::Deserialize;
 use sre_shared::errors::PortError;
 use sre_shared::types::{SlackMessage, SlackTriggerType};
 
+use crate::json_utils::read_non_empty_string;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedSlackEvent {
     UrlVerification { challenge: String },
@@ -102,12 +104,6 @@ fn parse_message_event(
         ts,
         thread_ts: read_non_empty_string(input.event.thread_ts),
     }))
-}
-
-fn read_non_empty_string(value: Option<String>) -> Option<String> {
-    value
-        .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty())
 }
 
 #[derive(Debug, Deserialize)]

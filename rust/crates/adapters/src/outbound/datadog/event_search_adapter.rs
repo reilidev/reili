@@ -10,6 +10,7 @@ use sre_shared::ports::outbound::{
 };
 
 use super::datadog_http_client::{DatadogApiVersion, DatadogHttpClient, DatadogRequestInput};
+use crate::json_utils::read_non_empty_json_string;
 
 #[derive(Debug, Clone)]
 pub struct DatadogEventSearchAdapter {
@@ -69,16 +70,16 @@ fn map_event_search_result(value: &Value) -> DatadogEventSearchResult {
     let nested = attributes.and_then(|field| field.get("attributes"));
 
     DatadogEventSearchResult {
-        id: read_non_empty_string(value.get("id")).unwrap_or_default(),
-        timestamp: read_non_empty_string(attributes.and_then(|field| field.get("timestamp")))
+        id: read_non_empty_json_string(value.get("id")).unwrap_or_default(),
+        timestamp: read_non_empty_json_string(attributes.and_then(|field| field.get("timestamp")))
             .unwrap_or_else(|| "unknown".to_string()),
-        source: read_non_empty_string(nested.and_then(|field| field.get("source_type_name")))
+        source: read_non_empty_json_string(nested.and_then(|field| field.get("source_type_name")))
             .or_else(|| {
-                read_non_empty_string(nested.and_then(|field| field.get("sourceTypeName")))
+                read_non_empty_json_string(nested.and_then(|field| field.get("sourceTypeName")))
             }),
-        status: read_non_empty_string(nested.and_then(|field| field.get("status"))),
-        title: read_non_empty_string(nested.and_then(|field| field.get("title"))),
-        message: read_non_empty_string(attributes.and_then(|field| field.get("message"))),
+        status: read_non_empty_json_string(nested.and_then(|field| field.get("status"))),
+        title: read_non_empty_json_string(nested.and_then(|field| field.get("title"))),
+        message: read_non_empty_json_string(attributes.and_then(|field| field.get("message"))),
         tags: to_tags(attributes.and_then(|field| field.get("tags"))),
     }
 }
@@ -87,7 +88,7 @@ fn to_tags(value: Option<&Value>) -> Option<Vec<String>> {
     let tags = value.and_then(Value::as_array)?;
     let mut mapped = Vec::new();
     for tag in tags {
-        if let Some(text) = read_non_empty_string(Some(tag)) {
+        if let Some(text) = read_non_empty_json_string(Some(tag)) {
             mapped.push(text);
         }
     }
@@ -200,14 +201,6 @@ fn to_iso_string(timestamp_ms: i64) -> String {
         Some(value) => value.to_rfc3339_opts(SecondsFormat::Millis, true),
         None => "unknown".to_string(),
     }
-}
-
-fn read_non_empty_string(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(ToString::to_string)
 }
 
 #[cfg(test)]

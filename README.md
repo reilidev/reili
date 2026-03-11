@@ -6,13 +6,6 @@
     <br />
     Operate with a simple database-free architecture.
   </p>
-  <p>
-    <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white" />
-    <img alt="Slack Bolt" src="https://img.shields.io/badge/Slack%20Bolt-4.x-4A154B?logo=slack&logoColor=white" />
-    <img alt="OpenAI Agents SDK" src="https://img.shields.io/badge/OpenAI%20Agents%20SDK-JS-111111" />
-    <img alt="Datadog API v2" src="https://img.shields.io/badge/Datadog%20API-v2-632CA6?logo=datadog&logoColor=white" />
-    <img alt="pnpm" src="https://img.shields.io/badge/pnpm-10-F69220?logo=pnpm&logoColor=white" />
-  </p>
 </div>
 
 ## Why sre-mate
