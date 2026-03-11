@@ -5,8 +5,9 @@ use serde_json::Value;
 use sre_shared::errors::PortError;
 use sre_shared::types::DatadogApiRetryConfig;
 
+use crate::json_utils::truncate_for_error;
+
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 100 * 1024;
-const MAX_ERROR_BODY_PREVIEW_CHARS: usize = 1_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DatadogApiVersion {
@@ -204,16 +205,6 @@ fn normalize_path(path: &str) -> String {
     }
 
     format!("/{path}")
-}
-
-fn truncate_for_error(value: &str) -> String {
-    let mut chars = value.chars();
-    let preview: String = chars.by_ref().take(MAX_ERROR_BODY_PREVIEW_CHARS).collect();
-    if chars.next().is_some() {
-        return format!("{preview}...");
-    }
-
-    preview
 }
 
 #[cfg(test)]

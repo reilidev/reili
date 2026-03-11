@@ -57,20 +57,12 @@ pub struct ExecuteInvestigationJobInput {
 pub async fn execute_investigation_job(
     input: ExecuteInvestigationJobInput,
 ) -> Result<(), ExecuteInvestigationJobError> {
-    let thread_ts = input
-        .payload
-        .message
-        .thread_ts
-        .clone()
-        .unwrap_or_else(|| input.payload.message.ts.clone());
+    let thread_ts = input.payload.message.thread_ts_or_ts().to_string();
     let started_at = Instant::now();
     let started_at_iso = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
 
     let base_log_meta = BTreeMap::from([
-        (
-            "jobType".to_string(),
-            investigation_job_type_to_string(&input.job_type),
-        ),
+        ("jobType".to_string(), input.job_type.to_string()),
         (
             "slackEventId".to_string(),
             input.payload.slack_event_id.clone(),
@@ -399,12 +391,6 @@ pub(super) fn clone_investigation_resources(
         github_scope_org: resources.github_scope_org.clone(),
         github_search_port: Arc::clone(&resources.github_search_port),
         web_search_port: Arc::clone(&resources.web_search_port),
-    }
-}
-
-fn investigation_job_type_to_string(value: &InvestigationJobType) -> String {
-    match value {
-        InvestigationJobType::AlertInvestigation => "alert_investigation".to_string(),
     }
 }
 

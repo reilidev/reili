@@ -9,7 +9,7 @@ use sre_shared::ports::outbound::{
     CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailStatus,
     SlackThreadReplyInput, SlackThreadReplyPort,
 };
-use sre_shared::types::{InvestigationJob, InvestigationJobType, SlackMessage};
+use sre_shared::types::InvestigationJob;
 use tokio::task::spawn;
 use tokio::time::sleep;
 
@@ -160,10 +160,7 @@ async fn process_claimed_job(input: ProcessClaimedJobInput) {
                         "Completed worker job",
                         BTreeMap::from([
                             ("workerIndex".to_string(), input.worker_index.to_string()),
-                            (
-                                "jobType".to_string(),
-                                investigation_job_type_to_string(&input.job.job_type),
-                            ),
+                            ("jobType".to_string(), input.job.job_type.to_string()),
                             (
                                 "slackEventId".to_string(),
                                 input.job.payload.slack_event_id.clone(),
@@ -175,7 +172,7 @@ async fn process_claimed_job(input: ProcessClaimedJobInput) {
                             ),
                             (
                                 "threadTs".to_string(),
-                                thread_ts_for_message(&input.job.payload.message),
+                                input.job.payload.message.thread_ts_or_ts().to_string(),
                             ),
                             (
                                 "attempt".to_string(),
@@ -241,10 +238,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
                 "Failed worker job",
                 BTreeMap::from([
                     ("workerIndex".to_string(), input.worker_index.to_string()),
-                    (
-                        "jobType".to_string(),
-                        investigation_job_type_to_string(&input.job.job_type),
-                    ),
+                    ("jobType".to_string(), input.job.job_type.to_string()),
                     (
                         "slackEventId".to_string(),
                         input.job.payload.slack_event_id.clone(),
@@ -256,7 +250,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
                     ),
                     (
                         "threadTs".to_string(),
-                        thread_ts_for_message(&input.job.payload.message),
+                        input.job.payload.message.thread_ts_or_ts().to_string(),
                     ),
                     (
                         "attempt".to_string(),
@@ -284,10 +278,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
         "Failed worker job",
         BTreeMap::from([
             ("workerIndex".to_string(), input.worker_index.to_string()),
-            (
-                "jobType".to_string(),
-                investigation_job_type_to_string(&input.job.job_type),
-            ),
+            ("jobType".to_string(), input.job.job_type.to_string()),
             (
                 "slackEventId".to_string(),
                 input.job.payload.slack_event_id.clone(),
@@ -299,7 +290,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
             ),
             (
                 "threadTs".to_string(),
-                thread_ts_for_message(&input.job.payload.message),
+                input.job.payload.message.thread_ts_or_ts().to_string(),
             ),
             (
                 "attempt".to_string(),
@@ -331,10 +322,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
         input.deps.logger.error(
             "Failed dead-letter notification",
             BTreeMap::from([
-                (
-                    "jobType".to_string(),
-                    investigation_job_type_to_string(&fail_result.job.job_type),
-                ),
+                ("jobType".to_string(), fail_result.job.job_type.to_string()),
                 (
                     "slackEventId".to_string(),
                     fail_result.job.payload.slack_event_id,
@@ -346,7 +334,12 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
                 ),
                 (
                     "threadTs".to_string(),
-                    thread_ts_for_message(&fail_result.job.payload.message),
+                    fail_result
+                        .job
+                        .payload
+                        .message
+                        .thread_ts_or_ts()
+                        .to_string(),
                 ),
                 ("error".to_string(), dead_letter_error.message),
             ]),
@@ -388,26 +381,13 @@ async fn post_dead_letter_failure_message(
         .slack_reply_port
         .post_thread_reply(SlackThreadReplyInput {
             channel: input.job.payload.message.channel.clone(),
-            thread_ts: thread_ts_for_message(&input.job.payload.message),
+            thread_ts: input.job.payload.message.thread_ts_or_ts().to_string(),
             text: format!(
                 "Investigation failed after retries: {}",
                 input.error_message
             ),
         })
         .await
-}
-
-fn thread_ts_for_message(message: &SlackMessage) -> String {
-    message
-        .thread_ts
-        .clone()
-        .unwrap_or_else(|| message.ts.clone())
-}
-
-fn investigation_job_type_to_string(value: &InvestigationJobType) -> String {
-    match value {
-        InvestigationJobType::AlertInvestigation => "alert_investigation".to_string(),
-    }
 }
 
 fn job_fail_status_to_string(value: &JobFailStatus) -> String {
@@ -421,16 +401,17 @@ fn job_fail_status_to_string(value: &JobFailStatus) -> String {
 mod tests {
     use super::{
         AlertInvestigationJobProcessorPort, Arc, BTreeMap, ExecuteInvestigationJobError,
-        InvestigationJob, InvestigationJobQueuePort, InvestigationJobType, InvestigationLogger,
-        JobFailStatus, PortError, ProcessClaimedJobInput, SlackMessage, SlackThreadReplyInput,
-        SlackThreadReplyPort, StartInvestigationWorkerRunnerUseCaseDeps, handle_failed_claimed_job,
-        process_claimed_job,
+        InvestigationJob, InvestigationJobQueuePort, InvestigationLogger, JobFailStatus,
+        PortError, ProcessClaimedJobInput, SlackThreadReplyInput, SlackThreadReplyPort,
+        StartInvestigationWorkerRunnerUseCaseDeps, handle_failed_claimed_job, process_claimed_job,
     };
     use async_trait::async_trait;
     use sre_shared::ports::outbound::{
         CompleteJobInput, FailJobInput, JobFailResult, JobQueuePort,
     };
-    use sre_shared::types::{InvestigationJobPayload, SlackTriggerType};
+    use sre_shared::types::{
+        InvestigationJobPayload, InvestigationJobType, SlackMessage, SlackTriggerType,
+    };
     use std::collections::VecDeque;
     use std::sync::Mutex;
 

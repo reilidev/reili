@@ -2,10 +2,9 @@ use serde::Serialize;
 use serde_json::Value;
 use sre_shared::errors::PortError;
 
-use crate::json_utils::read_non_empty_json_string;
+use crate::json_utils::{read_non_empty_json_string, truncate_for_error};
 
 const DEFAULT_BASE_URL: &str = "https://slack.com/api";
-const MAX_ERROR_BODY_PREVIEW_CHARS: usize = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackWebApiClientConfig {
@@ -106,16 +105,6 @@ fn normalize_base_url(value: &str) -> Result<String, PortError> {
 
 fn normalize_method_path(method: &str) -> String {
     method.trim().trim_start_matches('/').to_string()
-}
-
-fn truncate_for_error(value: &str) -> String {
-    let mut chars = value.chars();
-    let preview: String = chars.by_ref().take(MAX_ERROR_BODY_PREVIEW_CHARS).collect();
-    if chars.next().is_some() {
-        return format!("{preview}...");
-    }
-
-    preview
 }
 
 #[cfg(test)]

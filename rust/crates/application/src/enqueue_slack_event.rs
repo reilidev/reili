@@ -74,7 +74,7 @@ impl EnqueueSlackEventUseCase {
 impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
     async fn handle(&self, message: SlackMessage) -> Result<(), PortError> {
         let event_started_at = Instant::now();
-        let thread_ts = thread_ts_for_message(&message);
+        let thread_ts = message.thread_ts_or_ts().to_string();
         let job = build_investigation_job(BuildInvestigationJobInput {
             message: message.clone(),
             received_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
@@ -88,10 +88,7 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
                     BTreeMap::from([
                         ("slackEventId".to_string(), message.slack_event_id),
                         ("jobId".to_string(), job.job_id),
-                        (
-                            "jobType".to_string(),
-                            investigation_job_type_to_string(&job.job_type),
-                        ),
+                        ("jobType".to_string(), job.job_type.to_string()),
                         ("channel".to_string(), message.channel),
                         ("threadTs".to_string(), thread_ts),
                         (
@@ -113,10 +110,7 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
                     BTreeMap::from([
                         ("slackEventId".to_string(), message.slack_event_id),
                         ("jobId".to_string(), job.job_id),
-                        (
-                            "jobType".to_string(),
-                            investigation_job_type_to_string(&job.job_type),
-                        ),
+                        ("jobType".to_string(), job.job_type.to_string()),
                         ("channel".to_string(), message.channel.clone()),
                         ("threadTs".to_string(), thread_ts.clone()),
                         ("error".to_string(), dispatch_error.message.clone()),
@@ -178,10 +172,7 @@ fn retry_log_meta(input: RetryLogMetaInput<'_>) -> BTreeMap<String, String> {
             input.job.payload.slack_event_id.clone(),
         ),
         ("jobId".to_string(), input.job.job_id.clone()),
-        (
-            "jobType".to_string(),
-            investigation_job_type_to_string(&input.job.job_type),
-        ),
+        ("jobType".to_string(), input.job.job_type.to_string()),
         ("attempt".to_string(), input.attempt.to_string()),
         (
             "remainingAttempts".to_string(),
@@ -189,19 +180,6 @@ fn retry_log_meta(input: RetryLogMetaInput<'_>) -> BTreeMap<String, String> {
         ),
         ("error".to_string(), input.error.message.clone()),
     ])
-}
-
-fn thread_ts_for_message(message: &SlackMessage) -> String {
-    message
-        .thread_ts
-        .clone()
-        .unwrap_or_else(|| message.ts.clone())
-}
-
-fn investigation_job_type_to_string(value: &InvestigationJobType) -> String {
-    match value {
-        InvestigationJobType::AlertInvestigation => "alert_investigation".to_string(),
-    }
 }
 
 #[cfg(test)]

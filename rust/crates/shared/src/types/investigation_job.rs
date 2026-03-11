@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter};
+
 use serde::{Deserialize, Serialize};
 
 use crate::types::slack_message::SlackMessage;
@@ -6,6 +8,14 @@ use crate::types::slack_message::SlackMessage;
 #[serde(rename_all = "snake_case")]
 pub enum InvestigationJobType {
     AlertInvestigation,
+}
+
+impl Display for InvestigationJobType {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlertInvestigation => formatter.write_str("alert_investigation"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,5 +69,13 @@ mod tests {
             serde_json::from_str(&json).expect("deserialize investigation job");
 
         assert_eq!(restored, value);
+    }
+
+    #[test]
+    fn formats_job_type_as_snake_case_identifier() {
+        assert_eq!(
+            InvestigationJobType::AlertInvestigation.to_string(),
+            "alert_investigation".to_string()
+        );
     }
 }

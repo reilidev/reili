@@ -152,10 +152,7 @@ async fn enqueue_worker_internal_job(
         "Queued investigation job",
         BTreeMap::from([
             ("jobId".to_string(), job.job_id.clone()),
-            (
-                "jobType".to_string(),
-                investigation_job_type_to_string(&job.job_type),
-            ),
+            ("jobType".to_string(), job.job_type.to_string()),
             (
                 "slackEventId".to_string(),
                 job.payload.slack_event_id.clone(),
@@ -163,11 +160,7 @@ async fn enqueue_worker_internal_job(
             ("channel".to_string(), job.payload.message.channel.clone()),
             (
                 "threadTs".to_string(),
-                job.payload
-                    .message
-                    .thread_ts
-                    .clone()
-                    .unwrap_or(job.payload.message.ts.clone()),
+                job.payload.message.thread_ts_or_ts().to_string(),
             ),
             ("worker_queue_depth".to_string(), queue_depth.to_string()),
         ]),
@@ -198,14 +191,6 @@ fn read_bearer_token(headers: &HeaderMap) -> Option<&str> {
     }
 
     Some(token)
-}
-
-fn investigation_job_type_to_string(value: &sre_shared::types::InvestigationJobType) -> String {
-    match value {
-        sre_shared::types::InvestigationJobType::AlertInvestigation => {
-            "alert_investigation".to_string()
-        }
-    }
 }
 
 async fn shutdown_signal() {
