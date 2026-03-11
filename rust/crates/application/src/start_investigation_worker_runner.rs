@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use sre_shared::errors::PortError;
 use sre_shared::ports::outbound::{
     CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailStatus,
@@ -14,28 +13,14 @@ use tokio::task::spawn;
 use tokio::time::sleep;
 
 use crate::investigation::{
-    ExecuteInvestigationJobError, InvestigationLogger, ProcessAlertInvestigationJobUseCase,
+    ExecuteInvestigationJobInput, InvestigationExecutionDeps, execute_investigation_job,
 };
 
 const IDLE_WAIT_MS: u64 = 150;
 
-#[async_trait]
-pub trait AlertInvestigationJobProcessorPort: Send + Sync {
-    async fn handle(&self, job: InvestigationJob) -> Result<(), ExecuteInvestigationJobError>;
-}
-
-#[async_trait]
-impl AlertInvestigationJobProcessorPort for ProcessAlertInvestigationJobUseCase {
-    async fn handle(&self, job: InvestigationJob) -> Result<(), ExecuteInvestigationJobError> {
-        ProcessAlertInvestigationJobUseCase::handle(self, job).await
-    }
-}
-
 pub struct StartInvestigationWorkerRunnerUseCaseDeps {
     pub job_queue: Arc<InvestigationJobQueuePort>,
-    pub alert_investigation_processor: Arc<dyn AlertInvestigationJobProcessorPort>,
-    pub slack_reply_port: Arc<dyn SlackThreadReplyPort>,
-    pub logger: Arc<dyn InvestigationLogger>,
+    pub investigation_execution_deps: InvestigationExecutionDeps,
     pub worker_concurrency: u32,
     pub job_max_retry: u32,
     pub job_backoff_ms: u64,
@@ -113,7 +98,7 @@ async fn run_worker_iteration(input: RunWorkerIterationInput) {
             sleep(Duration::from_millis(IDLE_WAIT_MS)).await;
         }
         Err(error) => {
-            input.deps.logger.error(
+            input.deps.investigation_execution_deps.logger.error(
                 "Failed to claim worker job",
                 BTreeMap::from([
                     ("workerIndex".to_string(), input.worker_index.to_string()),
@@ -134,11 +119,14 @@ struct ProcessClaimedJobInput {
 async fn process_claimed_job(input: ProcessClaimedJobInput) {
     let started_at = Instant::now();
 
-    match input
-        .deps
-        .alert_investigation_processor
-        .handle(input.job.clone())
-        .await
+    match execute_investigation_job(ExecuteInvestigationJobInput {
+        job_type: input.job.job_type.clone(),
+        job_id: input.job.job_id.clone(),
+        retry_count: input.job.retry_count,
+        payload: input.job.payload.clone(),
+        deps: input.deps.investigation_execution_deps.clone(),
+    })
+    .await
     {
         Ok(()) => {
             match input
@@ -156,7 +144,7 @@ async fn process_claimed_job(input: ProcessClaimedJobInput) {
                     })
                     .await;
 
-                    input.deps.logger.info(
+                    input.deps.investigation_execution_deps.logger.info(
                         "Completed worker job",
                         BTreeMap::from([
                             ("workerIndex".to_string(), input.worker_index.to_string()),
@@ -234,7 +222,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
     let fail_result = match fail_result {
         Ok(value) => value,
         Err(queue_fail_error) => {
-            input.deps.logger.error(
+            input.deps.investigation_execution_deps.logger.error(
                 "Failed worker job",
                 BTreeMap::from([
                     ("workerIndex".to_string(), input.worker_index.to_string()),
@@ -274,7 +262,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
     })
     .await;
 
-    input.deps.logger.error(
+    input.deps.investigation_execution_deps.logger.error(
         "Failed worker job",
         BTreeMap::from([
             ("workerIndex".to_string(), input.worker_index.to_string()),
@@ -313,13 +301,15 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
     if fail_result.status == JobFailStatus::DeadLetter
         && let Err(dead_letter_error) =
             post_dead_letter_failure_message(PostDeadLetterFailureMessageInput {
-                slack_reply_port: Arc::clone(&input.deps.slack_reply_port),
+                slack_reply_port: Arc::clone(
+                    &input.deps.investigation_execution_deps.slack_reply_port,
+                ),
                 job: fail_result.job.clone(),
                 error_message: input.error_message.clone(),
             })
             .await
     {
-        input.deps.logger.error(
+        input.deps.investigation_execution_deps.logger.error(
             "Failed dead-letter notification",
             BTreeMap::from([
                 ("jobType".to_string(), fail_result.job.job_type.to_string()),
@@ -356,7 +346,7 @@ async fn read_worker_queue_depth(input: ReadWorkerQueueDepthInput) -> String {
     match input.deps.job_queue.get_depth().await {
         Ok(value) => value.to_string(),
         Err(error) => {
-            input.deps.logger.error(
+            input.deps.investigation_execution_deps.logger.error(
                 "Failed to read worker queue depth",
                 BTreeMap::from([
                     ("workerIndex".to_string(), input.worker_index.to_string()),
@@ -400,41 +390,47 @@ fn job_fail_status_to_string(value: &JobFailStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        AlertInvestigationJobProcessorPort, Arc, BTreeMap, ExecuteInvestigationJobError,
-        InvestigationJob, InvestigationJobQueuePort, InvestigationLogger, JobFailStatus,
-        PortError, ProcessClaimedJobInput, SlackThreadReplyInput, SlackThreadReplyPort,
-        StartInvestigationWorkerRunnerUseCaseDeps, handle_failed_claimed_job, process_claimed_job,
+        Arc, BTreeMap, InvestigationExecutionDeps, InvestigationJob, InvestigationJobQueuePort,
+        JobFailStatus, PortError, ProcessClaimedJobInput, SlackThreadReplyInput,
+        SlackThreadReplyPort, StartInvestigationWorkerRunnerUseCaseDeps, handle_failed_claimed_job,
+        process_claimed_job,
     };
     use async_trait::async_trait;
     use sre_shared::ports::outbound::{
-        CompleteJobInput, FailJobInput, JobFailResult, JobQueuePort,
+        CompleteJobInput, DatadogEventSearchParams, DatadogEventSearchPort,
+        DatadogEventSearchResult, DatadogLogAggregateBucket, DatadogLogAggregateParams,
+        DatadogLogAggregatePort, DatadogLogSearchParams, DatadogLogSearchPort,
+        DatadogLogSearchResult, DatadogMetricCatalogParams, DatadogMetricCatalogPort,
+        DatadogMetricQueryParams, DatadogMetricQueryPort, DatadogMetricQueryResult, FailJobInput,
+        GithubCodeSearchResultItem, GithubIssueSearchResultItem, GithubPullRequestDiff,
+        GithubPullRequestParams, GithubPullRequestSummary, GithubRepoSearchResultItem,
+        GithubRepositoryContent, GithubRepositoryContentParams, GithubSearchParams,
+        GithubSearchPort, InvestigationCoordinatorRunnerPort, InvestigationResources,
+        InvestigationSynthesizerRunnerPort, JobFailResult, JobQueuePort, RunCoordinatorInput,
+        RunSynthesizerInput, SlackProgressStreamPort, SlackThreadHistoryPort,
+        StartSlackProgressStreamInput, StartSlackProgressStreamOutput, SynthesizerRunReport,
+        WebSearchInput, WebSearchPort, WebSearchResult,
     };
     use sre_shared::types::{
-        InvestigationJobPayload, InvestigationJobType, SlackMessage, SlackTriggerType,
+        InvestigationJobPayload, InvestigationJobType, LlmUsageSnapshot, SlackMessage,
+        SlackThreadMessage, SlackTriggerType,
     };
     use std::collections::VecDeque;
     use std::sync::Mutex;
+
+    use crate::investigation::InvestigationLogger;
+
+    const USAGE_SNAPSHOT: LlmUsageSnapshot = LlmUsageSnapshot {
+        requests: 1,
+        input_tokens: 10,
+        output_tokens: 20,
+        total_tokens: 30,
+    };
 
     #[derive(Debug, Clone)]
     struct LogEntry {
         message: String,
         meta: BTreeMap<String, String>,
-    }
-
-    #[derive(Default)]
-    struct MockInvestigationProcessor {
-        results: Mutex<VecDeque<Result<(), ExecuteInvestigationJobError>>>,
-    }
-
-    #[async_trait]
-    impl AlertInvestigationJobProcessorPort for MockInvestigationProcessor {
-        async fn handle(&self, _job: InvestigationJob) -> Result<(), ExecuteInvestigationJobError> {
-            let mut lock = self.results.lock().expect("lock processor results");
-            match lock.pop_front() {
-                Some(result) => result,
-                None => Ok(()),
-            }
-        }
     }
 
     #[derive(Default)]
@@ -538,6 +534,183 @@ mod tests {
         }
     }
 
+    struct MockSlackProgressStreamPort;
+
+    #[async_trait]
+    impl SlackProgressStreamPort for MockSlackProgressStreamPort {
+        async fn start(
+            &self,
+            _input: StartSlackProgressStreamInput,
+        ) -> Result<StartSlackProgressStreamOutput, PortError> {
+            Ok(StartSlackProgressStreamOutput {
+                stream_ts: "stream-1".to_string(),
+            })
+        }
+
+        async fn append(
+            &self,
+            _input: sre_shared::ports::outbound::AppendSlackProgressStreamInput,
+        ) -> Result<(), PortError> {
+            Ok(())
+        }
+
+        async fn stop(
+            &self,
+            _input: sre_shared::ports::outbound::StopSlackProgressStreamInput,
+        ) -> Result<(), PortError> {
+            Ok(())
+        }
+    }
+
+    struct MockSlackThreadHistoryPort;
+
+    #[async_trait]
+    impl SlackThreadHistoryPort for MockSlackThreadHistoryPort {
+        async fn fetch_thread_history(
+            &self,
+            _input: sre_shared::ports::outbound::FetchSlackThreadHistoryInput,
+        ) -> Result<Vec<SlackThreadMessage>, PortError> {
+            Ok(Vec::new())
+        }
+    }
+
+    struct MockCoordinatorRunner;
+
+    #[async_trait]
+    impl InvestigationCoordinatorRunnerPort for MockCoordinatorRunner {
+        async fn run(
+            &self,
+            _input: RunCoordinatorInput,
+        ) -> Result<
+            sre_shared::ports::outbound::CoordinatorRunReport,
+            sre_shared::errors::AgentRunFailedError,
+        > {
+            Ok(sre_shared::ports::outbound::CoordinatorRunReport {
+                result_text: "coordinator result".to_string(),
+                usage: USAGE_SNAPSHOT,
+            })
+        }
+    }
+
+    struct MockSynthesizerRunner;
+
+    #[async_trait]
+    impl InvestigationSynthesizerRunnerPort for MockSynthesizerRunner {
+        async fn run(
+            &self,
+            _input: RunSynthesizerInput,
+        ) -> Result<SynthesizerRunReport, sre_shared::errors::AgentRunFailedError> {
+            Ok(SynthesizerRunReport {
+                report_text: "final report".to_string(),
+                usage: USAGE_SNAPSHOT,
+            })
+        }
+    }
+
+    struct UnusedResourcesPort;
+
+    #[async_trait]
+    impl DatadogLogAggregatePort for UnusedResourcesPort {
+        async fn aggregate_by_facet(
+            &self,
+            _params: DatadogLogAggregateParams,
+        ) -> Result<Vec<DatadogLogAggregateBucket>, PortError> {
+            Err(PortError::new("unused"))
+        }
+    }
+
+    #[async_trait]
+    impl DatadogLogSearchPort for UnusedResourcesPort {
+        async fn search_logs(
+            &self,
+            _params: DatadogLogSearchParams,
+        ) -> Result<Vec<DatadogLogSearchResult>, PortError> {
+            Err(PortError::new("unused"))
+        }
+    }
+
+    #[async_trait]
+    impl DatadogMetricCatalogPort for UnusedResourcesPort {
+        async fn list_metrics(
+            &self,
+            _params: DatadogMetricCatalogParams,
+        ) -> Result<Vec<String>, PortError> {
+            Err(PortError::new("unused"))
+        }
+    }
+
+    #[async_trait]
+    impl DatadogMetricQueryPort for UnusedResourcesPort {
+        async fn query_metrics(
+            &self,
+            _params: DatadogMetricQueryParams,
+        ) -> Result<Vec<DatadogMetricQueryResult>, PortError> {
+            Err(PortError::new("unused"))
+        }
+    }
+
+    #[async_trait]
+    impl DatadogEventSearchPort for UnusedResourcesPort {
+        async fn search_events(
+            &self,
+            _params: DatadogEventSearchParams,
+        ) -> Result<Vec<DatadogEventSearchResult>, PortError> {
+            Err(PortError::new("unused"))
+        }
+    }
+
+    #[async_trait]
+    impl GithubSearchPort for UnusedResourcesPort {
+        async fn search_repos(
+            &self,
+            _params: GithubSearchParams,
+        ) -> Result<Vec<GithubRepoSearchResultItem>, PortError> {
+            Err(PortError::new("unused"))
+        }
+
+        async fn search_code(
+            &self,
+            _params: GithubSearchParams,
+        ) -> Result<Vec<GithubCodeSearchResultItem>, PortError> {
+            Err(PortError::new("unused"))
+        }
+
+        async fn search_issues_and_pull_requests(
+            &self,
+            _params: GithubSearchParams,
+        ) -> Result<Vec<GithubIssueSearchResultItem>, PortError> {
+            Err(PortError::new("unused"))
+        }
+
+        async fn get_pull_request(
+            &self,
+            _params: GithubPullRequestParams,
+        ) -> Result<GithubPullRequestSummary, PortError> {
+            Err(PortError::new("unused"))
+        }
+
+        async fn get_pull_request_diff(
+            &self,
+            _params: GithubPullRequestParams,
+        ) -> Result<GithubPullRequestDiff, PortError> {
+            Err(PortError::new("unused"))
+        }
+
+        async fn get_repository_content(
+            &self,
+            _params: GithubRepositoryContentParams,
+        ) -> Result<GithubRepositoryContent, PortError> {
+            Err(PortError::new("unused"))
+        }
+    }
+
+    #[async_trait]
+    impl WebSearchPort for UnusedResourcesPort {
+        async fn search(&self, _input: WebSearchInput) -> Result<WebSearchResult, PortError> {
+            Err(PortError::new("unused"))
+        }
+    }
+
     #[derive(Default)]
     struct MockLogger {
         infos: Mutex<Vec<LogEntry>>,
@@ -581,14 +754,34 @@ mod tests {
 
     fn create_context() -> TestContext {
         let job_queue = Arc::new(MockJobQueue::default());
-        let processor = Arc::new(MockInvestigationProcessor::default());
         let slack_reply_port = Arc::new(MockSlackThreadReplyPort::default());
         let logger = Arc::new(MockLogger::default());
+        let resources_port = Arc::new(UnusedResourcesPort);
         let deps = Arc::new(StartInvestigationWorkerRunnerUseCaseDeps {
             job_queue: Arc::clone(&job_queue) as Arc<InvestigationJobQueuePort>,
-            alert_investigation_processor: processor as Arc<dyn AlertInvestigationJobProcessorPort>,
-            slack_reply_port: Arc::clone(&slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
-            logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+            investigation_execution_deps: InvestigationExecutionDeps {
+                slack_reply_port: Arc::clone(&slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
+                slack_progress_stream_port: Arc::new(MockSlackProgressStreamPort),
+                slack_thread_history_port: Arc::new(MockSlackThreadHistoryPort),
+                investigation_resources: InvestigationResources {
+                    log_aggregate_port: Arc::clone(&resources_port)
+                        as Arc<dyn DatadogLogAggregatePort>,
+                    log_search_port: Arc::clone(&resources_port) as Arc<dyn DatadogLogSearchPort>,
+                    metric_catalog_port: Arc::clone(&resources_port)
+                        as Arc<dyn DatadogMetricCatalogPort>,
+                    metric_query_port: Arc::clone(&resources_port)
+                        as Arc<dyn DatadogMetricQueryPort>,
+                    event_search_port: Arc::clone(&resources_port)
+                        as Arc<dyn DatadogEventSearchPort>,
+                    datadog_site: "datadoghq.com".to_string(),
+                    github_scope_org: "acme".to_string(),
+                    github_search_port: Arc::clone(&resources_port) as Arc<dyn GithubSearchPort>,
+                    web_search_port: resources_port as Arc<dyn WebSearchPort>,
+                },
+                coordinator_runner: Arc::new(MockCoordinatorRunner),
+                synthesizer_runner: Arc::new(MockSynthesizerRunner),
+                logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+            },
             worker_concurrency: 1,
             job_max_retry: 2,
             job_backoff_ms: 1_000,
@@ -648,11 +841,18 @@ mod tests {
 
         assert_eq!(context.job_queue.complete_inputs().len(), 1);
         assert_eq!(context.job_queue.fail_inputs().len(), 0);
+        assert_eq!(context.slack_reply_port.posted_replies().len(), 1);
         let info_logs = context.logger.infos();
-        assert_eq!(info_logs.len(), 1);
-        assert_eq!(info_logs[0].message, "Completed worker job");
+        assert!(
+            info_logs
+                .iter()
+                .any(|entry| entry.message == "Completed worker job")
+        );
         assert_eq!(
-            info_logs[0].meta.get("worker_queue_depth"),
+            info_logs
+                .iter()
+                .find(|entry| entry.message == "Completed worker job")
+                .and_then(|entry| entry.meta.get("worker_queue_depth")),
             Some(&"3".to_string())
         );
     }

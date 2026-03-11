@@ -36,6 +36,7 @@ use super::slack_thread_context_loader::{
 };
 use crate::alert_intake::{ExtractAlertContextInput, extract_alert_context};
 
+#[derive(Clone)]
 pub struct InvestigationExecutionDeps {
     pub slack_reply_port: Arc<dyn SlackThreadReplyPort>,
     pub slack_progress_stream_port: Arc<dyn SlackProgressStreamPort>,
@@ -215,7 +216,7 @@ async fn run_investigation(
         retry_count: input.retry_count,
     };
     let context = InvestigationContext {
-        resources: clone_investigation_resources(&input.deps.investigation_resources),
+        resources: input.deps.investigation_resources.clone(),
         runtime,
     };
 
@@ -378,22 +379,6 @@ fn extract_mentioned_user_id(text: &str) -> Option<String> {
     Some(user_id.to_string())
 }
 
-pub(super) fn clone_investigation_resources(
-    resources: &InvestigationResources,
-) -> InvestigationResources {
-    InvestigationResources {
-        log_aggregate_port: Arc::clone(&resources.log_aggregate_port),
-        log_search_port: Arc::clone(&resources.log_search_port),
-        metric_catalog_port: Arc::clone(&resources.metric_catalog_port),
-        metric_query_port: Arc::clone(&resources.metric_query_port),
-        event_search_port: Arc::clone(&resources.event_search_port),
-        datadog_site: resources.datadog_site.clone(),
-        github_scope_org: resources.github_scope_org.clone(),
-        github_search_port: Arc::clone(&resources.github_search_port),
-        web_search_port: Arc::clone(&resources.web_search_port),
-    }
-}
-
 struct ThreadContextLoggerAdapter {
     logger: Arc<dyn InvestigationLogger>,
 }
@@ -446,7 +431,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use sre_shared::errors::{CoordinatorRunFailedError, PortError, SynthesizerRunFailedError};
+    use sre_shared::errors::{AgentRunFailedError, PortError};
     use sre_shared::ports::outbound::{
         DatadogEventSearchParams, DatadogEventSearchPort, DatadogEventSearchResult,
         DatadogLogAggregateBucket, DatadogLogAggregateParams, DatadogLogAggregatePort,
@@ -583,7 +568,7 @@ mod tests {
         async fn run(
             &self,
             input: RunCoordinatorInput,
-        ) -> Result<sre_shared::ports::outbound::CoordinatorRunReport, CoordinatorRunFailedError>
+        ) -> Result<sre_shared::ports::outbound::CoordinatorRunReport, AgentRunFailedError>
         {
             self.captured
                 .lock()
@@ -607,7 +592,7 @@ mod tests {
         async fn run(
             &self,
             _input: RunSynthesizerInput,
-        ) -> Result<SynthesizerRunReport, SynthesizerRunFailedError> {
+        ) -> Result<SynthesizerRunReport, AgentRunFailedError> {
             Ok(SynthesizerRunReport {
                 report_text: "final report".to_string(),
                 usage: USAGE_SNAPSHOT,

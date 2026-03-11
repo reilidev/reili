@@ -5,6 +5,7 @@ use super::{
     DatadogMetricCatalogPort, DatadogMetricQueryPort, GithubSearchPort, WebSearchPort,
 };
 
+#[derive(Clone)]
 pub struct InvestigationResources {
     pub log_aggregate_port: Arc<dyn DatadogLogAggregatePort>,
     pub log_search_port: Arc<dyn DatadogLogSearchPort>,

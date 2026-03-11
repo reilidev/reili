@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rig::completion::{Prompt, Usage};
 use rig::{client::ProviderClient, providers::openai};
-use sre_shared::errors::SynthesizerRunFailedError;
+use sre_shared::errors::{AgentRole, AgentRunFailedError};
 use sre_shared::ports::outbound::{
     InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
     InvestigationSynthesizerRunnerPort, RunSynthesizerInput, SYNTHESIZER_PROGRESS_OWNER_ID,
@@ -43,7 +43,7 @@ impl InvestigationSynthesizerRunnerPort for OpenAiInvestigationSynthesizerRunner
     async fn run(
         &self,
         input: RunSynthesizerInput,
-    ) -> Result<SynthesizerRunReport, SynthesizerRunFailedError> {
+    ) -> Result<SynthesizerRunReport, AgentRunFailedError> {
         let request_count_hook = RequestCountHook::new();
         let synthesizer_prompt = build_synthesizer_prompt(&input.result, &input.alert_context);
         let openai_client = openai::Client::from_val(self.openai_api_key.clone().into());
@@ -98,7 +98,7 @@ struct PublishMessageOutputCreatedEventInput {
 
 async fn publish_message_output_created_event(
     input: PublishMessageOutputCreatedEventInput,
-) -> Result<(), SynthesizerRunFailedError> {
+) -> Result<(), AgentRunFailedError> {
     input
         .on_progress_event
         .publish(InvestigationProgressEventInput {
@@ -123,13 +123,11 @@ struct CreateSynthesizerRunnerFailedErrorInput {
     cause_message: String,
 }
 
-fn create_failed_error(
-    input: CreateSynthesizerRunnerFailedErrorInput,
-) -> SynthesizerRunFailedError {
+fn create_failed_error(input: CreateSynthesizerRunnerFailedErrorInput) -> AgentRunFailedError {
     let usage = map_rig_usage_to_llm_usage_snapshot(MapRigUsageToSnapshotInput {
         usage: input.usage,
         requests: input.requests,
     });
 
-    SynthesizerRunFailedError::new(usage, input.cause_message)
+    AgentRunFailedError::new(AgentRole::Synthesizer, usage, input.cause_message)
 }

@@ -10,9 +10,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use sre_adapters::observability::logger::init_json_logger;
 use sre_adapters::queue::InMemoryJobQueue;
-use sre_application::investigation::InvestigationLogger;
-use sre_application::investigation::ProcessAlertInvestigationJobUseCase;
-use sre_application::investigation::ProcessAlertInvestigationJobUseCaseDeps;
+use sre_application::investigation::{InvestigationExecutionDeps, InvestigationLogger};
 use sre_application::start_investigation_worker_runner::StartInvestigationWorkerRunnerUseCase;
 use sre_application::start_investigation_worker_runner::StartInvestigationWorkerRunnerUseCaseDeps;
 use sre_shared::ports::outbound::InvestigationJobQueuePort;
@@ -55,23 +53,18 @@ pub async fn run_worker() -> Result<(), WorkerRunError> {
     let deps = build_worker_runtime_deps(&config)?;
     let job_queue: Arc<InvestigationJobQueuePort> =
         Arc::new(InMemoryJobQueue::<InvestigationJob>::new());
-    let alert_investigation_processor = Arc::new(ProcessAlertInvestigationJobUseCase::new(
-        ProcessAlertInvestigationJobUseCaseDeps {
-            slack_reply_port: Arc::clone(&deps.slack_reply_port),
-            slack_progress_stream_port: Arc::clone(&deps.slack_progress_stream_port),
-            slack_thread_history_port: Arc::clone(&deps.slack_thread_history_port),
-            investigation_resources: deps.investigation_resources,
-            coordinator_runner: Arc::clone(&deps.coordinator_runner),
-            synthesizer_runner: Arc::clone(&deps.synthesizer_runner),
-            logger: Arc::clone(&deps.logger),
-        },
-    ));
     let worker_runner =
         StartInvestigationWorkerRunnerUseCase::new(StartInvestigationWorkerRunnerUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
-            alert_investigation_processor,
-            slack_reply_port: Arc::clone(&deps.slack_reply_port),
-            logger: Arc::clone(&deps.logger),
+            investigation_execution_deps: InvestigationExecutionDeps {
+                slack_reply_port: Arc::clone(&deps.slack_reply_port),
+                slack_progress_stream_port: Arc::clone(&deps.slack_progress_stream_port),
+                slack_thread_history_port: Arc::clone(&deps.slack_thread_history_port),
+                investigation_resources: deps.investigation_resources,
+                coordinator_runner: Arc::clone(&deps.coordinator_runner),
+                synthesizer_runner: Arc::clone(&deps.synthesizer_runner),
+                logger: Arc::clone(&deps.logger),
+            },
             worker_concurrency: config.worker_concurrency,
             job_max_retry: config.job_max_retry,
             job_backoff_ms: config.job_backoff_ms,

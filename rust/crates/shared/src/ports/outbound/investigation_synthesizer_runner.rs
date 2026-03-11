@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::{
-    errors::SynthesizerRunFailedError,
+    errors::AgentRunFailedError,
     types::{AlertContext, InvestigationResult, LlmUsageSnapshot},
 };
 
@@ -26,5 +26,5 @@ pub trait InvestigationSynthesizerRunnerPort: Send + Sync {
     async fn run(
         &self,
         input: RunSynthesizerInput,
-    ) -> Result<SynthesizerRunReport, SynthesizerRunFailedError>;
+    ) -> Result<SynthesizerRunReport, AgentRunFailedError>;
 }

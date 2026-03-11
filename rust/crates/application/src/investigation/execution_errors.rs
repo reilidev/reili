@@ -1,6 +1,5 @@
 use sre_shared::errors::{
-    CoordinatorRunFailedError, InvestigationExecutionFailedError, PortError,
-    SynthesizerRunFailedError,
+    AgentRole, AgentRunFailedError, InvestigationExecutionFailedError, PortError,
 };
 use sre_shared::types::{InvestigationLlmTelemetry, LlmUsageSnapshot};
 use thiserror::Error;
@@ -12,9 +11,7 @@ pub enum ExecuteInvestigationJobError {
     #[error("{0}")]
     Port(PortError),
     #[error("{0}")]
-    CoordinatorRunFailed(CoordinatorRunFailedError),
-    #[error("{0}")]
-    SynthesizerRunFailed(SynthesizerRunFailedError),
+    AgentRunFailed(AgentRunFailedError),
     #[error("{0}")]
     InvestigationExecutionFailed(InvestigationExecutionFailedError),
 }
@@ -25,15 +22,9 @@ impl From<PortError> for ExecuteInvestigationJobError {
     }
 }
 
-impl From<CoordinatorRunFailedError> for ExecuteInvestigationJobError {
-    fn from(value: CoordinatorRunFailedError) -> Self {
-        Self::CoordinatorRunFailed(value)
-    }
-}
-
-impl From<SynthesizerRunFailedError> for ExecuteInvestigationJobError {
-    fn from(value: SynthesizerRunFailedError) -> Self {
-        Self::SynthesizerRunFailed(value)
+impl From<AgentRunFailedError> for ExecuteInvestigationJobError {
+    fn from(value: AgentRunFailedError) -> Self {
+        Self::AgentRunFailed(value)
     }
 }
 
@@ -74,20 +65,18 @@ pub fn resolve_investigation_failure_error(
                 synthesizer_usage: value.synthesizer_usage.clone(),
             }
         }
-        ExecuteInvestigationJobError::CoordinatorRunFailed(value) => {
-            ResolvedInvestigationFailureError {
+        ExecuteInvestigationJobError::AgentRunFailed(value) => match value.role {
+            AgentRole::Coordinator => ResolvedInvestigationFailureError {
                 error_message: value.cause_message.clone(),
                 coordinator_usage: value.usage.clone(),
                 synthesizer_usage: create_empty_llm_usage_snapshot(),
-            }
-        }
-        ExecuteInvestigationJobError::SynthesizerRunFailed(value) => {
-            ResolvedInvestigationFailureError {
+            },
+            AgentRole::Synthesizer => ResolvedInvestigationFailureError {
                 error_message: value.cause_message.clone(),
                 coordinator_usage: create_empty_llm_usage_snapshot(),
                 synthesizer_usage: value.usage.clone(),
-            }
-        }
+            },
+        },
         ExecuteInvestigationJobError::Port(value) => ResolvedInvestigationFailureError {
             error_message: value.message.clone(),
             coordinator_usage: create_empty_llm_usage_snapshot(),
@@ -98,7 +87,7 @@ pub fn resolve_investigation_failure_error(
 
 #[cfg(test)]
 mod tests {
-    use sre_shared::errors::{CoordinatorRunFailedError, PortError, SynthesizerRunFailedError};
+    use sre_shared::errors::{AgentRole, AgentRunFailedError, PortError};
     use sre_shared::types::{BuildInvestigationLlmTelemetryInput, LlmUsageSnapshot};
 
     use super::{
@@ -109,9 +98,11 @@ mod tests {
 
     #[test]
     fn resolves_usage_for_coordinator_failure() {
-        let error = ExecuteInvestigationJobError::CoordinatorRunFailed(
-            CoordinatorRunFailedError::new(snapshot(2), "coordinator failed"),
-        );
+        let error = ExecuteInvestigationJobError::AgentRunFailed(AgentRunFailedError::new(
+            AgentRole::Coordinator,
+            snapshot(2),
+            "coordinator failed",
+        ));
 
         let resolved = resolve_investigation_failure_error(&error);
 
@@ -144,9 +135,11 @@ mod tests {
     #[test]
     fn resolves_usage_for_port_and_synthesizer_failures() {
         let port_error = ExecuteInvestigationJobError::Port(PortError::new("slack failed"));
-        let synth_error = ExecuteInvestigationJobError::SynthesizerRunFailed(
-            SynthesizerRunFailedError::new(snapshot(5), "synth failed"),
-        );
+        let synth_error = ExecuteInvestigationJobError::AgentRunFailed(AgentRunFailedError::new(
+            AgentRole::Synthesizer,
+            snapshot(5),
+            "synth failed",
+        ));
 
         let port_resolved = resolve_investigation_failure_error(&port_error);
         let synth_resolved = resolve_investigation_failure_error(&synth_error);

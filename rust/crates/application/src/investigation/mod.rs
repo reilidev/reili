@@ -1,7 +1,6 @@
 pub mod execute_investigation_job;
 pub mod execution_errors;
 pub mod logger;
-pub mod process_alert_investigation_job;
 pub mod services;
 pub mod slack_thread_context_loader;
 
@@ -14,9 +13,6 @@ pub use execution_errors::{
     resolve_investigation_failure_error,
 };
 pub use logger::InvestigationLogger;
-pub use process_alert_investigation_job::{
-    ProcessAlertInvestigationJobUseCase, ProcessAlertInvestigationJobUseCaseDeps,
-};
 pub use slack_thread_context_loader::{
     SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
     ThreadContextFetchFailedLogInput, ThreadContextLoaderLogger,

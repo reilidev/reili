@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rig::completion::{Prompt, Usage};
 use rig::{client::ProviderClient, providers::openai};
-use sre_shared::errors::CoordinatorRunFailedError;
+use sre_shared::errors::{AgentRole, AgentRunFailedError};
 use sre_shared::ports::outbound::{
     COORDINATOR_PROGRESS_OWNER_ID, CoordinatorRunReport, InvestigationCoordinatorRunnerPort,
     InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
@@ -43,7 +43,7 @@ impl InvestigationCoordinatorRunnerPort for OpenAiInvestigationCoordinatorRunner
     async fn run(
         &self,
         input: RunCoordinatorInput,
-    ) -> Result<CoordinatorRunReport, CoordinatorRunFailedError> {
+    ) -> Result<CoordinatorRunReport, AgentRunFailedError> {
         let request_count_hook = RequestCountHook::new();
         let coordinator_prompt = build_coordinator_prompt(&input.alert_context);
         let openai_client = openai::Client::from_val(self.openai_api_key.clone().into());
@@ -96,7 +96,7 @@ struct PublishMessageOutputCreatedEventInput {
 
 async fn publish_message_output_created_event(
     input: PublishMessageOutputCreatedEventInput,
-) -> Result<(), CoordinatorRunFailedError> {
+) -> Result<(), AgentRunFailedError> {
     input
         .on_progress_event
         .publish(InvestigationProgressEventInput {
@@ -121,13 +121,11 @@ struct CreateCoordinatorRunnerFailedErrorInput {
     cause_message: String,
 }
 
-fn create_failed_error(
-    input: CreateCoordinatorRunnerFailedErrorInput,
-) -> CoordinatorRunFailedError {
+fn create_failed_error(input: CreateCoordinatorRunnerFailedErrorInput) -> AgentRunFailedError {
     let usage = map_rig_usage_to_llm_usage_snapshot(MapRigUsageToSnapshotInput {
         usage: input.usage,
         requests: input.requests,
     });
 
-    CoordinatorRunFailedError::new(usage, input.cause_message)
+    AgentRunFailedError::new(AgentRole::Coordinator, usage, input.cause_message)
 }
