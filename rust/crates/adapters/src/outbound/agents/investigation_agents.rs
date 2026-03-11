@@ -17,14 +17,23 @@ use super::tools::{
     ReportProgressTool, ReportProgressToolInput, SearchDatadogEventsTool, SearchDatadogLogsTool,
     SearchGithubCodeTool, SearchGithubIssuesAndPullRequestsTool, SearchGithubReposTool,
 };
+use super::{
+    progress_event_hook::ProgressEventHook,
+    progress_reporting_sub_agent_tool::ProgressReportingSubAgentTool,
+};
 
 const INVESTIGATION_MODEL: &str = "gpt-5.3-codex";
 const COORDINATOR_MAX_TURNS: usize = 20;
 const SUBAGENT_MAX_TURNS: usize = 50;
 const SYNTHESIZER_MAX_TURNS: usize = 3;
+const LOGS_PROGRESS_OWNER_ID: &str = "investigate_logs";
+const METRICS_PROGRESS_OWNER_ID: &str = "investigate_metrics";
+const EVENTS_PROGRESS_OWNER_ID: &str = "investigate_events";
+const GITHUB_PROGRESS_OWNER_ID: &str = "investigate_github";
 
 type OpenAiCompletionModel = <openai::Client as CompletionClient>::CompletionModel;
 type OpenAiAgent = Agent<OpenAiCompletionModel>;
+type OpenAiSubAgent = Agent<OpenAiCompletionModel, ProgressEventHook>;
 
 pub struct BuildCoordinatorAgentInput {
     pub client: openai::Client,
@@ -45,21 +54,29 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
         client: input.client.clone(),
         resources: Arc::clone(&input.resources),
         language: input.language.clone(),
+        on_progress_event: Arc::clone(&input.on_progress_event),
+        owner_id: LOGS_PROGRESS_OWNER_ID.to_string(),
     });
     let metrics_agent = build_metrics_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
         resources: Arc::clone(&input.resources),
         language: input.language.clone(),
+        on_progress_event: Arc::clone(&input.on_progress_event),
+        owner_id: METRICS_PROGRESS_OWNER_ID.to_string(),
     });
     let events_agent = build_events_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
         resources: Arc::clone(&input.resources),
         language: input.language.clone(),
+        on_progress_event: Arc::clone(&input.on_progress_event),
+        owner_id: EVENTS_PROGRESS_OWNER_ID.to_string(),
     });
     let github_agent = build_github_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
         resources: Arc::clone(&input.resources),
         language: input.language.clone(),
+        on_progress_event: Arc::clone(&input.on_progress_event),
+        owner_id: GITHUB_PROGRESS_OWNER_ID.to_string(),
     });
 
     input
@@ -86,10 +103,26 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
             on_progress_event: Arc::clone(&input.on_progress_event),
             owner_id: COORDINATOR_PROGRESS_OWNER_ID.to_string(),
         }))
-        .tool(logs_agent)
-        .tool(metrics_agent)
-        .tool(events_agent)
-        .tool(github_agent)
+        .tool(ProgressReportingSubAgentTool::new(
+            logs_agent,
+            LOGS_PROGRESS_OWNER_ID.to_string(),
+            Arc::clone(&input.on_progress_event),
+        ))
+        .tool(ProgressReportingSubAgentTool::new(
+            metrics_agent,
+            METRICS_PROGRESS_OWNER_ID.to_string(),
+            Arc::clone(&input.on_progress_event),
+        ))
+        .tool(ProgressReportingSubAgentTool::new(
+            events_agent,
+            EVENTS_PROGRESS_OWNER_ID.to_string(),
+            Arc::clone(&input.on_progress_event),
+        ))
+        .tool(ProgressReportingSubAgentTool::new(
+            github_agent,
+            GITHUB_PROGRESS_OWNER_ID.to_string(),
+            Arc::clone(&input.on_progress_event),
+        ))
         .build()
 }
 
@@ -150,9 +183,11 @@ struct BuildSpecialistAgentInput {
     client: openai::Client,
     resources: Arc<InvestigationResources>,
     language: String,
+    on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+    owner_id: String,
 }
 
-fn build_logs_agent(input: BuildSpecialistAgentInput) -> OpenAiAgent {
+fn build_logs_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
     input
         .client
         .agent(INVESTIGATION_MODEL)
@@ -161,11 +196,19 @@ fn build_logs_agent(input: BuildSpecialistAgentInput) -> OpenAiAgent {
         .preamble(&build_logs_instructions(&input.language))
         .default_max_turns(SUBAGENT_MAX_TURNS)
         .additional_params(model_additional_params())
+        .hook(ProgressEventHook::new(
+            input.owner_id.clone(),
+            Arc::clone(&input.on_progress_event),
+        ))
+        .tool(ReportProgressTool::new(ReportProgressToolInput {
+            on_progress_event: Arc::clone(&input.on_progress_event),
+            owner_id: input.owner_id,
+        }))
         .tool(SearchDatadogLogsTool::new(input.resources))
         .build()
 }
 
-fn build_metrics_agent(input: BuildSpecialistAgentInput) -> OpenAiAgent {
+fn build_metrics_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
     input
         .client
         .agent(INVESTIGATION_MODEL)
@@ -174,11 +217,19 @@ fn build_metrics_agent(input: BuildSpecialistAgentInput) -> OpenAiAgent {
         .preamble(&build_metrics_instructions(&input.language))
         .default_max_turns(SUBAGENT_MAX_TURNS)
         .additional_params(model_additional_params())
+        .hook(ProgressEventHook::new(
+            input.owner_id.clone(),
+            Arc::clone(&input.on_progress_event),
+        ))
+        .tool(ReportProgressTool::new(ReportProgressToolInput {
+            on_progress_event: Arc::clone(&input.on_progress_event),
+            owner_id: input.owner_id,
+        }))
         .tool(QueryDatadogMetricsTool::new(input.resources))
         .build()
 }
 
-fn build_events_agent(input: BuildSpecialistAgentInput) -> OpenAiAgent {
+fn build_events_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
     input
         .client
         .agent(INVESTIGATION_MODEL)
@@ -187,11 +238,19 @@ fn build_events_agent(input: BuildSpecialistAgentInput) -> OpenAiAgent {
         .preamble(&build_events_instructions(&input.language))
         .default_max_turns(SUBAGENT_MAX_TURNS)
         .additional_params(model_additional_params())
+        .hook(ProgressEventHook::new(
+            input.owner_id.clone(),
+            Arc::clone(&input.on_progress_event),
+        ))
+        .tool(ReportProgressTool::new(ReportProgressToolInput {
+            on_progress_event: Arc::clone(&input.on_progress_event),
+            owner_id: input.owner_id,
+        }))
         .tool(SearchDatadogEventsTool::new(input.resources))
         .build()
 }
 
-fn build_github_agent(input: BuildSpecialistAgentInput) -> OpenAiAgent {
+fn build_github_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
     let github_scope_org = input.resources.github_scope_org.clone();
 
     input
@@ -205,6 +264,14 @@ fn build_github_agent(input: BuildSpecialistAgentInput) -> OpenAiAgent {
         }))
         .default_max_turns(SUBAGENT_MAX_TURNS)
         .additional_params(model_additional_params())
+        .hook(ProgressEventHook::new(
+            input.owner_id.clone(),
+            Arc::clone(&input.on_progress_event),
+        ))
+        .tool(ReportProgressTool::new(ReportProgressToolInput {
+            on_progress_event: Arc::clone(&input.on_progress_event),
+            owner_id: input.owner_id,
+        }))
         .tool(SearchGithubCodeTool::new(Arc::clone(&input.resources)))
         .tool(SearchGithubReposTool::new(Arc::clone(&input.resources)))
         .tool(SearchGithubIssuesAndPullRequestsTool::new(Arc::clone(
@@ -305,6 +372,9 @@ Guidelines:
 fn build_logs_instructions(language: &str) -> String {
     format!(
         "You are a log analysis specialist.
+Before entering a new investigation step, call report_progress.
+report_progress payload must be short: use title and summary fields.
+Do not post consecutive report_progress calls with identical content.
 Use search_datadog_logs and summarize errors, anomalies, and patterns.
 Run independent tool calls in parallel when possible.
 If you receive client_error payloads, adjust query and retry when useful.
@@ -315,6 +385,9 @@ Use {language} for all responses."
 fn build_metrics_instructions(language: &str) -> String {
     format!(
         "You are a metrics analysis specialist.
+Before entering a new investigation step, call report_progress.
+report_progress payload must be short: use title and summary fields.
+Do not post consecutive report_progress calls with identical content.
 Use query_datadog_metrics and summarize trends, spikes, and anomalies.
 Run independent tool calls in parallel when possible.
 If you receive client_error payloads, adjust query and retry when useful.
@@ -325,6 +398,9 @@ Use {language} for all responses."
 fn build_events_instructions(language: &str) -> String {
     format!(
         "You are an events analysis specialist.
+Before entering a new investigation step, call report_progress.
+report_progress payload must be short: use title and summary fields.
+Do not post consecutive report_progress calls with identical content.
 Use search_datadog_events and correlate deployments/config changes with incidents.
 Run independent tool calls in parallel when possible.
 If you receive client_error payloads, adjust query and retry when useful.
@@ -340,6 +416,9 @@ struct BuildGithubInstructionsInput {
 fn build_github_instructions(input: BuildGithubInstructionsInput) -> String {
     format!(
         "You are a GitHub analysis specialist.
+Before entering a new investigation step, call report_progress.
+report_progress payload must be short: use title and summary fields.
+Do not post consecutive report_progress calls with identical content.
 Use the available tools to search code, repositories, issues, pull requests, and repository files.
 Mandatory query rule:
 - Every search_github_code/search_github_repos/search_github_issues_and_pull_requests call must include org:{github_scope_org}
@@ -358,8 +437,10 @@ mod tests {
     use sre_shared::types::AlertContext;
 
     use super::{
-        BuildCoordinatorInstructionsInput, build_coordinator_instructions,
-        build_coordinator_prompt, build_synthesizer_prompt, model_additional_params,
+        BuildCoordinatorInstructionsInput, BuildGithubInstructionsInput,
+        build_coordinator_instructions, build_coordinator_prompt, build_events_instructions,
+        build_github_instructions, build_logs_instructions, build_metrics_instructions,
+        build_synthesizer_prompt, model_additional_params,
     };
 
     fn sample_alert_context() -> AlertContext {
@@ -414,5 +495,27 @@ mod tests {
         assert!(instructions.contains("call report_progress"));
         assert!(instructions.contains("title and summary fields"));
         assert!(instructions.contains("Do not post consecutive report_progress"));
+    }
+
+    #[test]
+    fn specialist_instructions_include_report_progress_rules() {
+        let logs_instructions = build_logs_instructions("Japanese");
+        let metrics_instructions = build_metrics_instructions("Japanese");
+        let events_instructions = build_events_instructions("Japanese");
+        let github_instructions = build_github_instructions(BuildGithubInstructionsInput {
+            language: "Japanese".to_string(),
+            github_scope_org: "acme".to_string(),
+        });
+
+        for instructions in [
+            logs_instructions,
+            metrics_instructions,
+            events_instructions,
+            github_instructions,
+        ] {
+            assert!(instructions.contains("call report_progress"));
+            assert!(instructions.contains("title and summary fields"));
+            assert!(instructions.contains("Do not post consecutive report_progress"));
+        }
     }
 }
