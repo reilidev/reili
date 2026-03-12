@@ -2,7 +2,7 @@
 
 ## Project Purpose
 
-The SRE AI Agent is a service that responds to Slack alerts and GitHub activity by analyzing logs, metrics.
+Reili is a service that responds to Slack alerts and GitHub activity by analyzing logs and metrics.
 
 ## Technologies
 
@@ -14,7 +14,7 @@ The SRE AI Agent is a service that responds to Slack alerts and GitHub activity 
 ## Structure
 
 ```
-src/                                # Root implementation directory for the SRE Agent
+src/                                # Root implementation directory for Reili
 ├── runtime/                        # Application bootstrap and runtime wiring
 │   ├── bootstrap/                  # Shared dependency construction and DI helpers
 │   ├── config/                     # Environment/config loading and validation

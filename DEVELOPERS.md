@@ -1,6 +1,6 @@
 # DEVELOPERS
 
-This document is for contributors and maintainers of `sre-mate`.
+This document is for contributors and maintainers of `Reili`.
 
 ## Prerequisites
 

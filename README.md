@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>sre-mate</h1>
+  <h1>Reili</h1>
   <p><strong>A Slack-native AI agent for read-only DevOps investigations</strong></p>
   <p>
     Investigate alerts quickly across Datadog, GitHub, and Slack threads.
@@ -8,9 +8,9 @@
   </p>
 </div>
 
-## Why sre-mate
+## Why Reili
 
-`sre-mate` starts from Slack messages and investigation requests, then:
+`Reili` starts from Slack messages and investigation requests, then:
 
 - Investigates Datadog Logs, Metrics, and Events
 - Explores GitHub repositories, PRs, and code
@@ -130,7 +130,7 @@ pnpm start:ingress
 Mention the bot in Slack with an investigation request:
 
 ```text
-@sre-mate Please investigate this alert. Check error increase in the last 30 minutes and correlate with recent PRs.
+@Reili Please investigate this alert. Check error increase in the last 30 minutes and correlate with recent PRs.
 ```
 
 What happens:
