@@ -282,7 +282,6 @@ mod tests {
 
     fn base_log_meta() -> BTreeMap<String, String> {
         BTreeMap::from([
-            ("jobType".to_string(), "alert_investigation".to_string()),
             ("slackEventId".to_string(), "Ev001".to_string()),
             ("jobId".to_string(), "job-1".to_string()),
             ("channel".to_string(), "C001".to_string()),

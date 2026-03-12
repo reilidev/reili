@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::{
     errors::AgentRunFailedError,
-    types::{AlertContext, InvestigationResult, LlmUsageSnapshot},
+    types::{AlertContext, LlmUsageSnapshot},
 };
 
 use super::InvestigationProgressEventPort;
@@ -16,7 +16,7 @@ pub struct SynthesizerRunReport {
 }
 
 pub struct RunSynthesizerInput {
-    pub result: InvestigationResult,
+    pub result: String,
     pub alert_context: AlertContext,
     pub on_progress_event: Arc<dyn InvestigationProgressEventPort>,
 }

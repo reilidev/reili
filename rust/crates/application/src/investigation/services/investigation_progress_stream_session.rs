@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,6 +11,11 @@ use sre_shared::ports::outbound::{
 };
 
 use crate::investigation::logger::InvestigationLogger;
+
+use super::progress_stream_state::{
+    ProgressStreamState, ReasoningScope, ReasoningScopeStatus, ReasoningScopeToolStatus,
+    ResolveToolStartedScopeOutput, resolve_reasoning_scope_status,
+};
 
 const STREAM_START_TEXT: &str = ":hourglass_flowing_sand:";
 
@@ -115,12 +120,14 @@ struct SlackInvestigationProgressStreamSession {
     fallback_mode: bool,
     append_count: u64,
     last_error_message: Option<String>,
-    active_reasoning_scope_id_by_owner_id: HashMap<String, String>,
-    reasoning_scope_by_id: HashMap<String, ReasoningScope>,
-    reasoning_scope_id_by_task_key: HashMap<String, String>,
-    completed_reasoning_scope_ids_by_owner_id: HashMap<String, HashSet<String>>,
-    latest_completed_reasoning_scope_id_by_owner_id: HashMap<String, String>,
-    next_scope_number: u64,
+    state: ProgressStreamState,
+}
+
+struct RecoverFromAppendFailureInput {
+    chunks: Vec<SlackAnyChunk>,
+    fallback_text: String,
+    failed_stream_ts: String,
+    error_message: String,
 }
 
 impl SlackInvestigationProgressStreamSession {
@@ -132,212 +139,8 @@ impl SlackInvestigationProgressStreamSession {
             fallback_mode: false,
             append_count: 0,
             last_error_message: None,
-            active_reasoning_scope_id_by_owner_id: HashMap::new(),
-            reasoning_scope_by_id: HashMap::new(),
-            reasoning_scope_id_by_task_key: HashMap::new(),
-            completed_reasoning_scope_ids_by_owner_id: HashMap::new(),
-            latest_completed_reasoning_scope_id_by_owner_id: HashMap::new(),
-            next_scope_number: 0,
+            state: ProgressStreamState::new(),
         }
-    }
-
-    async fn resolve_scope_for_tool_started(
-        &mut self,
-        input: &InvestigationProgressTaskUpdateInput,
-    ) -> String {
-        let task_ownership_key = build_task_ownership_key(&input.owner_id, &input.task_id);
-        if let Some(existing_scope_id) =
-            self.reasoning_scope_id_by_task_key.get(&task_ownership_key)
-            && self.reasoning_scope_by_id.contains_key(existing_scope_id)
-        {
-            return existing_scope_id.clone();
-        }
-
-        if let Some(active_scope_id) = self
-            .active_reasoning_scope_id_by_owner_id
-            .get(&input.owner_id)
-            .cloned()
-        {
-            if self.reasoning_scope_by_id.contains_key(&active_scope_id) {
-                self.reasoning_scope_id_by_task_key
-                    .insert(task_ownership_key, active_scope_id.clone());
-                return active_scope_id;
-            }
-            self.active_reasoning_scope_id_by_owner_id
-                .remove(&input.owner_id);
-        }
-
-        self.reopen_scope_for_tool_started(input).await
-    }
-
-    async fn resolve_scope_for_tool_completed(
-        &mut self,
-        input: &InvestigationProgressTaskUpdateInput,
-    ) -> Option<String> {
-        let task_ownership_key = build_task_ownership_key(&input.owner_id, &input.task_id);
-        if let Some(existing_scope_id) =
-            self.reasoning_scope_id_by_task_key.get(&task_ownership_key)
-            && self.reasoning_scope_by_id.contains_key(existing_scope_id)
-        {
-            return Some(existing_scope_id.clone());
-        }
-
-        self.input.logger.warn(
-            "reasoning_scope_not_found_for_tool_completed",
-            BTreeMap::from([
-                ("channel".to_string(), self.input.channel.clone()),
-                ("threadTs".to_string(), self.input.thread_ts.clone()),
-                ("ownerId".to_string(), input.owner_id.clone()),
-                ("taskId".to_string(), input.task_id.clone()),
-                ("toolName".to_string(), input.title.clone()),
-            ]),
-        );
-        None
-    }
-
-    fn create_reasoning_scope(&mut self, owner_id: &str, title: &str) -> String {
-        let scope_id = self.create_reasoning_scope_id();
-        let scope = ReasoningScope {
-            scope_id: scope_id.clone(),
-            owner_id: owner_id.to_string(),
-            title: title.to_string(),
-            tool_status_by_task_id: HashMap::new(),
-        };
-        self.reasoning_scope_by_id.insert(scope_id.clone(), scope);
-        scope_id
-    }
-
-    fn create_reasoning_scope_id(&mut self) -> String {
-        self.next_scope_number = self.next_scope_number.saturating_add(1);
-        let mut scope_id = format!("reasoning-{}", self.next_scope_number);
-        while self.reasoning_scope_by_id.contains_key(&scope_id) {
-            self.next_scope_number = self.next_scope_number.saturating_add(1);
-            scope_id = format!("reasoning-{}", self.next_scope_number);
-        }
-
-        scope_id
-    }
-
-    fn upsert_scope_tool_status(
-        &mut self,
-        scope_id: &str,
-        owner_id: &str,
-        task_id: &str,
-        status: ReasoningScopeToolStatus,
-    ) {
-        if let Some(scope) = self.reasoning_scope_by_id.get_mut(scope_id) {
-            scope
-                .tool_status_by_task_id
-                .insert(task_id.to_string(), status.clone());
-        }
-
-        self.reasoning_scope_id_by_task_key.insert(
-            build_task_ownership_key(owner_id, task_id),
-            scope_id.to_string(),
-        );
-    }
-
-    async fn complete_active_reasoning_scope_if_idle(&mut self, owner_id: &str) {
-        let Some(active_scope_id) = self
-            .active_reasoning_scope_id_by_owner_id
-            .get(owner_id)
-            .cloned()
-        else {
-            return;
-        };
-
-        let Some(active_scope) = self.reasoning_scope_by_id.get(&active_scope_id).cloned() else {
-            self.active_reasoning_scope_id_by_owner_id.remove(owner_id);
-            return;
-        };
-
-        if scope_has_in_progress_tool(&active_scope) {
-            return;
-        }
-
-        self.complete_scope_if_needed(&active_scope_id).await;
-    }
-
-    async fn complete_scope_if_needed(&mut self, scope_id: &str) {
-        let Some(scope) = self.reasoning_scope_by_id.get(scope_id).cloned() else {
-            return;
-        };
-
-        {
-            let completed_scope_ids =
-                self.resolve_completed_reasoning_scope_ids_by_owner_id(&scope.owner_id);
-            if completed_scope_ids.contains(scope_id) {
-                return;
-            }
-            completed_scope_ids.insert(scope_id.to_string());
-        }
-
-        self.latest_completed_reasoning_scope_id_by_owner_id
-            .insert(scope.owner_id.clone(), scope_id.to_string());
-
-        self.append_reasoning_scope_update(&scope, ReasoningScopeStatus::Complete, None)
-            .await;
-    }
-
-    async fn reopen_scope_for_tool_started(
-        &mut self,
-        input: &InvestigationProgressTaskUpdateInput,
-    ) -> String {
-        let last_completed_scope = self.resolve_latest_completed_scope_by_owner_id(&input.owner_id);
-        let reopened_scope_title = last_completed_scope.as_ref().map_or_else(
-            || "Tool executions".to_string(),
-            |scope| scope.title.clone(),
-        );
-        let reopened_scope_id = self.create_reasoning_scope(&input.owner_id, &reopened_scope_title);
-        self.active_reasoning_scope_id_by_owner_id
-            .insert(input.owner_id.clone(), reopened_scope_id.clone());
-
-        let mut meta = BTreeMap::from([
-            ("channel".to_string(), self.input.channel.clone()),
-            ("threadTs".to_string(), self.input.thread_ts.clone()),
-            ("ownerId".to_string(), input.owner_id.clone()),
-            ("taskId".to_string(), input.task_id.clone()),
-            ("toolName".to_string(), input.title.clone()),
-            ("reopenedScopeId".to_string(), reopened_scope_id.clone()),
-        ]);
-        if let Some(scope) = last_completed_scope {
-            meta.insert("reopenedFromScopeId".to_string(), scope.scope_id);
-        }
-        self.input
-            .logger
-            .info("reasoning_scope_reopened_for_tool_started", meta);
-
-        reopened_scope_id
-    }
-
-    fn resolve_latest_completed_scope_by_owner_id(
-        &mut self,
-        owner_id: &str,
-    ) -> Option<ReasoningScope> {
-        let latest_completed_scope_id = self
-            .latest_completed_reasoning_scope_id_by_owner_id
-            .get(owner_id)
-            .cloned()?;
-
-        let scope = self
-            .reasoning_scope_by_id
-            .get(&latest_completed_scope_id)
-            .cloned();
-        if scope.is_none() {
-            self.latest_completed_reasoning_scope_id_by_owner_id
-                .remove(owner_id);
-        }
-
-        scope
-    }
-
-    fn resolve_completed_reasoning_scope_ids_by_owner_id(
-        &mut self,
-        owner_id: &str,
-    ) -> &mut HashSet<String> {
-        self.completed_reasoning_scope_ids_by_owner_id
-            .entry(owner_id.to_string())
-            .or_default()
     }
 
     async fn append_reasoning_scope_update(
@@ -364,6 +167,60 @@ impl SlackInvestigationProgressStreamSession {
             build_reasoning_scope_fallback_text(scope, &status, detail_line.as_deref()),
         )
         .await;
+    }
+
+    async fn complete_active_reasoning_scope_if_idle(&mut self, owner_id: &str) {
+        let Some(scope) = self.state.complete_active_scope_if_idle(owner_id) else {
+            return;
+        };
+
+        self.append_reasoning_scope_update(&scope, ReasoningScopeStatus::Complete, None)
+            .await;
+    }
+
+    async fn complete_scope_if_needed(&mut self, scope_id: &str) {
+        let Some(scope) = self.state.mark_scope_completed(scope_id) else {
+            return;
+        };
+
+        self.append_reasoning_scope_update(&scope, ReasoningScopeStatus::Complete, None)
+            .await;
+    }
+
+    fn log_reopened_scope(
+        &self,
+        input: &InvestigationProgressTaskUpdateInput,
+        output: &ResolveToolStartedScopeOutput,
+    ) {
+        let Some(reopened_from_scope_id) = output.reopened_from_scope_id.clone() else {
+            return;
+        };
+
+        self.input.logger.info(
+            "reasoning_scope_reopened_for_tool_started",
+            BTreeMap::from([
+                ("channel".to_string(), self.input.channel.clone()),
+                ("threadTs".to_string(), self.input.thread_ts.clone()),
+                ("ownerId".to_string(), input.owner_id.clone()),
+                ("taskId".to_string(), input.task_id.clone()),
+                ("toolName".to_string(), input.title.clone()),
+                ("reopenedScopeId".to_string(), output.scope_id.clone()),
+                ("reopenedFromScopeId".to_string(), reopened_from_scope_id),
+            ]),
+        );
+    }
+
+    fn log_missing_scope_for_tool_completed(&self, input: &InvestigationProgressTaskUpdateInput) {
+        self.input.logger.warn(
+            "reasoning_scope_not_found_for_tool_completed",
+            BTreeMap::from([
+                ("channel".to_string(), self.input.channel.clone()),
+                ("threadTs".to_string(), self.input.thread_ts.clone()),
+                ("ownerId".to_string(), input.owner_id.clone()),
+                ("taskId".to_string(), input.task_id.clone()),
+                ("toolName".to_string(), input.title.clone()),
+            ]),
+        );
     }
 
     async fn stop(&mut self) {
@@ -434,31 +291,48 @@ impl SlackInvestigationProgressStreamSession {
             return;
         }
 
-        let error_message = append_result
-            .expect_err("append_result should be error")
-            .message;
-        self.last_error_message = Some(error_message.clone());
+        self.recover_from_append_failure(RecoverFromAppendFailureInput {
+            chunks,
+            fallback_text,
+            failed_stream_ts: stream_ts,
+            error_message: append_result
+                .expect_err("append_result should be error")
+                .message,
+        })
+        .await;
+    }
+
+    async fn recover_from_append_failure(&mut self, input: RecoverFromAppendFailureInput) {
+        self.last_error_message = Some(input.error_message.clone());
         self.input.logger.warn(
             "Failed to append Slack progress stream",
             BTreeMap::from([
                 ("channel".to_string(), self.input.channel.clone()),
                 ("threadTs".to_string(), self.input.thread_ts.clone()),
-                ("streamTs".to_string(), stream_ts.clone()),
-                ("error".to_string(), error_message.clone()),
-                ("slack_stream_last_error".to_string(), error_message.clone()),
+                ("streamTs".to_string(), input.failed_stream_ts.clone()),
+                ("error".to_string(), input.error_message.clone()),
+                (
+                    "slack_stream_last_error".to_string(),
+                    input.error_message.clone(),
+                ),
             ]),
         );
 
-        if is_message_not_in_streaming_state_error(&error_message) {
-            self.restart_stream_with_chunks(chunks, fallback_text, Some(stream_ts), error_message)
-                .await;
+        if is_message_not_in_streaming_state_error(&input.error_message) {
+            self.restart_stream_with_chunks(
+                input.chunks,
+                input.fallback_text,
+                Some(input.failed_stream_ts),
+                input.error_message,
+            )
+            .await;
             return;
         }
 
-        if is_permanent_stream_append_error(&error_message) {
-            self.enable_fallback_mode(error_message, "append_failed_permanent")
+        if is_permanent_stream_append_error(&input.error_message) {
+            self.enable_fallback_mode(input.error_message, "append_failed_permanent")
                 .await;
-            self.post_fallback_message(&fallback_text).await;
+            self.post_fallback_message(&input.fallback_text).await;
         }
     }
 
@@ -637,11 +511,13 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
         self.complete_active_reasoning_scope_if_idle(&input.owner_id)
             .await;
 
-        let scope_id = self.create_reasoning_scope(&input.owner_id, &input.title);
-        self.active_reasoning_scope_id_by_owner_id
-            .insert(input.owner_id, scope_id.clone());
+        let scope_id = self
+            .state
+            .create_reasoning_scope(&input.owner_id, &input.title);
+        self.state
+            .set_active_scope(&input.owner_id, scope_id.clone());
 
-        if let Some(scope) = self.reasoning_scope_by_id.get(&scope_id).cloned() {
+        if let Some(scope) = self.state.scope(&scope_id) {
             self.append_reasoning_scope_update(
                 &scope,
                 ReasoningScopeStatus::InProgress,
@@ -652,18 +528,23 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
     }
 
     async fn post_tool_started(&mut self, input: InvestigationProgressTaskUpdateInput) {
-        let scope_id = self.resolve_scope_for_tool_started(&input).await;
-        self.upsert_scope_tool_status(
-            &scope_id,
+        let resolved = self.state.resolve_scope_for_tool_started(
+            &input.owner_id,
+            &input.task_id,
+            "Tool executions",
+        );
+        self.log_reopened_scope(&input, &resolved);
+        self.state.upsert_scope_tool_status(
+            &resolved.scope_id,
             &input.owner_id,
             &input.task_id,
             ReasoningScopeToolStatus::InProgress,
         );
 
-        self.resolve_completed_reasoning_scope_ids_by_owner_id(&input.owner_id)
-            .remove(&scope_id);
+        self.state
+            .mark_scope_incomplete(&input.owner_id, &resolved.scope_id);
 
-        if let Some(scope) = self.reasoning_scope_by_id.get(&scope_id).cloned() {
+        if let Some(scope) = self.state.scope(&resolved.scope_id) {
             self.append_reasoning_scope_update(
                 &scope,
                 ReasoningScopeStatus::InProgress,
@@ -674,18 +555,22 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
     }
 
     async fn post_tool_completed(&mut self, input: InvestigationProgressTaskUpdateInput) {
-        let Some(scope_id) = self.resolve_scope_for_tool_completed(&input).await else {
+        let Some(scope_id) = self
+            .state
+            .resolve_scope_for_tool_completed(&input.owner_id, &input.task_id)
+        else {
+            self.log_missing_scope_for_tool_completed(&input);
             return;
         };
 
-        self.upsert_scope_tool_status(
+        self.state.upsert_scope_tool_status(
             &scope_id,
             &input.owner_id,
             &input.task_id,
             ReasoningScopeToolStatus::Complete,
         );
 
-        let Some(scope) = self.reasoning_scope_by_id.get(&scope_id).cloned() else {
+        let Some(scope) = self.state.scope(&scope_id) else {
             return;
         };
 
@@ -701,19 +586,11 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
         &mut self,
         input: InvestigationProgressMessageOutputCreatedInput,
     ) {
-        let scope_ids: Vec<String> = self
-            .reasoning_scope_by_id
-            .values()
-            .filter(|scope| scope.owner_id == input.owner_id)
-            .map(|scope| scope.scope_id.clone())
-            .collect();
-
-        for scope_id in scope_ids {
+        for scope_id in self.state.scope_ids_for_owner(&input.owner_id) {
             self.complete_scope_if_needed(&scope_id).await;
         }
 
-        self.active_reasoning_scope_id_by_owner_id
-            .remove(&input.owner_id);
+        self.state.clear_active_scope(&input.owner_id);
     }
 
     async fn stop_as_succeeded(&mut self) {
@@ -725,54 +602,11 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ReasoningScopeStatus {
-    InProgress,
-    Complete,
-}
-
-type ReasoningScopeToolStatus = ReasoningScopeStatus;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReasoningScope {
-    scope_id: String,
-    owner_id: String,
-    title: String,
-    tool_status_by_task_id: HashMap<String, ReasoningScopeToolStatus>,
-}
-
 fn to_slack_task_status(status: &ReasoningScopeStatus) -> SlackTaskUpdateStatus {
     match status {
         ReasoningScopeStatus::InProgress => SlackTaskUpdateStatus::InProgress,
         ReasoningScopeStatus::Complete => SlackTaskUpdateStatus::Complete,
     }
-}
-
-fn build_task_ownership_key(owner_id: &str, task_id: &str) -> String {
-    format!("{owner_id}:{task_id}")
-}
-
-fn scope_has_in_progress_tool(scope: &ReasoningScope) -> bool {
-    scope
-        .tool_status_by_task_id
-        .values()
-        .any(|status| *status == ReasoningScopeToolStatus::InProgress)
-}
-
-fn resolve_reasoning_scope_status(scope: &ReasoningScope) -> ReasoningScopeStatus {
-    if scope.tool_status_by_task_id.is_empty() {
-        return ReasoningScopeStatus::InProgress;
-    }
-
-    if scope
-        .tool_status_by_task_id
-        .values()
-        .any(|status| *status == ReasoningScopeToolStatus::InProgress)
-    {
-        return ReasoningScopeStatus::InProgress;
-    }
-
-    ReasoningScopeStatus::Complete
 }
 
 fn build_reasoning_scope_fallback_text(

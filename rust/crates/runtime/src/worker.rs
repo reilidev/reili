@@ -145,7 +145,6 @@ async fn enqueue_worker_internal_job(
         "Queued investigation job",
         BTreeMap::from([
             ("jobId".to_string(), job.job_id.clone()),
-            ("jobType".to_string(), job.job_type.to_string()),
             (
                 "slackEventId".to_string(),
                 job.payload.slack_event_id.clone(),

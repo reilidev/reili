@@ -21,11 +21,15 @@ const COORDINATOR_TOOL_CONCURRENCY: usize = 8;
 
 pub struct OpenAiInvestigationCoordinatorRunnerInput {
     pub openai_api_key: String,
+    pub datadog_site: String,
+    pub github_scope_org: String,
     pub language: String,
 }
 
 pub struct OpenAiInvestigationCoordinatorRunner {
     openai_api_key: String,
+    datadog_site: String,
+    github_scope_org: String,
     language: String,
 }
 
@@ -33,6 +37,8 @@ impl OpenAiInvestigationCoordinatorRunner {
     pub fn new(input: OpenAiInvestigationCoordinatorRunnerInput) -> Self {
         Self {
             openai_api_key: input.openai_api_key,
+            datadog_site: input.datadog_site,
+            github_scope_org: input.github_scope_org,
             language: input.language,
         }
     }
@@ -50,6 +56,8 @@ impl InvestigationCoordinatorRunnerPort for OpenAiInvestigationCoordinatorRunner
         let coordinator_agent = build_coordinator_agent(BuildCoordinatorAgentInput {
             client: openai_client,
             resources: Arc::new(input.context.resources),
+            datadog_site: self.datadog_site.clone(),
+            github_scope_org: self.github_scope_org.clone(),
             runtime: input.context.runtime,
             on_progress_event: Arc::clone(&input.on_progress_event),
             language: self.language.clone(),

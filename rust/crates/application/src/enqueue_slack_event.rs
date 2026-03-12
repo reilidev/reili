@@ -9,10 +9,7 @@ use sre_shared::ports::inbound::SlackMessageHandlerPort;
 use sre_shared::ports::outbound::{
     SlackThreadReplyInput, SlackThreadReplyPort, WorkerJobDispatcherPort,
 };
-use sre_shared::types::{
-    AlertInvestigationJob, InvestigationJob, InvestigationJobPayload, InvestigationJobType,
-    SlackMessage,
-};
+use sre_shared::types::{InvestigationJob, InvestigationJobPayload, SlackMessage};
 use tokio::time::sleep;
 use uuid::Uuid;
 
@@ -88,7 +85,6 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
                     BTreeMap::from([
                         ("slackEventId".to_string(), message.slack_event_id),
                         ("jobId".to_string(), job.job_id),
-                        ("jobType".to_string(), job.job_type.to_string()),
                         ("channel".to_string(), message.channel),
                         ("threadTs".to_string(), thread_ts),
                         (
@@ -110,7 +106,6 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
                     BTreeMap::from([
                         ("slackEventId".to_string(), message.slack_event_id),
                         ("jobId".to_string(), job.job_id),
-                        ("jobType".to_string(), job.job_type.to_string()),
                         ("channel".to_string(), message.channel.clone()),
                         ("threadTs".to_string(), thread_ts.clone()),
                         ("error".to_string(), dispatch_error.message.clone()),
@@ -140,15 +135,10 @@ struct BuildInvestigationJobInput {
 }
 
 fn build_investigation_job(input: BuildInvestigationJobInput) -> InvestigationJob {
-    build_alert_investigation_job(input)
-}
-
-fn build_alert_investigation_job(input: BuildInvestigationJobInput) -> AlertInvestigationJob {
     let slack_event_id = input.message.slack_event_id.clone();
 
-    AlertInvestigationJob {
+    InvestigationJob {
         job_id: Uuid::new_v4().to_string(),
-        job_type: InvestigationJobType::AlertInvestigation,
         received_at: input.received_at,
         payload: InvestigationJobPayload {
             slack_event_id,
@@ -172,7 +162,6 @@ fn retry_log_meta(input: RetryLogMetaInput<'_>) -> BTreeMap<String, String> {
             input.job.payload.slack_event_id.clone(),
         ),
         ("jobId".to_string(), input.job.job_id.clone()),
-        ("jobType".to_string(), input.job.job_type.to_string()),
         ("attempt".to_string(), input.attempt.to_string()),
         (
             "remainingAttempts".to_string(),
@@ -190,7 +179,7 @@ mod tests {
         WorkerJobDispatcherPort,
     };
     use async_trait::async_trait;
-    use sre_shared::types::{InvestigationJobType, SlackTriggerType};
+    use sre_shared::types::SlackTriggerType;
     use std::collections::BTreeMap;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
@@ -374,10 +363,6 @@ mod tests {
 
         let dispatched_jobs = context.worker_job_dispatcher.dispatched_jobs();
         assert_eq!(dispatched_jobs.len(), 1);
-        assert_eq!(
-            dispatched_jobs[0].job_type,
-            InvestigationJobType::AlertInvestigation
-        );
         assert_eq!(dispatched_jobs[0].retry_count, 0);
         assert_eq!(context.slack_reply_port.posted_replies().len(), 0);
     }

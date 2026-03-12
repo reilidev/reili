@@ -9,7 +9,7 @@ use sre_shared::ports::outbound::{
     COORDINATOR_PROGRESS_OWNER_ID, InvestigationProgressEventPort, InvestigationResources,
     InvestigationRuntime,
 };
-use sre_shared::types::{AlertContext, InvestigationResult};
+use sre_shared::types::AlertContext;
 
 use super::tools::{
     AggregateDatadogLogsByFacetTool, GetPullRequestDiffTool, GetPullRequestTool,
@@ -39,6 +39,8 @@ type OpenAiSubAgent = Agent<OpenAiCompletionModel, ProgressEventHook>;
 pub struct BuildCoordinatorAgentInput {
     pub client: openai::Client,
     pub resources: Arc<InvestigationResources>,
+    pub datadog_site: String,
+    pub github_scope_org: String,
     pub runtime: InvestigationRuntime,
     pub on_progress_event: Arc<dyn InvestigationProgressEventPort>,
     pub language: String,
@@ -54,6 +56,7 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
     let logs_agent = build_logs_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
         resources: Arc::clone(&input.resources),
+        github_scope_org: String::new(),
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: LOGS_PROGRESS_OWNER_ID.to_string(),
@@ -61,6 +64,7 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
     let metrics_agent = build_metrics_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
         resources: Arc::clone(&input.resources),
+        github_scope_org: String::new(),
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: METRICS_PROGRESS_OWNER_ID.to_string(),
@@ -68,6 +72,7 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
     let events_agent = build_events_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
         resources: Arc::clone(&input.resources),
+        github_scope_org: String::new(),
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: EVENTS_PROGRESS_OWNER_ID.to_string(),
@@ -75,6 +80,7 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
     let github_agent = build_github_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
         resources: Arc::clone(&input.resources),
+        github_scope_org: input.github_scope_org.clone(),
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: GITHUB_PROGRESS_OWNER_ID.to_string(),
@@ -86,8 +92,8 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
         .name("Coordinator")
         .preamble(&build_coordinator_instructions(
             BuildCoordinatorInstructionsInput {
-                datadog_site: input.resources.datadog_site.clone(),
-                github_scope_org: input.resources.github_scope_org.clone(),
+                datadog_site: input.datadog_site,
+                github_scope_org: input.github_scope_org,
                 runtime: input.runtime,
                 language: input.language,
             },
@@ -158,10 +164,7 @@ The input may be an alert, request, question, link, or partial context.";
 }
 
 #[must_use]
-pub fn build_synthesizer_prompt(
-    result: &InvestigationResult,
-    alert_context: &AlertContext,
-) -> String {
+pub fn build_synthesizer_prompt(result: &str, alert_context: &AlertContext) -> String {
     let mut sections = Vec::new();
     sections.push("## Trigger Message".to_string());
     sections.push(alert_context.trigger_message_text.clone());
@@ -175,7 +178,7 @@ pub fn build_synthesizer_prompt(
     if result.is_empty() {
         sections.push("No investigation output.".to_string());
     } else {
-        sections.push(result.clone());
+        sections.push(result.to_string());
     }
 
     sections.join("\n")
@@ -184,6 +187,7 @@ pub fn build_synthesizer_prompt(
 struct BuildSpecialistAgentInput {
     client: openai::Client,
     resources: Arc<InvestigationResources>,
+    github_scope_org: String,
     language: String,
     on_progress_event: Arc<dyn InvestigationProgressEventPort>,
     owner_id: String,
@@ -256,8 +260,6 @@ fn build_events_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
 }
 
 fn build_github_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
-    let github_scope_org = input.resources.github_scope_org.clone();
-
     input
         .client
         .agent(INVESTIGATION_MODEL)
@@ -265,7 +267,7 @@ fn build_github_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
         .description("Delegates GitHub repository, code, and pull request investigation tasks.")
         .preamble(&build_github_instructions(BuildGithubInstructionsInput {
             language: input.language,
-            github_scope_org,
+            github_scope_org: input.github_scope_org.clone(),
         }))
         .default_max_turns(SUBAGENT_MAX_TURNS)
         .additional_params(model_additional_params())
@@ -277,14 +279,30 @@ fn build_github_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
             on_progress_event: Arc::clone(&input.on_progress_event),
             owner_id: input.owner_id,
         }))
-        .tool(SearchGithubCodeTool::new(Arc::clone(&input.resources)))
-        .tool(SearchGithubReposTool::new(Arc::clone(&input.resources)))
-        .tool(SearchGithubIssuesAndPullRequestsTool::new(Arc::clone(
-            &input.resources,
-        )))
-        .tool(GetRepositoryContentTool::new(Arc::clone(&input.resources)))
-        .tool(GetPullRequestTool::new(Arc::clone(&input.resources)))
-        .tool(GetPullRequestDiffTool::new(Arc::clone(&input.resources)))
+        .tool(SearchGithubCodeTool::new(
+            Arc::clone(&input.resources.github_code_search_port),
+            input.github_scope_org.clone(),
+        ))
+        .tool(SearchGithubReposTool::new(
+            Arc::clone(&input.resources.github_code_search_port),
+            input.github_scope_org.clone(),
+        ))
+        .tool(SearchGithubIssuesAndPullRequestsTool::new(
+            Arc::clone(&input.resources.github_code_search_port),
+            input.github_scope_org.clone(),
+        ))
+        .tool(GetRepositoryContentTool::new(
+            Arc::clone(&input.resources.github_repository_content_port),
+            input.github_scope_org.clone(),
+        ))
+        .tool(GetPullRequestTool::new(
+            Arc::clone(&input.resources.github_pull_request_port),
+            input.github_scope_org.clone(),
+        ))
+        .tool(GetPullRequestDiffTool::new(
+            Arc::clone(&input.resources.github_pull_request_port),
+            input.github_scope_org,
+        ))
         .tool(SearchWebTool::new(input.resources))
         .build()
 }
@@ -470,7 +488,7 @@ mod tests {
 
     #[test]
     fn builds_synthesizer_prompt_with_result() {
-        let prompt = build_synthesizer_prompt(&"result body".to_string(), &sample_alert_context());
+        let prompt = build_synthesizer_prompt("result body", &sample_alert_context());
         assert!(prompt.contains("## Investigation Results"));
         assert!(prompt.contains("result body"));
     }

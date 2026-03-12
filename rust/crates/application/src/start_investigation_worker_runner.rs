@@ -120,7 +120,6 @@ async fn process_claimed_job(input: ProcessClaimedJobInput) {
     let started_at = Instant::now();
 
     match execute_investigation_job(ExecuteInvestigationJobInput {
-        job_type: input.job.job_type.clone(),
         job_id: input.job.job_id.clone(),
         retry_count: input.job.retry_count,
         payload: input.job.payload.clone(),
@@ -148,7 +147,6 @@ async fn process_claimed_job(input: ProcessClaimedJobInput) {
                         "Completed worker job",
                         BTreeMap::from([
                             ("workerIndex".to_string(), input.worker_index.to_string()),
-                            ("jobType".to_string(), input.job.job_type.to_string()),
                             (
                                 "slackEventId".to_string(),
                                 input.job.payload.slack_event_id.clone(),
@@ -226,7 +224,6 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
                 "Failed worker job",
                 BTreeMap::from([
                     ("workerIndex".to_string(), input.worker_index.to_string()),
-                    ("jobType".to_string(), input.job.job_type.to_string()),
                     (
                         "slackEventId".to_string(),
                         input.job.payload.slack_event_id.clone(),
@@ -266,7 +263,6 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
         "Failed worker job",
         BTreeMap::from([
             ("workerIndex".to_string(), input.worker_index.to_string()),
-            ("jobType".to_string(), input.job.job_type.to_string()),
             (
                 "slackEventId".to_string(),
                 input.job.payload.slack_event_id.clone(),
@@ -312,7 +308,6 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
         input.deps.investigation_execution_deps.logger.error(
             "Failed dead-letter notification",
             BTreeMap::from([
-                ("jobType".to_string(), fail_result.job.job_type.to_string()),
                 (
                     "slackEventId".to_string(),
                     fail_result.job.payload.slack_event_id,
@@ -402,18 +397,19 @@ mod tests {
         DatadogLogAggregatePort, DatadogLogSearchParams, DatadogLogSearchPort,
         DatadogLogSearchResult, DatadogMetricCatalogParams, DatadogMetricCatalogPort,
         DatadogMetricQueryParams, DatadogMetricQueryPort, DatadogMetricQueryResult, FailJobInput,
-        GithubCodeSearchResultItem, GithubIssueSearchResultItem, GithubPullRequestDiff,
-        GithubPullRequestParams, GithubPullRequestSummary, GithubRepoSearchResultItem,
-        GithubRepositoryContent, GithubRepositoryContentParams, GithubSearchParams,
-        GithubSearchPort, InvestigationCoordinatorRunnerPort, InvestigationResources,
+        GithubCodeSearchPort, GithubCodeSearchResultItem, GithubIssueSearchResultItem,
+        GithubPullRequestDiff, GithubPullRequestParams, GithubPullRequestPort,
+        GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
+        GithubRepositoryContentParams, GithubRepositoryContentPort, GithubSearchParams,
+        InvestigationCoordinatorRunnerPort, InvestigationResources,
         InvestigationSynthesizerRunnerPort, JobFailResult, JobQueuePort, RunCoordinatorInput,
         RunSynthesizerInput, SlackProgressStreamPort, SlackThreadHistoryPort,
         StartSlackProgressStreamInput, StartSlackProgressStreamOutput, SynthesizerRunReport,
         WebSearchInput, WebSearchPort, WebSearchResult,
     };
     use sre_shared::types::{
-        InvestigationJobPayload, InvestigationJobType, LlmUsageSnapshot, SlackMessage,
-        SlackThreadMessage, SlackTriggerType,
+        InvestigationJobPayload, LlmUsageSnapshot, SlackMessage, SlackThreadMessage,
+        SlackTriggerType,
     };
     use std::collections::VecDeque;
     use std::sync::Mutex;
@@ -660,7 +656,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl GithubSearchPort for UnusedResourcesPort {
+    impl GithubCodeSearchPort for UnusedResourcesPort {
         async fn search_repos(
             &self,
             _params: GithubSearchParams,
@@ -681,7 +677,10 @@ mod tests {
         ) -> Result<Vec<GithubIssueSearchResultItem>, PortError> {
             Err(PortError::new("unused"))
         }
+    }
 
+    #[async_trait]
+    impl GithubPullRequestPort for UnusedResourcesPort {
         async fn get_pull_request(
             &self,
             _params: GithubPullRequestParams,
@@ -695,7 +694,10 @@ mod tests {
         ) -> Result<GithubPullRequestDiff, PortError> {
             Err(PortError::new("unused"))
         }
+    }
 
+    #[async_trait]
+    impl GithubRepositoryContentPort for UnusedResourcesPort {
         async fn get_repository_content(
             &self,
             _params: GithubRepositoryContentParams,
@@ -773,9 +775,12 @@ mod tests {
                         as Arc<dyn DatadogMetricQueryPort>,
                     event_search_port: Arc::clone(&resources_port)
                         as Arc<dyn DatadogEventSearchPort>,
-                    datadog_site: "datadoghq.com".to_string(),
-                    github_scope_org: "acme".to_string(),
-                    github_search_port: Arc::clone(&resources_port) as Arc<dyn GithubSearchPort>,
+                    github_code_search_port: Arc::clone(&resources_port)
+                        as Arc<dyn GithubCodeSearchPort>,
+                    github_repository_content_port: Arc::clone(&resources_port)
+                        as Arc<dyn GithubRepositoryContentPort>,
+                    github_pull_request_port: Arc::clone(&resources_port)
+                        as Arc<dyn GithubPullRequestPort>,
                     web_search_port: resources_port as Arc<dyn WebSearchPort>,
                 },
                 coordinator_runner: Arc::new(MockCoordinatorRunner),
@@ -798,7 +803,6 @@ mod tests {
     fn create_job(input: CreateJobInput) -> InvestigationJob {
         InvestigationJob {
             job_id: input.job_id,
-            job_type: InvestigationJobType::AlertInvestigation,
             received_at: "2026-03-04T00:00:00.000Z".to_string(),
             payload: InvestigationJobPayload {
                 slack_event_id: "Ev001".to_string(),

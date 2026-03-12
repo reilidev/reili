@@ -31,9 +31,10 @@ pub use datadog_metric_query::{
     DatadogMetricQueryResult,
 };
 pub use github_search::{
-    GithubCodeSearchResultItem, GithubIssueSearchResultItem, GithubPullRequestDiff,
-    GithubPullRequestParams, GithubPullRequestSummary, GithubRepoSearchResultItem,
-    GithubRepositoryContent, GithubRepositoryContentParams, GithubSearchParams, GithubSearchPort,
+    GithubCodeSearchPort, GithubCodeSearchResultItem, GithubIssueSearchResultItem,
+    GithubPullRequestDiff, GithubPullRequestParams, GithubPullRequestPort,
+    GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
+    GithubRepositoryContentParams, GithubRepositoryContentPort, GithubSearchParams,
 };
 pub use investigation_context::{
     InvestigationContext, InvestigationResources, InvestigationRuntime,

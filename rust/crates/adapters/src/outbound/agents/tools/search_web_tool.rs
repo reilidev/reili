@@ -109,7 +109,8 @@ mod tests {
     fn build_test_resources(web_search_port: Arc<dyn WebSearchPort>) -> InvestigationResources {
         use sre_shared::ports::outbound::{
             DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
-            DatadogMetricCatalogPort, DatadogMetricQueryPort, GithubSearchPort,
+            DatadogMetricCatalogPort, DatadogMetricQueryPort, GithubCodeSearchPort,
+            GithubPullRequestPort, GithubRepositoryContentPort,
         };
 
         struct StubLogAggregate;
@@ -173,7 +174,7 @@ mod tests {
 
         struct StubGithubSearch;
         #[async_trait]
-        impl GithubSearchPort for StubGithubSearch {
+        impl GithubCodeSearchPort for StubGithubSearch {
             async fn search_code(
                 &self,
                 _: sre_shared::ports::outbound::GithubSearchParams,
@@ -195,6 +196,10 @@ mod tests {
             {
                 unimplemented!()
             }
+        }
+
+        #[async_trait]
+        impl GithubRepositoryContentPort for StubGithubSearch {
             async fn get_repository_content(
                 &self,
                 _: sre_shared::ports::outbound::GithubRepositoryContentParams,
@@ -202,6 +207,10 @@ mod tests {
             {
                 unimplemented!()
             }
+        }
+
+        #[async_trait]
+        impl GithubPullRequestPort for StubGithubSearch {
             async fn get_pull_request(
                 &self,
                 _: sre_shared::ports::outbound::GithubPullRequestParams,
@@ -223,9 +232,9 @@ mod tests {
             metric_catalog_port: Arc::new(StubMetricCatalog),
             metric_query_port: Arc::new(StubMetricQuery),
             event_search_port: Arc::new(StubEventSearch),
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "test-org".to_string(),
-            github_search_port: Arc::new(StubGithubSearch),
+            github_code_search_port: Arc::new(StubGithubSearch),
+            github_repository_content_port: Arc::new(StubGithubSearch),
+            github_pull_request_port: Arc::new(StubGithubSearch),
             web_search_port,
         }
     }

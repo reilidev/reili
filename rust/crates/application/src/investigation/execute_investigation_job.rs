@@ -14,14 +14,11 @@ use sre_shared::ports::outbound::{
 };
 use sre_shared::types::{
     AlertContext, BuildInvestigationLlmTelemetryInput, InvestigationJobPayload,
-    InvestigationJobType, InvestigationLlmTelemetry,
+    InvestigationLlmTelemetry,
 };
 use tokio::sync::{Mutex, mpsc};
 
-use super::execution_errors::{
-    ExecuteInvestigationJobError, InvestigationExecutionFailedErrorInput,
-    create_investigation_execution_failed_error, resolve_investigation_failure_error,
-};
+use super::execution_errors::{ExecuteInvestigationJobError, resolve_investigation_failure_error};
 use super::logger::InvestigationLogger;
 use super::services::{
     CoordinatorProgressEventHandler, CoordinatorProgressEventHandlerInput,
@@ -48,7 +45,6 @@ pub struct InvestigationExecutionDeps {
 }
 
 pub struct ExecuteInvestigationJobInput {
-    pub job_type: InvestigationJobType,
     pub job_id: String,
     pub retry_count: u32,
     pub payload: InvestigationJobPayload,
@@ -63,7 +59,6 @@ pub async fn execute_investigation_job(
     let started_at_iso = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
 
     let base_log_meta = BTreeMap::from([
-        ("jobType".to_string(), input.job_type.to_string()),
         (
             "slackEventId".to_string(),
             input.payload.slack_event_id.clone(),
@@ -286,11 +281,9 @@ async fn run_synthesis_stage(
                     synthesizer_usage: error.usage.clone(),
                 });
             ExecuteInvestigationJobError::InvestigationExecutionFailed(
-                create_investigation_execution_failed_error(
-                    InvestigationExecutionFailedErrorInput {
-                        cause_message: error.cause_message,
-                        llm_telemetry,
-                    },
+                sre_shared::errors::InvestigationExecutionFailedError::new(
+                    error.cause_message,
+                    llm_telemetry,
                 ),
             )
         })
@@ -312,11 +305,9 @@ async fn post_slack_reply_stage(
         .await
         .map_err(|error| {
             ExecuteInvestigationJobError::InvestigationExecutionFailed(
-                create_investigation_execution_failed_error(
-                    InvestigationExecutionFailedErrorInput {
-                        cause_message: error.message,
-                        llm_telemetry,
-                    },
+                sre_shared::errors::InvestigationExecutionFailedError::new(
+                    error.message,
+                    llm_telemetry,
                 ),
             )
         })
@@ -437,19 +428,20 @@ mod tests {
         DatadogLogAggregateBucket, DatadogLogAggregateParams, DatadogLogAggregatePort,
         DatadogLogSearchParams, DatadogLogSearchPort, DatadogLogSearchResult,
         DatadogMetricCatalogParams, DatadogMetricCatalogPort, DatadogMetricQueryParams,
-        DatadogMetricQueryPort, DatadogMetricQueryResult, GithubCodeSearchResultItem,
-        GithubIssueSearchResultItem, GithubPullRequestDiff, GithubPullRequestParams,
-        GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
-        GithubRepositoryContentParams, GithubSearchParams, GithubSearchPort,
-        InvestigationCoordinatorRunnerPort, InvestigationResources, InvestigationRuntime,
-        InvestigationSynthesizerRunnerPort, RunCoordinatorInput, RunSynthesizerInput,
-        SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput,
-        SlackThreadReplyPort, StartSlackProgressStreamInput, StartSlackProgressStreamOutput,
-        SynthesizerRunReport, WebSearchInput, WebSearchPort, WebSearchResult,
+        DatadogMetricQueryPort, DatadogMetricQueryResult, GithubCodeSearchPort,
+        GithubCodeSearchResultItem, GithubIssueSearchResultItem, GithubPullRequestDiff,
+        GithubPullRequestParams, GithubPullRequestPort, GithubPullRequestSummary,
+        GithubRepoSearchResultItem, GithubRepositoryContent, GithubRepositoryContentParams,
+        GithubRepositoryContentPort, GithubSearchParams, InvestigationCoordinatorRunnerPort,
+        InvestigationResources, InvestigationRuntime, InvestigationSynthesizerRunnerPort,
+        RunCoordinatorInput, RunSynthesizerInput, SlackProgressStreamPort, SlackThreadHistoryPort,
+        SlackThreadReplyInput, SlackThreadReplyPort, StartSlackProgressStreamInput,
+        StartSlackProgressStreamOutput, SynthesizerRunReport, WebSearchInput, WebSearchPort,
+        WebSearchResult,
     };
     use sre_shared::types::{
-        AlertContext, InvestigationJobPayload, InvestigationJobType, LlmUsageSnapshot,
-        SlackMessage, SlackThreadMessage, SlackTriggerType,
+        AlertContext, InvestigationJobPayload, LlmUsageSnapshot, SlackMessage, SlackThreadMessage,
+        SlackTriggerType,
     };
 
     use super::{
@@ -683,7 +675,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl GithubSearchPort for UnusedResourcesPort {
+    impl GithubCodeSearchPort for UnusedResourcesPort {
         async fn search_code(
             &self,
             _params: GithubSearchParams,
@@ -704,14 +696,20 @@ mod tests {
         ) -> Result<Vec<GithubIssueSearchResultItem>, PortError> {
             Err(PortError::new("unused"))
         }
+    }
 
+    #[async_trait]
+    impl GithubRepositoryContentPort for UnusedResourcesPort {
         async fn get_repository_content(
             &self,
             _params: GithubRepositoryContentParams,
         ) -> Result<GithubRepositoryContent, PortError> {
             Err(PortError::new("unused"))
         }
+    }
 
+    #[async_trait]
+    impl GithubPullRequestPort for UnusedResourcesPort {
         async fn get_pull_request(
             &self,
             _params: GithubPullRequestParams,
@@ -743,9 +741,10 @@ mod tests {
             metric_catalog_port: Arc::clone(&port) as Arc<dyn DatadogMetricCatalogPort>,
             metric_query_port: Arc::clone(&port) as Arc<dyn DatadogMetricQueryPort>,
             event_search_port: Arc::clone(&port) as Arc<dyn DatadogEventSearchPort>,
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            github_search_port: Arc::clone(&port) as Arc<dyn GithubSearchPort>,
+            github_code_search_port: Arc::clone(&port) as Arc<dyn GithubCodeSearchPort>,
+            github_repository_content_port: Arc::clone(&port)
+                as Arc<dyn GithubRepositoryContentPort>,
+            github_pull_request_port: Arc::clone(&port) as Arc<dyn GithubPullRequestPort>,
             web_search_port: Arc::clone(&port) as Arc<dyn WebSearchPort>,
         }
     }
@@ -823,7 +822,6 @@ mod tests {
         } = fixtures;
 
         let result = execute_investigation_job(ExecuteInvestigationJobInput {
-            job_type: InvestigationJobType::AlertInvestigation,
             job_id: "job-1".to_string(),
             retry_count: 0,
             payload: create_payload(
@@ -867,7 +865,6 @@ mod tests {
         } = fixtures;
 
         let result = execute_investigation_job(ExecuteInvestigationJobInput {
-            job_type: InvestigationJobType::AlertInvestigation,
             job_id: "job-2".to_string(),
             retry_count: 0,
             payload: create_payload("1710000000.000100", None, None),
@@ -895,7 +892,6 @@ mod tests {
         } = fixtures;
 
         let result = execute_investigation_job(ExecuteInvestigationJobInput {
-            job_type: InvestigationJobType::AlertInvestigation,
             job_id: "job-3".to_string(),
             retry_count: 0,
             payload: create_payload("1710000000.000200", Some("1710000000.000150"), None),

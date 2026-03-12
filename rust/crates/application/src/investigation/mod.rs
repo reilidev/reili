@@ -8,8 +8,7 @@ pub use execute_investigation_job::{
     ExecuteInvestigationJobInput, InvestigationExecutionDeps, execute_investigation_job,
 };
 pub use execution_errors::{
-    ExecuteInvestigationJobError, InvestigationExecutionFailedErrorInput,
-    ResolvedInvestigationFailureError, create_investigation_execution_failed_error,
+    ExecuteInvestigationJobError, ResolvedInvestigationFailureError,
     resolve_investigation_failure_error,
 };
 pub use logger::InvestigationLogger;

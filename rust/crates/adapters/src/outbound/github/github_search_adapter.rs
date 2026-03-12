@@ -8,9 +8,10 @@ use sre_shared::ports::outbound::github_search::{
     GithubRepositoryFileEncoding,
 };
 use sre_shared::ports::outbound::{
-    GithubCodeSearchResultItem, GithubIssueSearchResultItem, GithubPullRequestDiff,
-    GithubPullRequestParams, GithubPullRequestSummary, GithubRepoSearchResultItem,
-    GithubRepositoryContent, GithubRepositoryContentParams, GithubSearchParams, GithubSearchPort,
+    GithubCodeSearchPort, GithubCodeSearchResultItem, GithubIssueSearchResultItem,
+    GithubPullRequestDiff, GithubPullRequestParams, GithubPullRequestPort,
+    GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
+    GithubRepositoryContentParams, GithubRepositoryContentPort, GithubSearchParams,
 };
 
 const MAX_RESULTS_PER_PAGE: u8 = 30;
@@ -65,7 +66,7 @@ impl GitHubSearchAdapter {
 }
 
 #[async_trait]
-impl GithubSearchPort for GitHubSearchAdapter {
+impl GithubCodeSearchPort for GitHubSearchAdapter {
     async fn search_code(
         &self,
         params: GithubSearchParams,
@@ -166,7 +167,10 @@ impl GithubSearchPort for GitHubSearchAdapter {
             })
             .collect())
     }
+}
 
+#[async_trait]
+impl GithubRepositoryContentPort for GitHubSearchAdapter {
     async fn get_repository_content(
         &self,
         params: GithubRepositoryContentParams,
@@ -227,7 +231,10 @@ impl GithubSearchPort for GitHubSearchAdapter {
             },
         ))
     }
+}
 
+#[async_trait]
+impl GithubPullRequestPort for GitHubSearchAdapter {
     async fn get_pull_request(
         &self,
         params: GithubPullRequestParams,

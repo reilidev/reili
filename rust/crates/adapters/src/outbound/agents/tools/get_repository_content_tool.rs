@@ -5,7 +5,7 @@ use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sre_shared::errors::PortError;
-use sre_shared::ports::outbound::{GithubRepositoryContentParams, InvestigationResources};
+use sre_shared::ports::outbound::{GithubRepositoryContentParams, GithubRepositoryContentPort};
 
 use super::assert_github_owner_in_scope::assert_github_owner_in_scope;
 use super::github_tool_soft_error::to_github_tool_soft_error;
@@ -13,12 +13,19 @@ use super::tool_json::to_json_string;
 
 #[derive(Clone)]
 pub struct GetRepositoryContentTool {
-    resources: Arc<InvestigationResources>,
+    github_repository_content_port: Arc<dyn GithubRepositoryContentPort>,
+    github_scope_org: String,
 }
 
 impl GetRepositoryContentTool {
-    pub fn new(resources: Arc<InvestigationResources>) -> Self {
-        Self { resources }
+    pub fn new(
+        github_repository_content_port: Arc<dyn GithubRepositoryContentPort>,
+        github_scope_org: String,
+    ) -> Self {
+        Self {
+            github_repository_content_port,
+            github_scope_org,
+        }
     }
 }
 
@@ -72,9 +79,7 @@ impl Tool for GetRepositoryContentTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        if let Err(error) =
-            assert_github_owner_in_scope(&args.owner, &self.resources.github_scope_org)
-        {
+        if let Err(error) = assert_github_owner_in_scope(&args.owner, &self.github_scope_org) {
             if let Some(soft_error) = to_github_tool_soft_error(&error) {
                 return to_json_string(&soft_error);
             }
@@ -82,8 +87,7 @@ impl Tool for GetRepositoryContentTool {
         }
 
         match self
-            .resources
-            .github_search_port
+            .github_repository_content_port
             .get_repository_content(GithubRepositoryContentParams {
                 owner: args.owner,
                 repo: args.repo,

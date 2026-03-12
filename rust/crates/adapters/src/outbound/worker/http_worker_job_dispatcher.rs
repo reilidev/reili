@@ -101,8 +101,7 @@ mod tests {
     use serde_json::json;
     use sre_shared::ports::outbound::WorkerJobDispatcherPort;
     use sre_shared::types::{
-        InvestigationJob, InvestigationJobPayload, InvestigationJobType, SlackMessage,
-        SlackTriggerType,
+        InvestigationJob, InvestigationJobPayload, SlackMessage, SlackTriggerType,
     };
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -158,7 +157,6 @@ mod tests {
     fn sample_job() -> InvestigationJob {
         InvestigationJob {
             job_id: "job-1".to_string(),
-            job_type: InvestigationJobType::AlertInvestigation,
             received_at: "2026-03-05T00:00:00.000Z".to_string(),
             payload: InvestigationJobPayload {
                 slack_event_id: "evt-1".to_string(),

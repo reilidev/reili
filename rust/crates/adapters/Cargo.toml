@@ -2,7 +2,7 @@
 name = "sre_adapters"
 version = "0.1.0"
 edition = "2024"
-license = "ISC"
+license = "Apache-2.0"
 
 [dependencies]
 async-trait = "0.1"

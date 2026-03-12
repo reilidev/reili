@@ -132,7 +132,7 @@ pub struct GithubPullRequestSummary {
 }
 
 #[async_trait]
-pub trait GithubSearchPort: Send + Sync {
+pub trait GithubCodeSearchPort: Send + Sync {
     async fn search_code(
         &self,
         params: GithubSearchParams,
@@ -147,12 +147,18 @@ pub trait GithubSearchPort: Send + Sync {
         &self,
         params: GithubSearchParams,
     ) -> Result<Vec<GithubIssueSearchResultItem>, PortError>;
+}
 
+#[async_trait]
+pub trait GithubRepositoryContentPort: Send + Sync {
     async fn get_repository_content(
         &self,
         params: GithubRepositoryContentParams,
     ) -> Result<GithubRepositoryContent, PortError>;
+}
 
+#[async_trait]
+pub trait GithubPullRequestPort: Send + Sync {
     async fn get_pull_request(
         &self,
         params: GithubPullRequestParams,

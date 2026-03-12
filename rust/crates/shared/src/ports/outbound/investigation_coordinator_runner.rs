@@ -4,14 +4,14 @@ use async_trait::async_trait;
 
 use crate::{
     errors::AgentRunFailedError,
-    types::{AlertContext, InvestigationResult, LlmUsageSnapshot},
+    types::{AlertContext, LlmUsageSnapshot},
 };
 
 use super::{InvestigationContext, InvestigationProgressEventPort};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoordinatorRunReport {
-    pub result_text: InvestigationResult,
+    pub result_text: String,
     pub usage: LlmUsageSnapshot,
 }
 

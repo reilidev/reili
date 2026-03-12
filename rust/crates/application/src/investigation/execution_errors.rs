@@ -1,7 +1,7 @@
 use sre_shared::errors::{
     AgentRole, AgentRunFailedError, InvestigationExecutionFailedError, PortError,
 };
-use sre_shared::types::{InvestigationLlmTelemetry, LlmUsageSnapshot};
+use sre_shared::types::LlmUsageSnapshot;
 use thiserror::Error;
 
 use super::services::create_empty_llm_usage_snapshot;
@@ -34,23 +34,11 @@ impl From<InvestigationExecutionFailedError> for ExecuteInvestigationJobError {
     }
 }
 
-pub struct InvestigationExecutionFailedErrorInput {
-    pub cause_message: String,
-    pub llm_telemetry: InvestigationLlmTelemetry,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedInvestigationFailureError {
     pub error_message: String,
     pub coordinator_usage: LlmUsageSnapshot,
     pub synthesizer_usage: LlmUsageSnapshot,
-}
-
-#[must_use]
-pub fn create_investigation_execution_failed_error(
-    input: InvestigationExecutionFailedErrorInput,
-) -> InvestigationExecutionFailedError {
-    InvestigationExecutionFailedError::new(input.cause_message, input.llm_telemetry)
 }
 
 #[must_use]
@@ -90,10 +78,7 @@ mod tests {
     use sre_shared::errors::{AgentRole, AgentRunFailedError, PortError};
     use sre_shared::types::{BuildInvestigationLlmTelemetryInput, LlmUsageSnapshot};
 
-    use super::{
-        ExecuteInvestigationJobError, InvestigationExecutionFailedErrorInput,
-        create_investigation_execution_failed_error, resolve_investigation_failure_error,
-    };
+    use super::{ExecuteInvestigationJobError, resolve_investigation_failure_error};
     use crate::investigation::services::build_investigation_llm_telemetry;
 
     #[test]
@@ -119,10 +104,10 @@ mod tests {
                 synthesizer_usage: snapshot(4),
             });
         let error = ExecuteInvestigationJobError::InvestigationExecutionFailed(
-            create_investigation_execution_failed_error(InvestigationExecutionFailedErrorInput {
-                cause_message: "reply failed".to_string(),
+            sre_shared::errors::InvestigationExecutionFailedError::new(
+                "reply failed",
                 llm_telemetry,
-            }),
+            ),
         );
 
         let resolved = resolve_investigation_failure_error(&error);

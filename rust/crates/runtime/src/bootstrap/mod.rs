@@ -26,9 +26,10 @@ use sre_shared::errors::PortError;
 use sre_shared::ports::inbound::SlackMessageHandlerPort;
 use sre_shared::ports::outbound::{
     DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
-    DatadogMetricCatalogPort, DatadogMetricQueryPort, GithubSearchPort,
-    InvestigationCoordinatorRunnerPort, InvestigationResources, InvestigationSynthesizerRunnerPort,
-    SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyPort, WebSearchPort,
+    DatadogMetricCatalogPort, DatadogMetricQueryPort, GithubCodeSearchPort, GithubPullRequestPort,
+    GithubRepositoryContentPort, InvestigationCoordinatorRunnerPort, InvestigationResources,
+    InvestigationSynthesizerRunnerPort, SlackProgressStreamPort, SlackThreadHistoryPort,
+    SlackThreadReplyPort, WebSearchPort,
 };
 use sre_shared::types::DatadogApiRetryConfig;
 use thiserror::Error;
@@ -148,14 +149,17 @@ pub fn build_worker_runtime_deps(
     let event_search_port: Arc<dyn DatadogEventSearchPort> = Arc::new(
         DatadogEventSearchAdapter::new(Arc::clone(&datadog_http_client)),
     );
-    let github_search_port: Arc<dyn GithubSearchPort> =
-        Arc::new(GitHubSearchAdapter::new(GitHubSearchAdapterConfig {
-            app_id: config.github.app_id.clone(),
-            private_key: config.github.private_key.clone(),
-            installation_id: config.github.installation_id,
-            scope_org: config.github.scope_org.clone(),
-            base_url: None,
-        })?);
+    let github_adapter = Arc::new(GitHubSearchAdapter::new(GitHubSearchAdapterConfig {
+        app_id: config.github.app_id.clone(),
+        private_key: config.github.private_key.clone(),
+        installation_id: config.github.installation_id,
+        scope_org: config.github.scope_org.clone(),
+        base_url: None,
+    })?);
+    let github_code_search_port: Arc<dyn GithubCodeSearchPort> = github_adapter.clone();
+    let github_repository_content_port: Arc<dyn GithubRepositoryContentPort> =
+        github_adapter.clone();
+    let github_pull_request_port: Arc<dyn GithubPullRequestPort> = github_adapter;
 
     let web_search_port: Arc<dyn WebSearchPort> =
         Arc::new(OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
@@ -170,14 +174,16 @@ pub fn build_worker_runtime_deps(
         metric_catalog_port,
         metric_query_port,
         event_search_port,
-        datadog_site: config.datadog_site.clone(),
-        github_scope_org: config.github.scope_org.clone(),
-        github_search_port,
+        github_code_search_port,
+        github_repository_content_port,
+        github_pull_request_port,
         web_search_port,
     };
     let coordinator_runner: Arc<dyn InvestigationCoordinatorRunnerPort> = Arc::new(
         OpenAiInvestigationCoordinatorRunner::new(OpenAiInvestigationCoordinatorRunnerInput {
             openai_api_key: config.openai_api_key.clone(),
+            datadog_site: config.datadog_site.clone(),
+            github_scope_org: config.github.scope_org.clone(),
             language: config.language.clone(),
         }),
     );
