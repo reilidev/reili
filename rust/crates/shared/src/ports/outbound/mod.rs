@@ -14,7 +14,6 @@ pub mod slack_progress_stream;
 pub mod slack_thread_history;
 pub mod slack_thread_reply;
 pub mod web_search;
-pub mod worker_job_dispatcher;
 
 pub use datadog_event_search::{
     DatadogEventSearchParams, DatadogEventSearchPort, DatadogEventSearchResult,
@@ -64,4 +63,3 @@ pub use web_search::{
     WebCitation, WebSearchExecution, WebSearchInput, WebSearchPort, WebSearchResult,
     WebSearchUserLocation,
 };
-pub use worker_job_dispatcher::WorkerJobDispatcherPort;

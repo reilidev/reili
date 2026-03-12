@@ -14,46 +14,47 @@ use sre_adapters::inbound::slack::{
 };
 use sre_adapters::observability::logger::init_json_logger;
 use sre_application::investigation::InvestigationLogger;
+use sre_shared::ports::inbound::SlackMessageHandlerPort;
 
-use crate::bootstrap::{RuntimeBootstrapError, build_ingress_runtime_deps};
-use crate::config::env::{EnvConfigError, load_ingress_config};
-
-const INGRESS_EVENTS_ENDPOINT: &str = "/slack/events";
+use crate::bootstrap::{RuntimeBootstrapError, build_runtime_deps};
+use crate::config::env::{EnvConfigError, load_app_config};
 
 #[derive(Debug, thiserror::Error)]
-pub enum IngressRunError {
+pub enum AppRunError {
     #[error("{0}")]
     Config(#[from] EnvConfigError),
     #[error("{0}")]
     Bootstrap(#[from] RuntimeBootstrapError),
     #[error("Failed to initialize logger: {0}")]
     Logger(#[from] tracing::subscriber::SetGlobalDefaultError),
-    #[error("Failed to bind ingress server: {0}")]
+    #[error("Failed to bind app server: {0}")]
     Bind(std::io::Error),
-    #[error("Ingress server failed: {0}")]
+    #[error("App server failed: {0}")]
     Serve(std::io::Error),
 }
 
 #[derive(Clone)]
-struct IngressHttpState {
-    slack_message_handler: Arc<dyn sre_shared::ports::inbound::SlackMessageHandlerPort>,
+struct AppHttpState {
+    slack_message_handler: Arc<dyn SlackMessageHandlerPort>,
     bot_user_id: String,
     logger: Arc<dyn InvestigationLogger>,
 }
 
-pub async fn run_ingress() -> Result<(), IngressRunError> {
+pub async fn run_app() -> Result<(), AppRunError> {
     init_json_logger()?;
 
-    let config = load_ingress_config()?;
-    let deps = build_ingress_runtime_deps(&config).await?;
-    let http_state = Arc::new(IngressHttpState {
+    let config = load_app_config()?;
+    let deps = build_runtime_deps(&config).await?;
+    let worker_runner = deps.worker_runner;
+    worker_runner.start();
+
+    let http_state = Arc::new(AppHttpState {
         slack_message_handler: deps.slack_message_handler,
         bot_user_id: deps.bot_user_id,
         logger: deps.logger,
     });
-
     let app = Router::new()
-        .route(INGRESS_EVENTS_ENDPOINT, post(handle_slack_events))
+        .route("/slack/events", post(handle_slack_events))
         .route_layer(middleware::from_fn_with_state(
             deps.slack_signature_verifier,
             verify_slack_signature_middleware,
@@ -62,21 +63,24 @@ pub async fn run_ingress() -> Result<(), IngressRunError> {
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", config.port))
         .await
-        .map_err(IngressRunError::Bind)?;
+        .map_err(AppRunError::Bind)?;
     tracing::info!(
         port = config.port,
-        events_endpoint = INGRESS_EVENTS_ENDPOINT,
-        worker_base_url = config.worker_base_url,
-        "Ingress app is running"
+        worker_concurrency = config.worker_concurrency,
+        "App is running"
     );
 
-    axum::serve(listener, app)
+    let serve_result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .map_err(IngressRunError::Serve)
+        .map_err(AppRunError::Serve);
+
+    worker_runner.stop();
+
+    serve_result
 }
 
-async fn handle_slack_events(State(state): State<Arc<IngressHttpState>>, body: Bytes) -> Response {
+async fn handle_slack_events(State(state): State<Arc<AppHttpState>>, body: Bytes) -> Response {
     let parsed = match parse_slack_event(&body, &state.bot_user_id) {
         Ok(value) => value,
         Err(error) => {

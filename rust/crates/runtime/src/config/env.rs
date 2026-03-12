@@ -1,13 +1,11 @@
 use thiserror::Error;
 
-const DEFAULT_INGRESS_PORT: u16 = 3000;
-const DEFAULT_WORKER_PORT: u16 = 3100;
+const DEFAULT_APP_PORT: u16 = 3000;
 const DEFAULT_WORKER_CONCURRENCY: u32 = 2;
 const DEFAULT_DATADOG_SITE: &str = "datadoghq.com";
 const DEFAULT_LANGUAGE: &str = "English";
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
 const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
-const DEFAULT_WORKER_DISPATCH_TIMEOUT_MS: u64 = 3_000;
 const DEFAULT_OPENAI_WEB_SEARCH_MODEL: &str = "gpt-5.4";
 const DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS: u64 = 20_000;
 
@@ -35,39 +33,26 @@ pub struct GitHubAppConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IngressConfig {
-    pub slack_bot_token: String,
-    pub slack_signing_secret: String,
-    pub port: u16,
-    pub worker_base_url: String,
-    pub worker_internal_token: String,
-    pub job_max_retry: u32,
-    pub job_backoff_ms: u64,
-    pub worker_dispatch_timeout_ms: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenAiWebSearchConfig {
     pub model: String,
     pub timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkerConfig {
+pub struct AppConfig {
     pub slack_bot_token: String,
     pub slack_signing_secret: String,
+    pub port: u16,
+    pub worker_concurrency: u32,
+    pub job_max_retry: u32,
+    pub job_backoff_ms: u64,
     pub datadog_api_key: String,
     pub datadog_app_key: String,
     pub datadog_site: String,
     pub openai_api_key: String,
-    pub language: String,
-    pub worker_internal_port: u16,
-    pub worker_internal_token: String,
-    pub worker_concurrency: u32,
-    pub job_max_retry: u32,
-    pub job_backoff_ms: u64,
-    pub github: GitHubAppConfig,
     pub openai_web_search: OpenAiWebSearchConfig,
+    pub github: GitHubAppConfig,
+    pub language: String,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -78,12 +63,8 @@ pub enum EnvConfigError {
     InvalidValue { name: String, value: String },
 }
 
-pub fn load_ingress_config() -> Result<IngressConfig, EnvConfigError> {
-    load_ingress_config_with_env(&ProcessEnvironment)
-}
-
-pub fn load_worker_config() -> Result<WorkerConfig, EnvConfigError> {
-    load_worker_config_with_env(&ProcessEnvironment)
+pub fn load_app_config() -> Result<AppConfig, EnvConfigError> {
+    load_app_config_with_env(&ProcessEnvironment)
 }
 
 trait EnvironmentReader {
@@ -98,44 +79,24 @@ impl EnvironmentReader for ProcessEnvironment {
     }
 }
 
-fn load_ingress_config_with_env(
-    env: &dyn EnvironmentReader,
-) -> Result<IngressConfig, EnvConfigError> {
-    let slack_auth = read_slack_auth_config(env)?;
-
-    Ok(IngressConfig {
-        slack_bot_token: slack_auth.slack_bot_token,
-        slack_signing_secret: slack_auth.slack_signing_secret,
-        port: read_port(env, "PORT", DEFAULT_INGRESS_PORT)?,
-        worker_base_url: read_required_env(env, "WORKER_BASE_URL")?,
-        worker_internal_token: read_required_env(env, "WORKER_INTERNAL_TOKEN")?,
-        job_max_retry: DEFAULT_JOB_MAX_RETRY,
-        job_backoff_ms: DEFAULT_JOB_BACKOFF_MS,
-        worker_dispatch_timeout_ms: DEFAULT_WORKER_DISPATCH_TIMEOUT_MS,
-    })
-}
-
-fn load_worker_config_with_env(
-    env: &dyn EnvironmentReader,
-) -> Result<WorkerConfig, EnvConfigError> {
+fn load_app_config_with_env(env: &dyn EnvironmentReader) -> Result<AppConfig, EnvConfigError> {
     let slack_auth = read_slack_auth_config(env)?;
     let investigation_config = read_investigation_config(env)?;
 
-    Ok(WorkerConfig {
+    Ok(AppConfig {
         slack_bot_token: slack_auth.slack_bot_token,
         slack_signing_secret: slack_auth.slack_signing_secret,
+        port: read_port(env, "PORT", DEFAULT_APP_PORT)?,
+        worker_concurrency: DEFAULT_WORKER_CONCURRENCY,
+        job_max_retry: DEFAULT_JOB_MAX_RETRY,
+        job_backoff_ms: DEFAULT_JOB_BACKOFF_MS,
         datadog_api_key: investigation_config.datadog_api_key,
         datadog_app_key: investigation_config.datadog_app_key,
         datadog_site: investigation_config.datadog_site,
         openai_api_key: investigation_config.openai_api_key,
-        language: investigation_config.language,
-        worker_internal_port: read_port(env, "WORKER_INTERNAL_PORT", DEFAULT_WORKER_PORT)?,
-        worker_internal_token: read_required_env(env, "WORKER_INTERNAL_TOKEN")?,
-        worker_concurrency: DEFAULT_WORKER_CONCURRENCY,
-        job_max_retry: DEFAULT_JOB_MAX_RETRY,
-        job_backoff_ms: DEFAULT_JOB_BACKOFF_MS,
+        openai_web_search: default_openai_web_search_config(),
         github: read_github_app_config(env)?,
-        openai_web_search: read_openai_web_search_config(env),
+        language: investigation_config.language,
     })
 }
 
@@ -173,18 +134,10 @@ fn read_github_app_config(env: &dyn EnvironmentReader) -> Result<GitHubAppConfig
     })
 }
 
-fn read_openai_web_search_config(env: &dyn EnvironmentReader) -> OpenAiWebSearchConfig {
+fn default_openai_web_search_config() -> OpenAiWebSearchConfig {
     OpenAiWebSearchConfig {
-        model: read_or_default(
-            env,
-            "OPENAI_WEB_SEARCH_MODEL",
-            DEFAULT_OPENAI_WEB_SEARCH_MODEL,
-        ),
-        timeout_ms: env
-            .get("OPENAI_WEB_SEARCH_TIMEOUT_MS")
-            .and_then(|v| v.parse::<u64>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS),
+        model: DEFAULT_OPENAI_WEB_SEARCH_MODEL.to_string(),
+        timeout_ms: DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS,
     }
 }
 
@@ -251,9 +204,10 @@ fn parse_positive_u32(name: &str, value: &str) -> Result<u32, EnvConfigError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_WORKER_DISPATCH_TIMEOUT_MS,
+        DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_OPENAI_WEB_SEARCH_MODEL,
+        DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS, DEFAULT_WORKER_CONCURRENCY,
     };
-    use super::{EnvironmentReader, load_ingress_config_with_env, load_worker_config_with_env};
+    use super::{EnvironmentReader, load_app_config_with_env};
     use std::collections::HashMap;
 
     struct MapEnvironment {
@@ -267,14 +221,6 @@ mod tests {
                 (
                     "SLACK_SIGNING_SECRET".to_string(),
                     "signing-secret".to_string(),
-                ),
-                (
-                    "WORKER_BASE_URL".to_string(),
-                    "http://localhost:3100".to_string(),
-                ),
-                (
-                    "WORKER_INTERNAL_TOKEN".to_string(),
-                    "internal-token".to_string(),
                 ),
                 ("DATADOG_API_KEY".to_string(), "dd-api-key".to_string()),
                 ("DATADOG_APP_KEY".to_string(), "dd-app-key".to_string()),
@@ -310,25 +256,6 @@ mod tests {
     }
 
     #[test]
-    fn uses_fixed_retry_settings_for_ingress_even_when_env_vars_are_set() {
-        let env = MapEnvironment::from_overrides(&[
-            ("JOB_MAX_RETRY", "99"),
-            ("JOB_BACKOFF_MS", "9999"),
-            ("WORKER_DISPATCH_TIMEOUT_MS", "9999"),
-        ]);
-
-        let config =
-            load_ingress_config_with_env(&env).expect("load ingress config with fixed defaults");
-
-        assert_eq!(config.job_max_retry, DEFAULT_JOB_MAX_RETRY);
-        assert_eq!(config.job_backoff_ms, DEFAULT_JOB_BACKOFF_MS);
-        assert_eq!(
-            config.worker_dispatch_timeout_ms,
-            DEFAULT_WORKER_DISPATCH_TIMEOUT_MS
-        );
-    }
-
-    #[test]
     fn uses_fixed_worker_settings_even_when_env_vars_are_set() {
         let env = MapEnvironment::from_overrides(&[
             ("WORKER_CONCURRENCY", "9"),
@@ -336,11 +263,47 @@ mod tests {
             ("JOB_BACKOFF_MS", "9999"),
         ]);
 
-        let config =
-            load_worker_config_with_env(&env).expect("load worker config with fixed defaults");
+        let config = load_app_config_with_env(&env).expect("load app config with fixed defaults");
 
-        assert_eq!(config.worker_concurrency, 2);
+        assert_eq!(config.worker_concurrency, DEFAULT_WORKER_CONCURRENCY);
         assert_eq!(config.job_max_retry, DEFAULT_JOB_MAX_RETRY);
         assert_eq!(config.job_backoff_ms, DEFAULT_JOB_BACKOFF_MS);
+    }
+
+    #[test]
+    fn loads_port_from_env() {
+        let env = MapEnvironment::from_overrides(&[("PORT", "3010")]);
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        assert_eq!(config.port, 3010);
+    }
+
+    #[test]
+    fn converts_multiline_github_private_key() {
+        let env = MapEnvironment::from_overrides(&[]);
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        assert!(config.github.private_key.contains('\n'));
+    }
+
+    #[test]
+    fn uses_fixed_openai_web_search_settings_even_when_env_vars_are_set() {
+        let env = MapEnvironment::from_overrides(&[
+            ("OPENAI_WEB_SEARCH_MODEL", "gpt-x"),
+            ("OPENAI_WEB_SEARCH_TIMEOUT_MS", "999999"),
+        ]);
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        assert_eq!(
+            config.openai_web_search.model,
+            DEFAULT_OPENAI_WEB_SEARCH_MODEL
+        );
+        assert_eq!(
+            config.openai_web_search.timeout_ms,
+            DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS
+        );
     }
 }

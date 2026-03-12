@@ -1,26 +1,23 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use sre_shared::errors::PortError;
 use sre_shared::ports::inbound::SlackMessageHandlerPort;
 use sre_shared::ports::outbound::{
-    SlackThreadReplyInput, SlackThreadReplyPort, WorkerJobDispatcherPort,
+    InvestigationJobQueuePort, SlackThreadReplyInput, SlackThreadReplyPort,
 };
 use sre_shared::types::{InvestigationJob, InvestigationJobPayload, SlackMessage};
-use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::investigation::InvestigationLogger;
 
 pub struct EnqueueSlackEventUseCaseDeps {
-    pub worker_job_dispatcher: Arc<dyn WorkerJobDispatcherPort>,
+    pub job_queue: Arc<InvestigationJobQueuePort>,
     pub slack_reply_port: Arc<dyn SlackThreadReplyPort>,
     pub logger: Arc<dyn InvestigationLogger>,
-    pub job_max_retry: u32,
-    pub job_backoff_ms: u64,
 }
 
 pub struct EnqueueSlackEventUseCase {
@@ -30,40 +27,6 @@ pub struct EnqueueSlackEventUseCase {
 impl EnqueueSlackEventUseCase {
     pub fn new(deps: EnqueueSlackEventUseCaseDeps) -> Self {
         Self { deps }
-    }
-
-    async fn dispatch_with_retry(&self, job: &InvestigationJob) -> Result<(), PortError> {
-        let max_attempts = self.deps.job_max_retry.saturating_add(1);
-        let mut attempt = 0_u32;
-
-        while attempt < max_attempts {
-            attempt += 1;
-
-            match self.deps.worker_job_dispatcher.dispatch(job.clone()).await {
-                Ok(()) => return Ok(()),
-                Err(error) => {
-                    if attempt >= max_attempts {
-                        return Err(error);
-                    }
-
-                    self.deps.logger.warn(
-                        "Retrying worker dispatch",
-                        retry_log_meta(RetryLogMetaInput {
-                            job,
-                            attempt,
-                            max_attempts,
-                            error: &error,
-                        }),
-                    );
-
-                    sleep(Duration::from_millis(self.deps.job_backoff_ms)).await;
-                }
-            }
-        }
-
-        Err(PortError::new(
-            "Failed to dispatch worker job after retries",
-        ))
     }
 }
 
@@ -77,38 +40,40 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
             received_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
         });
 
-        let dispatch_started_at = Instant::now();
-        match self.dispatch_with_retry(&job).await {
+        match self.deps.job_queue.enqueue(job.clone()).await {
             Ok(()) => {
+                let worker_queue_depth = read_worker_queue_depth(ReadWorkerQueueDepthInput {
+                    job_queue: Arc::clone(&self.deps.job_queue),
+                    logger: Arc::clone(&self.deps.logger),
+                })
+                .await;
+
                 self.deps.logger.info(
-                    "Dispatched worker job",
+                    "Queued investigation job",
                     BTreeMap::from([
                         ("slackEventId".to_string(), message.slack_event_id),
                         ("jobId".to_string(), job.job_id),
                         ("channel".to_string(), message.channel),
                         ("threadTs".to_string(), thread_ts),
                         (
-                            "ingress_dispatch_latency_ms".to_string(),
-                            dispatch_started_at.elapsed().as_millis().to_string(),
-                        ),
-                        (
                             "ingress_ack_latency_ms".to_string(),
                             event_started_at.elapsed().as_millis().to_string(),
                         ),
+                        ("worker_queue_depth".to_string(), worker_queue_depth),
                     ]),
                 );
 
                 Ok(())
             }
-            Err(dispatch_error) => {
+            Err(enqueue_error) => {
                 self.deps.logger.error(
-                    "Failed to dispatch worker job",
+                    "Failed to enqueue investigation job",
                     BTreeMap::from([
                         ("slackEventId".to_string(), message.slack_event_id),
                         ("jobId".to_string(), job.job_id),
                         ("channel".to_string(), message.channel.clone()),
                         ("threadTs".to_string(), thread_ts.clone()),
-                        ("error".to_string(), dispatch_error.message.clone()),
+                        ("error".to_string(), enqueue_error.message.clone()),
                         (
                             "ingress_ack_latency_ms".to_string(),
                             event_started_at.elapsed().as_millis().to_string(),
@@ -121,10 +86,28 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
                     .post_thread_reply(SlackThreadReplyInput {
                         channel: message.channel,
                         thread_ts,
-                        text: format!("Failed to queue investigation: {}", dispatch_error.message),
+                        text: format!("Failed to queue investigation: {}", enqueue_error.message),
                     })
                     .await
             }
+        }
+    }
+}
+
+struct ReadWorkerQueueDepthInput {
+    job_queue: Arc<InvestigationJobQueuePort>,
+    logger: Arc<dyn InvestigationLogger>,
+}
+
+async fn read_worker_queue_depth(input: ReadWorkerQueueDepthInput) -> String {
+    match input.job_queue.get_depth().await {
+        Ok(value) => value.to_string(),
+        Err(error) => {
+            input.logger.warn(
+                "Failed to read worker queue depth after enqueue",
+                BTreeMap::from([("error".to_string(), error.message)]),
+            );
+            "unknown".to_string()
         }
     }
 }
@@ -148,37 +131,16 @@ fn build_investigation_job(input: BuildInvestigationJobInput) -> InvestigationJo
     }
 }
 
-struct RetryLogMetaInput<'a> {
-    job: &'a InvestigationJob,
-    attempt: u32,
-    max_attempts: u32,
-    error: &'a PortError,
-}
-
-fn retry_log_meta(input: RetryLogMetaInput<'_>) -> BTreeMap<String, String> {
-    BTreeMap::from([
-        (
-            "slackEventId".to_string(),
-            input.job.payload.slack_event_id.clone(),
-        ),
-        ("jobId".to_string(), input.job.job_id.clone()),
-        ("attempt".to_string(), input.attempt.to_string()),
-        (
-            "remainingAttempts".to_string(),
-            input.max_attempts.saturating_sub(input.attempt).to_string(),
-        ),
-        ("error".to_string(), input.error.message.clone()),
-    ])
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, InvestigationLogger, PortError,
         SlackMessage, SlackMessageHandlerPort, SlackThreadReplyInput, SlackThreadReplyPort,
-        WorkerJobDispatcherPort,
     };
     use async_trait::async_trait;
+    use sre_shared::ports::outbound::{
+        CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailResult, JobQueuePort,
+    };
     use sre_shared::types::SlackTriggerType;
     use std::collections::BTreeMap;
     use std::collections::VecDeque;
@@ -193,37 +155,72 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MockWorkerJobDispatcher {
-        dispatched_jobs: Mutex<Vec<InvestigationJob>>,
-        dispatch_results: Mutex<VecDeque<Result<(), PortError>>>,
+    struct MockInvestigationJobQueue {
+        enqueued_jobs: Mutex<Vec<InvestigationJob>>,
+        enqueue_results: Mutex<VecDeque<Result<(), PortError>>>,
+        queue_depth_results: Mutex<VecDeque<Result<usize, PortError>>>,
     }
 
-    impl MockWorkerJobDispatcher {
-        fn dispatched_jobs(&self) -> Vec<InvestigationJob> {
-            self.dispatched_jobs
+    impl MockInvestigationJobQueue {
+        fn enqueued_jobs(&self) -> Vec<InvestigationJob> {
+            self.enqueued_jobs
                 .lock()
-                .expect("lock dispatched jobs")
+                .expect("lock enqueued jobs")
                 .clone()
         }
 
-        fn with_dispatch_results(&self, results: Vec<Result<(), PortError>>) {
-            let mut lock = self.dispatch_results.lock().expect("lock dispatch results");
+        fn with_enqueue_results(&self, results: Vec<Result<(), PortError>>) {
+            let mut lock = self.enqueue_results.lock().expect("lock enqueue results");
+            *lock = VecDeque::from(results);
+        }
+
+        fn with_queue_depth_results(&self, results: Vec<Result<usize, PortError>>) {
+            let mut lock = self
+                .queue_depth_results
+                .lock()
+                .expect("lock queue depth results");
             *lock = VecDeque::from(results);
         }
     }
 
     #[async_trait]
-    impl WorkerJobDispatcherPort for MockWorkerJobDispatcher {
-        async fn dispatch(&self, job: InvestigationJob) -> Result<(), PortError> {
-            self.dispatched_jobs
+    impl JobQueuePort<InvestigationJob> for MockInvestigationJobQueue {
+        async fn enqueue(&self, job: InvestigationJob) -> Result<(), PortError> {
+            self.enqueued_jobs
                 .lock()
-                .expect("lock dispatched jobs")
+                .expect("lock enqueued jobs")
                 .push(job);
 
-            let mut lock = self.dispatch_results.lock().expect("lock dispatch results");
+            let mut lock = self.enqueue_results.lock().expect("lock enqueue results");
             match lock.pop_front() {
                 Some(result) => result,
                 None => Ok(()),
+            }
+        }
+
+        async fn claim(&self) -> Result<Option<InvestigationJob>, PortError> {
+            Ok(None)
+        }
+
+        async fn complete(&self, _input: CompleteJobInput) -> Result<(), PortError> {
+            Ok(())
+        }
+
+        async fn fail(
+            &self,
+            _input: FailJobInput,
+        ) -> Result<JobFailResult<InvestigationJob>, PortError> {
+            Err(PortError::new("fail should not be called in enqueue tests"))
+        }
+
+        async fn get_depth(&self) -> Result<usize, PortError> {
+            let mut lock = self
+                .queue_depth_results
+                .lock()
+                .expect("lock queue depth results");
+            match lock.pop_front() {
+                Some(result) => result,
+                None => Ok(self.enqueued_jobs().len()),
             }
         }
     }
@@ -300,38 +297,35 @@ mod tests {
 
     struct TestContext {
         use_case: EnqueueSlackEventUseCase,
-        worker_job_dispatcher: Arc<MockWorkerJobDispatcher>,
+        job_queue: Arc<MockInvestigationJobQueue>,
         slack_reply_port: Arc<MockSlackThreadReplyPort>,
         logger: Arc<MockLogger>,
     }
 
     fn create_use_case(input: CreateUseCaseInput) -> TestContext {
-        let worker_job_dispatcher = Arc::new(MockWorkerJobDispatcher::default());
-        worker_job_dispatcher.with_dispatch_results(input.dispatch_results);
+        let job_queue = Arc::new(MockInvestigationJobQueue::default());
+        job_queue.with_enqueue_results(input.enqueue_results);
+        job_queue.with_queue_depth_results(input.queue_depth_results);
         let slack_reply_port = Arc::new(MockSlackThreadReplyPort::default());
         let logger = Arc::new(MockLogger::default());
 
         let use_case = EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
-            worker_job_dispatcher: Arc::clone(&worker_job_dispatcher)
-                as Arc<dyn WorkerJobDispatcherPort>,
+            job_queue: Arc::clone(&job_queue) as Arc<InvestigationJobQueuePort>,
             slack_reply_port: Arc::clone(&slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
             logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
-            job_max_retry: input.job_max_retry,
-            job_backoff_ms: input.job_backoff_ms,
         });
 
         TestContext {
             use_case,
-            worker_job_dispatcher,
+            job_queue,
             slack_reply_port,
             logger,
         }
     }
 
     struct CreateUseCaseInput {
-        dispatch_results: Vec<Result<(), PortError>>,
-        job_max_retry: u32,
-        job_backoff_ms: u64,
+        enqueue_results: Vec<Result<(), PortError>>,
+        queue_depth_results: Vec<Result<usize, PortError>>,
     }
 
     fn create_message() -> SlackMessage {
@@ -350,9 +344,8 @@ mod tests {
     #[tokio::test]
     async fn dispatches_alert_investigation_job() {
         let context = create_use_case(CreateUseCaseInput {
-            dispatch_results: Vec::new(),
-            job_max_retry: 0,
-            job_backoff_ms: 0,
+            enqueue_results: Vec::new(),
+            queue_depth_results: Vec::new(),
         });
 
         context
@@ -361,18 +354,17 @@ mod tests {
             .await
             .expect("enqueue handle");
 
-        let dispatched_jobs = context.worker_job_dispatcher.dispatched_jobs();
-        assert_eq!(dispatched_jobs.len(), 1);
-        assert_eq!(dispatched_jobs[0].retry_count, 0);
+        let enqueued_jobs = context.job_queue.enqueued_jobs();
+        assert_eq!(enqueued_jobs.len(), 1);
+        assert_eq!(enqueued_jobs[0].retry_count, 0);
         assert_eq!(context.slack_reply_port.posted_replies().len(), 0);
     }
 
     #[tokio::test]
-    async fn retries_dispatch_then_succeeds() {
+    async fn logs_unknown_depth_when_depth_lookup_fails() {
         let context = create_use_case(CreateUseCaseInput {
-            dispatch_results: vec![Err(PortError::new("temporary")), Ok(())],
-            job_max_retry: 1,
-            job_backoff_ms: 0,
+            enqueue_results: Vec::new(),
+            queue_depth_results: vec![Err(PortError::new("depth-unavailable"))],
         });
 
         context
@@ -381,18 +373,19 @@ mod tests {
             .await
             .expect("enqueue handle");
 
-        assert_eq!(context.worker_job_dispatcher.dispatched_jobs().len(), 2);
         let warns = context.logger.warns();
         assert_eq!(warns.len(), 1);
-        assert_eq!(warns[0].message, "Retrying worker dispatch");
+        assert_eq!(
+            warns[0].message,
+            "Failed to read worker queue depth after enqueue"
+        );
     }
 
     #[tokio::test]
-    async fn posts_slack_reply_when_dispatch_exhausts_retries() {
+    async fn posts_slack_reply_when_enqueue_fails() {
         let context = create_use_case(CreateUseCaseInput {
-            dispatch_results: vec![Err(PortError::new("fail-1")), Err(PortError::new("fail-2"))],
-            job_max_retry: 1,
-            job_backoff_ms: 0,
+            enqueue_results: vec![Err(PortError::new("fail-1"))],
+            queue_depth_results: Vec::new(),
         });
 
         context
@@ -407,12 +400,12 @@ mod tests {
         assert_eq!(posted_replies[0].thread_ts, "1710000000.000001");
         assert_eq!(
             posted_replies[0].text,
-            "Failed to queue investigation: fail-2"
+            "Failed to queue investigation: fail-1"
         );
 
         let errors = context.logger.errors();
         assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Failed to dispatch worker job");
-        assert_eq!(errors[0].meta.get("error"), Some(&"fail-2".to_string()));
+        assert_eq!(errors[0].message, "Failed to enqueue investigation job");
+        assert_eq!(errors[0].meta.get("error"), Some(&"fail-1".to_string()));
     }
 }

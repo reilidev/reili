@@ -4,8 +4,7 @@ This document is for contributors and maintainers of `Reili`.
 
 ## Prerequisites
 
-- Node.js 20+
-- pnpm 10+
+- Rust stable toolchain
 - Slack App credentials
 - Datadog API credentials
 - OpenAI API key
@@ -13,63 +12,44 @@ This document is for contributors and maintainers of `Reili`.
 
 ## Setup
 
-1. Install dependencies:
-
-```bash
-pnpm install
-```
-
-2. Create local environment file:
+1. Prepare local environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-3. Fill required variables in `.env`:
+2. Fill required variables in `.env`:
 
-- Shared:
-  - `SLACK_BOT_TOKEN`
-  - `SLACK_SIGNING_SECRET`
-  - `WORKER_INTERNAL_TOKEN`
-- Ingress:
-  - `WORKER_BASE_URL`
-- Worker:
-  - `DATADOG_API_KEY`
-  - `DATADOG_APP_KEY`
-  - `OPENAI_API_KEY`
-  - `GITHUB_APP_ID`
-  - `GITHUB_APP_PRIVATE_KEY`
-  - `GITHUB_APP_INSTALLATION_ID`
-  - `GITHUB_SEARCH_SCOPE_ORG`
+- `SLACK_BOT_TOKEN`
+- `SLACK_SIGNING_SECRET`
+- `DATADOG_API_KEY`
+- `DATADOG_APP_KEY`
+- `OPENAI_API_KEY`
+- `GITHUB_APP_ID`
+- `GITHUB_APP_PRIVATE_KEY`
+- `GITHUB_APP_INSTALLATION_ID`
+- `GITHUB_SEARCH_SCOPE_ORG`
 
 Optional:
 
 - `PORT` (default: `3000`)
-- `WORKER_INTERNAL_PORT` (default: `3100`)
 - `DATADOG_SITE` (default: `datadoghq.com`)
 - `LANGUAGE` (default: `English`)
 
 ## Local Run
 
-Run two processes in separate terminals.
-
-Terminal 1 (worker):
+Run the unified runtime in one terminal.
 
 ```bash
-bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p sre_runtime -- --mode worker"'
+cd rust
+bash -lc 'set -a; source ../.env; set +a; cargo run -p sre_runtime'
 ```
 
-Terminal 2 (ingress):
+If you use `cargo-watch`:
 
 ```bash
-bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p sre_runtime -- --mode ingress"'
-```
-
-Production-like start:
-
-```bash
-pnpm start:worker
-pnpm start:ingress
+cd rust
+bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p sre_runtime"'
 ```
 
 ## Validation Commands
@@ -77,21 +57,21 @@ pnpm start:ingress
 Run these before opening a PR:
 
 ```bash
-pnpm test
-pnpm format
-pnpm lint:deps
-pnpm typecheck
+cd rust
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
 ## Architecture Rules
 
 Project layers:
 
-- `src/runtime`: bootstrap and runtime entrypoints
-- `src/application`: use case orchestration
-- `src/ports`: boundary contracts
-- `src/adapters`: concrete integrations
-- `src/shared`: cross-cutting types and utilities
+- `rust/crates/runtime`: bootstrap and runtime entrypoints
+- `rust/crates/application`: use case orchestration
+- `rust/crates/shared/src/ports`: boundary contracts
+- `rust/crates/adapters`: concrete integrations
+- `rust/crates/shared`: cross-cutting types and utilities
 
 Dependency direction:
 
@@ -102,20 +82,18 @@ Dependency direction:
 
 ## Behavior Notes
 
-- Ingress receives Slack events and dispatches jobs to Worker via `POST /internal/jobs`.
-- Job queue is in-memory (`InMemoryJobQueue`), so pending jobs are not durable across worker restarts.
+- The runtime receives Slack events at `/slack/events` and enqueues investigation jobs directly into `InMemoryJobQueue`.
+- Worker tasks run in the same process and claim jobs from that queue.
+- Pending jobs are not durable across app restarts.
 
 ## Testing Conventions
 
-- Add tests alongside implementation files (`*.test.ts`).
+- Add Rust tests alongside implementation code with `#[cfg(test)]` or sibling test modules.
 - Prefer unit tests for `application` layer orchestration and adapter contract behavior.
 - Keep tests deterministic and independent from external APIs.
 
-## Useful Scripts
+## Useful Commands
 
-- `pnpm dev:worker`: run worker with reload
-- `pnpm dev:ingress`: run ingress with reload
-- `pnpm dev:test`: run Vitest in watch mode
-- `pnpm build`: TypeScript build
-- `pnpm test`: run tests once
-- `pnpm typecheck`: type check without emit
+- `cargo run -p sre_runtime`: start the app
+- `cargo watch -x "run -p sre_runtime"`: start with reload if `cargo-watch` is installed
+- `cargo test --workspace`: run Rust tests

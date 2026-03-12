@@ -20,23 +20,23 @@ It focuses on read-oriented DevOps work: triage, investigation, and synthesis.
 ## Core Features
 
 - Slack-native intake via `message` and `app_mention` events
-- Two-process runtime: Ingress (event intake) + Worker (investigation execution)
+- Single-process runtime:
+  - One HTTP server receives Slack events at `/slack/events`
+  - In-process worker tasks claim jobs from `InMemoryJobQueue`
 - Multi-agent investigation:
   - Specialized sub-agents for Logs, Metrics, Events, and GitHub
   - A Coordinator orchestrates the flow, then a Synthesizer writes the final report
 - Database-free operations:
   - In-memory job queue (`InMemoryJobQueue`)
   - No extra DB infrastructure required
-- Internal dispatch:
-  - Ingress forwards jobs to Worker via internal HTTP endpoint
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  A[Slack Events API] --> B[Ingress App<br/>Slack Bolt]
-  B -->|POST /internal/jobs| C[Worker Internal API]
-  C --> D[InMemoryJobQueue]
+  A[Slack Events API] --> B[Reili Runtime<br/>/slack/events]
+  B --> C[InMemoryJobQueue]
+  C --> D[Worker Runner<br/>tokio tasks]
   D --> E[Investigation Use Case]
   E --> F[OpenAI Agents SDK]
   E --> G[Datadog API v2]
@@ -47,16 +47,14 @@ flowchart LR
 ### Runtime Characteristics
 
 - Database-free: no persistent state component
-- Worker queue is in-memory, so pending jobs are lost on worker restart
-- Investigation timeout: 20 minutes (see `execute-investigation-job.ts`)
+- Job queue is in-memory, so pending jobs are lost on app restart
 - Datadog API calls use retry configuration (max 3 retries)
 
 ## Quick Start
 
 ### 1. Prerequisites
 
-- Node.js 20+
-- pnpm 10+
+- Rust stable toolchain
 - Slack App (Bot Token / Signing Secret)
 - Datadog API Key + APP Key
 - OpenAI API Key
@@ -65,29 +63,14 @@ flowchart LR
 ### 2. Install
 
 ```bash
-pnpm install
+cp .env.example .env
 ```
 
 ### 3. Configure Environment Variables
 
-Create `.env` from `.env.example` and fill in your values:
-
-```bash
-cp .env.example .env
-```
-
-Required for Ingress:
-
+Required:
 - `SLACK_BOT_TOKEN`
 - `SLACK_SIGNING_SECRET`
-- `WORKER_BASE_URL`
-- `WORKER_INTERNAL_TOKEN`
-
-Required for Worker:
-
-- `SLACK_BOT_TOKEN`
-- `SLACK_SIGNING_SECRET`
-- `WORKER_INTERNAL_TOKEN`
 - `DATADOG_API_KEY`
 - `DATADOG_APP_KEY`
 - `OPENAI_API_KEY`
@@ -99,7 +82,6 @@ Required for Worker:
 Common optional variables:
 
 - `PORT` (default: `3000`)
-- `WORKER_INTERNAL_PORT` (default: `3100`)
 - `DATADOG_SITE` (default: `datadoghq.com`)
 - `LANGUAGE` (default: `English`)
 
@@ -111,18 +93,18 @@ Common optional variables:
 
 ### 5. Run
 
-Development mode:
+Single-process runtime:
 
 ```bash
-pnpm dev:worker
-pnpm dev:ingress
+cd rust
+bash -lc 'set -a; source ../.env; set +a; cargo run -p sre_runtime'
 ```
 
-Production-like mode:
+If you use `cargo-watch`:
 
 ```bash
-pnpm start:worker
-pnpm start:ingress
+cd rust
+bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p sre_runtime"'
 ```
 
 ## Usage
