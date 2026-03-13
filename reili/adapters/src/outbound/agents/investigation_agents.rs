@@ -26,7 +26,6 @@ use super::{
 const INVESTIGATION_MODEL: &str = "gpt-5.3-codex";
 const COORDINATOR_MAX_TURNS: usize = 20;
 const SUBAGENT_MAX_TURNS: usize = 50;
-const SYNTHESIZER_MAX_TURNS: usize = 3;
 const LOGS_PROGRESS_OWNER_ID: &str = "investigate_logs";
 const METRICS_PROGRESS_OWNER_ID: &str = "investigate_metrics";
 const EVENTS_PROGRESS_OWNER_ID: &str = "investigate_events";
@@ -43,11 +42,6 @@ pub struct BuildCoordinatorAgentInput {
     pub github_scope_org: String,
     pub runtime: InvestigationRuntime,
     pub on_progress_event: Arc<dyn InvestigationProgressEventPort>,
-    pub language: String,
-}
-
-pub struct BuildSynthesizerAgentInput {
-    pub client: openai::Client,
     pub language: String,
 }
 
@@ -135,18 +129,6 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
 }
 
 #[must_use]
-pub fn build_synthesizer_agent(input: BuildSynthesizerAgentInput) -> OpenAiAgent {
-    input
-        .client
-        .agent(INVESTIGATION_MODEL)
-        .name("Synthesizer")
-        .preamble(&build_synthesizer_instructions(&input.language))
-        .default_max_turns(SYNTHESIZER_MAX_TURNS)
-        .additional_params(model_additional_params())
-        .build()
-}
-
-#[must_use]
 pub fn build_coordinator_prompt(alert_context: &AlertContext) -> String {
     let investigation_prompt = "Investigate the following user input and respond with the most appropriate investigation or direct answer.
 The input may be an alert, request, question, link, or partial context.";
@@ -162,28 +144,6 @@ The input may be an alert, request, question, link, or partial context.";
 
     format!("{investigation_prompt}{trigger_message_section}{thread_context_section}")
 }
-
-#[must_use]
-pub fn build_synthesizer_prompt(result: &str, alert_context: &AlertContext) -> String {
-    let mut sections = Vec::new();
-    sections.push("## Trigger Message".to_string());
-    sections.push(alert_context.trigger_message_text.clone());
-
-    if !alert_context.thread_transcript.is_empty() {
-        sections.push("\n## Thread Context".to_string());
-        sections.push(alert_context.thread_transcript.clone());
-    }
-
-    sections.push("\n## Investigation Results".to_string());
-    if result.is_empty() {
-        sections.push("No investigation output.".to_string());
-    } else {
-        sections.push(result.to_string());
-    }
-
-    sections.join("\n")
-}
-
 struct BuildSpecialistAgentInput {
     client: openai::Client,
     resources: Arc<InvestigationResources>,
@@ -356,6 +316,8 @@ You orchestrate investigation end-to-end.
 - Before entering a new investigation step, call report_progress.
 - report_progress payload must be short: use title and summary fields.
 - Do not post consecutive report_progress calls with identical content.
+- Your response is posted to Slack as-is. Do not rely on any downstream rewriting.
+- Write the final response as a concise, scannable Slack message using Slack markdown.
 - For investigation mode, establish system map from GitHub before deep Datadog querying.
 - Use aggregate_datadog_logs_by_facet and list_datadog_metrics_catalog early to understand service scope.
 - Delegate detailed work to investigate_logs / investigate_metrics / investigate_events / investigate_github as needed.
@@ -378,22 +340,6 @@ Final answer requirements:
         retry_count = input.runtime.retry_count,
         github_scope_org = input.github_scope_org,
         datadog_site = datadog_site,
-    )
-}
-
-fn build_synthesizer_instructions(language: &str) -> String {
-    format!(
-        "You are an SRE/Security/Platform engineering expert.
-You receive investigation output and rewrite it into a clear Slack message.
-
-Output language: {language}
-- Use {language} for all responses.
-
-Guidelines:
-- Write for Slack audience: concise and scannable.
-- Use Slack markdown (*bold*, bullet points).
-- Keep traceability: include key evidence links for important claims.
-- Do not invent information not present in the investigation output.",
     )
 }
 
@@ -468,7 +414,7 @@ mod tests {
         BuildCoordinatorInstructionsInput, BuildGithubInstructionsInput,
         build_coordinator_instructions, build_coordinator_prompt, build_events_instructions,
         build_github_instructions, build_logs_instructions, build_metrics_instructions,
-        build_synthesizer_prompt, model_additional_params,
+        model_additional_params,
     };
 
     fn sample_alert_context() -> AlertContext {
@@ -484,13 +430,6 @@ mod tests {
         let prompt = build_coordinator_prompt(&sample_alert_context());
         assert!(prompt.contains("Trigger Message: Please investigate this alert"));
         assert!(prompt.contains("Thread Context:\nthread context"));
-    }
-
-    #[test]
-    fn builds_synthesizer_prompt_with_result() {
-        let prompt = build_synthesizer_prompt("result body", &sample_alert_context());
-        assert!(prompt.contains("## Investigation Results"));
-        assert!(prompt.contains("result body"));
     }
 
     #[test]

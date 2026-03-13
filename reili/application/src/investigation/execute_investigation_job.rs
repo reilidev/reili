@@ -5,15 +5,13 @@ use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use reili_shared::errors::PortError;
 use reili_shared::ports::outbound::{
-    CoordinatorRunReport, InvestigationContext, InvestigationCoordinatorRunnerPort,
-    InvestigationProgressEventInput, InvestigationProgressEventPort, InvestigationResources,
-    InvestigationRuntime, InvestigationSynthesizerRunnerPort, RunCoordinatorInput,
-    RunSynthesizerInput, SYNTHESIZER_PROGRESS_OWNER_ID, SlackProgressStreamPort,
-    SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort, SynthesizerRunReport,
+    InvestigationContext, InvestigationCoordinatorRunnerPort, InvestigationProgressEventInput,
+    InvestigationProgressEventPort, InvestigationResources, InvestigationRuntime,
+    RunCoordinatorInput, SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput,
+    SlackThreadReplyPort,
 };
 use reili_shared::types::{
-    AlertContext, BuildInvestigationLlmTelemetryInput, InvestigationJobPayload,
-    InvestigationLlmTelemetry,
+    BuildInvestigationLlmTelemetryInput, InvestigationJobPayload, InvestigationLlmTelemetry,
 };
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
@@ -23,15 +21,17 @@ use super::logger::{InvestigationLogMeta, InvestigationLogger, string_log_meta};
 use super::services::{
     CoordinatorProgressEventHandler, CoordinatorProgressEventHandlerInput,
     CreateInvestigationProgressStreamSessionFactoryInput,
-    CreateInvestigationProgressStreamSessionInput, InvestigationProgressReasoningInput,
-    InvestigationProgressStreamSession, InvestigationProgressStreamSessionFactory,
-    build_investigation_llm_telemetry, create_investigation_progress_stream_session_factory,
+    CreateInvestigationProgressStreamSessionInput, InvestigationProgressStreamSession,
+    InvestigationProgressStreamSessionFactory, build_investigation_llm_telemetry,
+    create_investigation_progress_stream_session_factory,
 };
 use super::slack_thread_context_loader::{
     SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
     ThreadContextFetchFailedLogInput, ThreadContextLoaderLogger,
 };
 use crate::alert_intake::{ExtractAlertContextInput, extract_alert_context};
+
+const FALLBACK_REPORT_TEXT: &str = "Investigation completed but failed to generate a report.";
 
 #[derive(Clone)]
 pub struct InvestigationExecutionDeps {
@@ -40,7 +40,6 @@ pub struct InvestigationExecutionDeps {
     pub slack_thread_history_port: Arc<dyn SlackThreadHistoryPort>,
     pub investigation_resources: InvestigationResources,
     pub coordinator_runner: Arc<dyn InvestigationCoordinatorRunnerPort>,
-    pub synthesizer_runner: Arc<dyn InvestigationSynthesizerRunnerPort>,
     pub logger: Arc<dyn InvestigationLogger>,
 }
 
@@ -127,7 +126,7 @@ pub async fn execute_investigation_job(
                 Arc::clone(&input.deps.slack_reply_port),
                 input.payload.message.channel.clone(),
                 thread_ts,
-                success.synthesizer_report.report_text,
+                success.report_text,
                 success.llm_telemetry.clone(),
             )
             .await?;
@@ -158,7 +157,6 @@ pub async fn execute_investigation_job(
             let llm_telemetry =
                 build_investigation_llm_telemetry(BuildInvestigationLlmTelemetryInput {
                     coordinator_usage: failure_error.coordinator_usage,
-                    synthesizer_usage: failure_error.synthesizer_usage,
                 });
 
             let duration_ms = started_at.elapsed().as_millis();
@@ -183,7 +181,7 @@ pub async fn execute_investigation_job(
 }
 
 struct InvestigationExecutionSuccess {
-    synthesizer_report: SynthesizerRunReport,
+    report_text: String,
     llm_telemetry: InvestigationLlmTelemetry,
 }
 
@@ -236,62 +234,19 @@ async fn run_investigation(
         .await
         .map_err(ExecuteInvestigationJobError::from)?;
 
-    {
-        let mut session = progress_session.lock().await;
-        session
-            .post_reasoning(InvestigationProgressReasoningInput {
-                owner_id: SYNTHESIZER_PROGRESS_OWNER_ID.to_string(),
-                title: "Reporting".to_string(),
-                summary: String::new(),
-            })
-            .await;
-    }
-
-    let synthesizer_report = run_synthesis_stage(
-        Arc::clone(&input.deps.synthesizer_runner),
-        coordinator_report.clone(),
-        alert_context,
-        Arc::clone(&on_progress_event),
-    )
-    .await?;
-
     let llm_telemetry = build_investigation_llm_telemetry(BuildInvestigationLlmTelemetryInput {
         coordinator_usage: coordinator_report.usage,
-        synthesizer_usage: synthesizer_report.usage.clone(),
     });
+    let report_text = if coordinator_report.result_text.is_empty() {
+        FALLBACK_REPORT_TEXT.to_string()
+    } else {
+        coordinator_report.result_text
+    };
 
     Ok(InvestigationExecutionSuccess {
-        synthesizer_report,
+        report_text,
         llm_telemetry,
     })
-}
-
-async fn run_synthesis_stage(
-    synthesizer_runner: Arc<dyn InvestigationSynthesizerRunnerPort>,
-    coordinator_report: CoordinatorRunReport,
-    alert_context: AlertContext,
-    on_progress_event: Arc<dyn InvestigationProgressEventPort>,
-) -> Result<SynthesizerRunReport, ExecuteInvestigationJobError> {
-    synthesizer_runner
-        .run(RunSynthesizerInput {
-            result: coordinator_report.result_text,
-            alert_context,
-            on_progress_event,
-        })
-        .await
-        .map_err(|error| {
-            let llm_telemetry =
-                build_investigation_llm_telemetry(BuildInvestigationLlmTelemetryInput {
-                    coordinator_usage: coordinator_report.usage,
-                    synthesizer_usage: error.usage.clone(),
-                });
-            ExecuteInvestigationJobError::InvestigationExecutionFailed(
-                reili_shared::errors::InvestigationExecutionFailedError::new(
-                    error.cause_message,
-                    llm_telemetry,
-                ),
-            )
-        })
 }
 
 async fn post_slack_reply_stage(
@@ -333,10 +288,6 @@ fn build_llm_token_log_meta(telemetry: &InvestigationLlmTelemetry) -> Investigat
         (
             "llm_tokens_total_coordinator",
             telemetry.coordinator.total_tokens.to_string(),
-        ),
-        (
-            "llm_tokens_total_synthesizer",
-            telemetry.synthesizer.total_tokens.to_string(),
         ),
     ])
 }
@@ -432,11 +383,10 @@ mod tests {
         GithubPullRequestParams, GithubPullRequestPort, GithubPullRequestSummary,
         GithubRepoSearchResultItem, GithubRepositoryContent, GithubRepositoryContentParams,
         GithubRepositoryContentPort, GithubSearchParams, InvestigationCoordinatorRunnerPort,
-        InvestigationResources, InvestigationRuntime, InvestigationSynthesizerRunnerPort,
-        RunCoordinatorInput, RunSynthesizerInput, SlackProgressStreamPort, SlackThreadHistoryPort,
-        SlackThreadReplyInput, SlackThreadReplyPort, StartSlackProgressStreamInput,
-        StartSlackProgressStreamOutput, SynthesizerRunReport, WebSearchInput, WebSearchPort,
-        WebSearchResult,
+        InvestigationResources, InvestigationRuntime, RunCoordinatorInput, SlackProgressStreamPort,
+        SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
+        StartSlackProgressStreamInput, StartSlackProgressStreamOutput, WebSearchInput,
+        WebSearchPort, WebSearchResult,
     };
     use reili_shared::types::{
         AlertContext, InvestigationJobPayload, LlmUsageSnapshot, SlackMessage, SlackThreadMessage,
@@ -571,21 +521,6 @@ mod tests {
 
             Ok(reili_shared::ports::outbound::CoordinatorRunReport {
                 result_text: "coordinator result".to_string(),
-                usage: USAGE_SNAPSHOT,
-            })
-        }
-    }
-
-    struct MockSynthesizerRunner;
-
-    #[async_trait]
-    impl InvestigationSynthesizerRunnerPort for MockSynthesizerRunner {
-        async fn run(
-            &self,
-            _input: RunSynthesizerInput,
-        ) -> Result<SynthesizerRunReport, AgentRunFailedError> {
-            Ok(SynthesizerRunReport {
-                report_text: "final report".to_string(),
                 usage: USAGE_SNAPSHOT,
             })
         }
@@ -770,6 +705,7 @@ mod tests {
 
     struct ExecutionFixtures {
         deps: InvestigationExecutionDeps,
+        slack_reply_port: Arc<MockSlackReplyPort>,
         slack_thread_history_port: Arc<MockSlackThreadHistoryPort>,
         coordinator_runner: Arc<MockCoordinatorRunner>,
     }
@@ -780,7 +716,6 @@ mod tests {
         let slack_reply_port = Arc::new(MockSlackReplyPort::default());
         let slack_progress_stream_port = Arc::new(MockSlackProgressStreamPort);
         let coordinator_runner = Arc::new(MockCoordinatorRunner::new());
-        let synthesizer_runner = Arc::new(MockSynthesizerRunner);
         let logger = Arc::new(MockLogger::default());
 
         let deps = InvestigationExecutionDeps {
@@ -792,13 +727,12 @@ mod tests {
             investigation_resources: create_resources(),
             coordinator_runner: Arc::clone(&coordinator_runner)
                 as Arc<dyn InvestigationCoordinatorRunnerPort>,
-            synthesizer_runner: Arc::clone(&synthesizer_runner)
-                as Arc<dyn InvestigationSynthesizerRunnerPort>,
             logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
         };
 
         ExecutionFixtures {
             deps,
+            slack_reply_port,
             slack_thread_history_port,
             coordinator_runner,
         }
@@ -816,6 +750,7 @@ mod tests {
             ])));
         let ExecutionFixtures {
             deps,
+            slack_reply_port,
             slack_thread_history_port,
             coordinator_runner,
         } = fixtures;
@@ -853,6 +788,18 @@ mod tests {
             captured[0].alert_context.thread_transcript,
             "[ts: 1710000000.000001 | iso: 2024-03-09T16:00:00.000Z] U999 (You): thread context"
         );
+        assert_eq!(
+            slack_reply_port
+                .calls
+                .lock()
+                .expect("lock reply calls")
+                .clone(),
+            vec![SlackThreadReplyInput {
+                channel: "C001".to_string(),
+                thread_ts: "1710000000.000001".to_string(),
+                text: "coordinator result".to_string(),
+            }]
+        );
     }
 
     #[tokio::test]
@@ -863,6 +810,7 @@ mod tests {
             deps,
             slack_thread_history_port,
             coordinator_runner,
+            ..
         } = fixtures;
 
         let result = execute_investigation_job(ExecuteInvestigationJobInput {
@@ -890,6 +838,7 @@ mod tests {
             deps,
             slack_thread_history_port: _,
             coordinator_runner,
+            ..
         } = fixtures;
 
         let result = execute_investigation_job(ExecuteInvestigationJobInput {

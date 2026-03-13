@@ -9,7 +9,6 @@ pub const INVESTIGATION_EXECUTION_FAILED_CODE: &str = "INVESTIGATION_EXECUTION_F
 pub struct InvestigationExecutionFailedError {
     pub cause_message: String,
     pub coordinator_usage: LlmUsageSnapshot,
-    pub synthesizer_usage: LlmUsageSnapshot,
 }
 
 impl InvestigationExecutionFailedError {
@@ -21,7 +20,6 @@ impl InvestigationExecutionFailedError {
         Self {
             cause_message: cause_message.into(),
             coordinator_usage: llm_telemetry.coordinator,
-            synthesizer_usage: llm_telemetry.synthesizer,
         }
     }
 }

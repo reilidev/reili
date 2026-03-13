@@ -375,11 +375,10 @@ mod tests {
         GithubPullRequestDiff, GithubPullRequestParams, GithubPullRequestPort,
         GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
         GithubRepositoryContentParams, GithubRepositoryContentPort, GithubSearchParams,
-        InvestigationCoordinatorRunnerPort, InvestigationResources,
-        InvestigationSynthesizerRunnerPort, JobFailResult, JobQueuePort, RunCoordinatorInput,
-        RunSynthesizerInput, SlackProgressStreamPort, SlackThreadHistoryPort,
-        StartSlackProgressStreamInput, StartSlackProgressStreamOutput, SynthesizerRunReport,
-        WebSearchInput, WebSearchPort, WebSearchResult,
+        InvestigationCoordinatorRunnerPort, InvestigationResources, JobFailResult, JobQueuePort,
+        RunCoordinatorInput, SlackProgressStreamPort, SlackThreadHistoryPort,
+        StartSlackProgressStreamInput, StartSlackProgressStreamOutput, WebSearchInput,
+        WebSearchPort, WebSearchResult,
     };
     use reili_shared::types::{
         InvestigationJobPayload, LlmUsageSnapshot, SlackMessage, SlackThreadMessage,
@@ -558,21 +557,6 @@ mod tests {
         > {
             Ok(reili_shared::ports::outbound::CoordinatorRunReport {
                 result_text: "coordinator result".to_string(),
-                usage: USAGE_SNAPSHOT,
-            })
-        }
-    }
-
-    struct MockSynthesizerRunner;
-
-    #[async_trait]
-    impl InvestigationSynthesizerRunnerPort for MockSynthesizerRunner {
-        async fn run(
-            &self,
-            _input: RunSynthesizerInput,
-        ) -> Result<SynthesizerRunReport, reili_shared::errors::AgentRunFailedError> {
-            Ok(SynthesizerRunReport {
-                report_text: "final report".to_string(),
                 usage: USAGE_SNAPSHOT,
             })
         }
@@ -759,7 +743,6 @@ mod tests {
                     web_search_port: resources_port as Arc<dyn WebSearchPort>,
                 },
                 coordinator_runner: Arc::new(MockCoordinatorRunner),
-                synthesizer_runner: Arc::new(MockSynthesizerRunner),
                 logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
             },
             worker_concurrency: 1,

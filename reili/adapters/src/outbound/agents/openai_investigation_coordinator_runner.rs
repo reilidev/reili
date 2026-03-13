@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reili_shared::errors::{AgentRole, AgentRunFailedError};
+use reili_shared::errors::AgentRunFailedError;
 use reili_shared::ports::outbound::{
     COORDINATOR_PROGRESS_OWNER_ID, CoordinatorRunReport, InvestigationCoordinatorRunnerPort,
     InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
@@ -135,5 +135,5 @@ fn create_failed_error(input: CreateCoordinatorRunnerFailedErrorInput) -> AgentR
         requests: input.requests,
     });
 
-    AgentRunFailedError::new(AgentRole::Coordinator, usage, input.cause_message)
+    AgentRunFailedError::new(usage, input.cause_message)
 }

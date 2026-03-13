@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use crate::errors::PortError;
 
 pub const COORDINATOR_PROGRESS_OWNER_ID: &str = "coordinator";
-pub const SYNTHESIZER_PROGRESS_OWNER_ID: &str = "synthesizer";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

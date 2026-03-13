@@ -8,7 +8,6 @@ pub mod investigation_context;
 pub mod investigation_coordinator_runner;
 pub mod investigation_job_queue;
 pub mod investigation_progress_event;
-pub mod investigation_synthesizer_runner;
 pub mod job_queue;
 pub mod slack_progress_stream;
 pub mod slack_thread_history;
@@ -44,10 +43,7 @@ pub use investigation_coordinator_runner::{
 pub use investigation_job_queue::InvestigationJobQueuePort;
 pub use investigation_progress_event::{
     COORDINATOR_PROGRESS_OWNER_ID, InvestigationProgressEvent, InvestigationProgressEventInput,
-    InvestigationProgressEventPort, SYNTHESIZER_PROGRESS_OWNER_ID,
-};
-pub use investigation_synthesizer_runner::{
-    InvestigationSynthesizerRunnerPort, RunSynthesizerInput, SynthesizerRunReport,
+    InvestigationProgressEventPort,
 };
 pub use job_queue::{
     CompleteJobInput, FailJobInput, JobFailResult, JobFailStatus, JobQueuePort, QueueJob,

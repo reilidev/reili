@@ -3,7 +3,6 @@ use std::sync::Arc;
 use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::outbound::agents::{
     OpenAiInvestigationCoordinatorRunner, OpenAiInvestigationCoordinatorRunnerInput,
-    OpenAiInvestigationSynthesizerRunner, OpenAiInvestigationSynthesizerRunnerInput,
 };
 use reili_adapters::outbound::datadog::DatadogEventSearchAdapter;
 use reili_adapters::outbound::datadog::{
@@ -30,8 +29,8 @@ use reili_shared::ports::outbound::{
     DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
     DatadogMetricCatalogPort, DatadogMetricQueryPort, GithubCodeSearchPort, GithubPullRequestPort,
     GithubRepositoryContentPort, InvestigationCoordinatorRunnerPort, InvestigationJobQueuePort,
-    InvestigationResources, InvestigationSynthesizerRunnerPort, SlackProgressStreamPort,
-    SlackThreadHistoryPort, SlackThreadReplyPort, WebSearchPort,
+    InvestigationResources, SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyPort,
+    WebSearchPort,
 };
 use reili_shared::types::{DatadogApiRetryConfig, InvestigationJob};
 use serde_json::{Value, json};
@@ -141,12 +140,6 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
             language: config.language.clone(),
         }),
     );
-    let synthesizer_runner: Arc<dyn InvestigationSynthesizerRunnerPort> = Arc::new(
-        OpenAiInvestigationSynthesizerRunner::new(OpenAiInvestigationSynthesizerRunnerInput {
-            openai_api_key: config.openai_api_key.clone(),
-            language: config.language.clone(),
-        }),
-    );
     let slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
@@ -163,7 +156,6 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
                 slack_thread_history_port,
                 investigation_resources,
                 coordinator_runner,
-                synthesizer_runner,
                 logger: Arc::clone(&logger),
             },
             worker_concurrency: config.worker_concurrency,

@@ -13,7 +13,6 @@ pub struct LlmUsageSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct InvestigationLlmTelemetry {
     pub coordinator: LlmUsageSnapshot,
-    pub synthesizer: LlmUsageSnapshot,
     pub total: LlmUsageSnapshot,
 }
 
@@ -21,7 +20,6 @@ pub struct InvestigationLlmTelemetry {
 #[serde(rename_all = "camelCase")]
 pub struct BuildInvestigationLlmTelemetryInput {
     pub coordinator_usage: LlmUsageSnapshot,
-    pub synthesizer_usage: LlmUsageSnapshot,
 }
 
 #[cfg(test)]
@@ -41,12 +39,10 @@ mod tests {
     fn serializes_and_deserializes_llm_types() {
         let telemetry = InvestigationLlmTelemetry {
             coordinator: snapshot(10),
-            synthesizer: snapshot(20),
-            total: snapshot(30),
+            total: snapshot(10),
         };
         let build_input = BuildInvestigationLlmTelemetryInput {
             coordinator_usage: snapshot(10),
-            synthesizer_usage: snapshot(20),
         };
 
         let telemetry_json = serde_json::to_string(&telemetry).expect("serialize telemetry");
