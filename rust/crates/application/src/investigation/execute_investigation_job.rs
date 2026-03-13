@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
+use serde_json::Value;
 use sre_shared::errors::PortError;
 use sre_shared::ports::outbound::{
     CoordinatorRunReport, InvestigationContext, InvestigationCoordinatorRunnerPort,
@@ -19,7 +19,7 @@ use sre_shared::types::{
 use tokio::sync::{Mutex, mpsc};
 
 use super::execution_errors::{ExecuteInvestigationJobError, resolve_investigation_failure_error};
-use super::logger::InvestigationLogger;
+use super::logger::{InvestigationLogMeta, InvestigationLogger, string_log_meta};
 use super::services::{
     CoordinatorProgressEventHandler, CoordinatorProgressEventHandlerInput,
     CreateInvestigationProgressStreamSessionFactoryInput,
@@ -58,15 +58,12 @@ pub async fn execute_investigation_job(
     let started_at = Instant::now();
     let started_at_iso = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
 
-    let base_log_meta = BTreeMap::from([
-        (
-            "slackEventId".to_string(),
-            input.payload.slack_event_id.clone(),
-        ),
-        ("jobId".to_string(), input.job_id.clone()),
-        ("channel".to_string(), input.payload.message.channel.clone()),
-        ("threadTs".to_string(), thread_ts.clone()),
-        ("attempt".to_string(), (input.retry_count + 1).to_string()),
+    let base_log_meta = string_log_meta([
+        ("slackEventId", input.payload.slack_event_id.clone()),
+        ("jobId", input.job_id.clone()),
+        ("channel", input.payload.message.channel.clone()),
+        ("threadTs", thread_ts.clone()),
+        ("attempt", (input.retry_count + 1).to_string()),
     ]);
 
     let progress_session_factory = create_investigation_progress_stream_session_factory(
@@ -143,9 +140,12 @@ pub async fn execute_investigation_job(
             );
             meta.insert(
                 "worker_job_duration_ms".to_string(),
-                duration_ms.to_string(),
+                Value::String(duration_ms.to_string()),
             );
-            meta.insert("latencyMs".to_string(), duration_ms.to_string());
+            meta.insert(
+                "latencyMs".to_string(),
+                Value::String(duration_ms.to_string()),
+            );
             input.deps.logger.info("Processed investigation job", meta);
             Ok(())
         }
@@ -167,10 +167,16 @@ pub async fn execute_investigation_job(
                 merge_log_meta(&base_log_meta, &build_llm_token_log_meta(&llm_telemetry));
             meta.insert(
                 "worker_job_duration_ms".to_string(),
-                duration_ms.to_string(),
+                Value::String(duration_ms.to_string()),
             );
-            meta.insert("latencyMs".to_string(), duration_ms.to_string());
-            meta.insert("error".to_string(), failure_error.error_message);
+            meta.insert(
+                "latencyMs".to_string(),
+                Value::String(duration_ms.to_string()),
+            );
+            meta.insert(
+                "error".to_string(),
+                Value::String(failure_error.error_message),
+            );
             input.deps.logger.error("Failed investigation job", meta);
             Err(error)
         }
@@ -186,7 +192,7 @@ async fn run_investigation(
     input: &ExecuteInvestigationJobInput,
     thread_ts: &str,
     started_at_iso: &str,
-    base_log_meta: &BTreeMap<String, String>,
+    base_log_meta: &InvestigationLogMeta,
     progress_session: Arc<Mutex<Box<dyn InvestigationProgressStreamSession>>>,
     on_progress_event: Arc<dyn InvestigationProgressEventPort>,
     thread_context_loader: SlackThreadContextLoader,
@@ -313,39 +319,33 @@ async fn post_slack_reply_stage(
         })
 }
 
-fn build_llm_token_log_meta(telemetry: &InvestigationLlmTelemetry) -> BTreeMap<String, String> {
-    BTreeMap::from([
+fn build_llm_token_log_meta(telemetry: &InvestigationLlmTelemetry) -> InvestigationLogMeta {
+    string_log_meta([
         (
-            "llm_tokens_input_total".to_string(),
+            "llm_tokens_input_total",
             telemetry.total.input_tokens.to_string(),
         ),
         (
-            "llm_tokens_output_total".to_string(),
+            "llm_tokens_output_total",
             telemetry.total.output_tokens.to_string(),
         ),
+        ("llm_tokens_total", telemetry.total.total_tokens.to_string()),
+        ("llm_requests_total", telemetry.total.requests.to_string()),
         (
-            "llm_tokens_total".to_string(),
-            telemetry.total.total_tokens.to_string(),
-        ),
-        (
-            "llm_requests_total".to_string(),
-            telemetry.total.requests.to_string(),
-        ),
-        (
-            "llm_tokens_total_coordinator".to_string(),
+            "llm_tokens_total_coordinator",
             telemetry.coordinator.total_tokens.to_string(),
         ),
         (
-            "llm_tokens_total_synthesizer".to_string(),
+            "llm_tokens_total_synthesizer",
             telemetry.synthesizer.total_tokens.to_string(),
         ),
     ])
 }
 
 fn merge_log_meta(
-    base: &BTreeMap<String, String>,
-    append: &BTreeMap<String, String>,
-) -> BTreeMap<String, String> {
+    base: &InvestigationLogMeta,
+    append: &InvestigationLogMeta,
+) -> InvestigationLogMeta {
     let mut merged = base.clone();
     merged.extend(append.clone());
     merged
@@ -379,9 +379,9 @@ impl ThreadContextLoaderLogger for ThreadContextLoggerAdapter {
         let mut meta = input.base_log_meta;
         meta.insert(
             "thread_context_fetch_latency_ms".to_string(),
-            input.thread_context_fetch_latency_ms.to_string(),
+            Value::String(input.thread_context_fetch_latency_ms.to_string()),
         );
-        meta.insert("error".to_string(), input.error);
+        meta.insert("error".to_string(), Value::String(input.error));
         self.logger.error(message, meta);
     }
 }
@@ -418,7 +418,7 @@ async fn run_progress_event_loop(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use super::InvestigationLogMeta;
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
@@ -594,27 +594,27 @@ mod tests {
 
     #[derive(Default)]
     struct MockLogger {
-        info_logs: Mutex<Vec<(String, BTreeMap<String, String>)>>,
-        warn_logs: Mutex<Vec<(String, BTreeMap<String, String>)>>,
-        error_logs: Mutex<Vec<(String, BTreeMap<String, String>)>>,
+        info_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
+        warn_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
+        error_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
     }
 
     impl InvestigationLogger for MockLogger {
-        fn info(&self, message: &str, meta: BTreeMap<String, String>) {
+        fn info(&self, message: &str, meta: InvestigationLogMeta) {
             self.info_logs
                 .lock()
                 .expect("lock info logs")
                 .push((message.to_string(), meta));
         }
 
-        fn warn(&self, message: &str, meta: BTreeMap<String, String>) {
+        fn warn(&self, message: &str, meta: InvestigationLogMeta) {
             self.warn_logs
                 .lock()
                 .expect("lock warn logs")
                 .push((message.to_string(), meta));
         }
 
-        fn error(&self, message: &str, meta: BTreeMap<String, String>) {
+        fn error(&self, message: &str, meta: InvestigationLogMeta) {
             self.error_logs
                 .lock()
                 .expect("lock error logs")

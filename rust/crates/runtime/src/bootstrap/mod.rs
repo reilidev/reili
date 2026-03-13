@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
@@ -19,7 +18,9 @@ use sre_adapters::outbound::slack::{
     SlackWebApiClient, SlackWebApiClientConfig,
 };
 use sre_adapters::queue::InMemoryJobQueue;
-use sre_application::investigation::{InvestigationExecutionDeps, InvestigationLogger};
+use sre_application::investigation::{
+    InvestigationExecutionDeps, InvestigationLogMeta, InvestigationLogger,
+};
 use sre_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, StartInvestigationWorkerRunnerUseCase,
     StartInvestigationWorkerRunnerUseCaseDeps,
@@ -204,15 +205,24 @@ async fn resolve_slack_bot_user_id(
 struct TracingInvestigationLogger;
 
 impl InvestigationLogger for TracingInvestigationLogger {
-    fn info(&self, message: &str, meta: BTreeMap<String, String>) {
-        tracing::info!(message = message, meta = ?meta);
+    fn info(&self, message: &str, meta: InvestigationLogMeta) {
+        tracing::info!(
+            message = message,
+            meta = tracing::field::display(serde_json::Value::Object(meta)),
+        );
     }
 
-    fn warn(&self, message: &str, meta: BTreeMap<String, String>) {
-        tracing::warn!(message = message, meta = ?meta);
+    fn warn(&self, message: &str, meta: InvestigationLogMeta) {
+        tracing::warn!(
+            message = message,
+            meta = tracing::field::display(serde_json::Value::Object(meta)),
+        );
     }
 
-    fn error(&self, message: &str, meta: BTreeMap<String, String>) {
-        tracing::error!(message = message, meta = ?meta);
+    fn error(&self, message: &str, meta: InvestigationLogMeta) {
+        tracing::error!(
+            message = message,
+            meta = tracing::field::display(serde_json::Value::Object(meta)),
+        );
     }
 }

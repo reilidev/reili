@@ -4,47 +4,9 @@
 
 Reili is a service that responds to Slack alerts and GitHub activity by analyzing logs and metrics.
 
-## Technologies
-
-- TypeScript
-- package manager: pnpm
-- Framework: Slack Bolt, [OpenAI Agents SDK](https://openai.github.io/openai-agents-js/)
-- Use v2 client of `@datadog/datadog-api-client`
-
 ## Structure
 
 ```
-src/                                # Root implementation directory for Reili
-├── runtime/                        # Application bootstrap and runtime wiring
-│   ├── bootstrap/                  # Shared dependency construction and DI helpers
-│   ├── config/                     # Environment/config loading and validation
-│   ├── ingress/                    # Ingress app entrypoint (Slack Events API receiver)
-│   └── worker/                     # Worker app entrypoint (job processing runtime)
-├── application/                    # Application layer orchestration and workflow rules
-│   ├── alert-intake/               # Alert context normalization for investigation flow
-│   ├── investigation/              # Investigation execution orchestration
-│   │   └── services/               # Investigation-specific application services
-│   └── enqueue/start-*             # Job enqueue and worker runner orchestration
-├── ports/                          # Contracts abstracting external boundaries from core logic
-│   ├── inbound/                    # Input-side interfaces (event intake contracts)
-│   └── outbound/                   # Output-side interfaces (external API contracts)
-├── adapters/                       # Concrete implementations of ports (SDK/HTTP integration)
-│   ├── inbound/                    # Converts external input into internal application events
-│   │   ├── http/                   # HTTP adapter for Slack Events endpoint
-│   │   └── slack/                  # Slack Bolt event handling implementation
-│   └── outbound/                   # Integrations for investigation and notification delivery
-│       ├── datadog/                # Datadog API client integration
-│       ├── slack/                  # Slack message and thread reply integration
-│       ├── github/                 # GitHub API integration
-│       ├── queue/                  # Job queue adapter implementations
-│       ├── worker/                 # Worker dispatch adapter implementations
-│       └── agents/                 # OpenAI Agents SDK integration
-└── shared/                         # Reusable cross-cutting components
-    ├── types/                      # Shared domain/DTO type definitions
-    ├── errors/                     # Common error types and exception mapping
-    ├── observability/              # Logging, metrics, and tracing helpers
-    ├── validation/                 # Shared schema validation
-    └── utils/                      # Generic utility helpers
 ```
 
 ## Principles

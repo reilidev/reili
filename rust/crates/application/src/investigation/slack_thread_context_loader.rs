@@ -1,19 +1,20 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use sre_shared::ports::outbound::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
 use sre_shared::types::{SlackMessage, SlackThreadMessage};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use super::logger::InvestigationLogMeta;
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct SlackThreadContextLoaderInput {
     pub message: SlackMessage,
-    pub base_log_meta: BTreeMap<String, String>,
+    pub base_log_meta: InvestigationLogMeta,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ThreadContextFetchFailedLogInput {
-    pub base_log_meta: BTreeMap<String, String>,
+    pub base_log_meta: InvestigationLogMeta,
     pub thread_context_fetch_latency_ms: u128,
     pub error: String,
 }
@@ -84,20 +85,22 @@ fn is_thread_reply_message(message: &SlackMessage) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
+    use serde_json::Value;
     use sre_shared::errors::PortError;
     use sre_shared::ports::outbound::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
     use sre_shared::types::{SlackMessage, SlackThreadMessage, SlackTriggerType};
+
+    use crate::investigation::InvestigationLogMeta;
 
     use super::{
         SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
         ThreadContextFetchFailedLogInput, ThreadContextLoaderLogger,
     };
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone, PartialEq)]
     struct LoggedError {
         message: String,
         input: ThreadContextFetchFailedLogInput,
@@ -249,7 +252,7 @@ mod tests {
                 .input
                 .base_log_meta
                 .get("jobId")
-                .map(String::as_str),
+                .and_then(Value::as_str),
             Some("job-1")
         );
     }
@@ -280,13 +283,19 @@ mod tests {
         }
     }
 
-    fn base_log_meta() -> BTreeMap<String, String> {
-        BTreeMap::from([
-            ("slackEventId".to_string(), "Ev001".to_string()),
-            ("jobId".to_string(), "job-1".to_string()),
-            ("channel".to_string(), "C001".to_string()),
-            ("threadTs".to_string(), "1710000000.000001".to_string()),
-            ("attempt".to_string(), "1".to_string()),
+    fn base_log_meta() -> InvestigationLogMeta {
+        serde_json::Map::from_iter([
+            (
+                "slackEventId".to_string(),
+                Value::String("Ev001".to_string()),
+            ),
+            ("jobId".to_string(), Value::String("job-1".to_string())),
+            ("channel".to_string(), Value::String("C001".to_string())),
+            (
+                "threadTs".to_string(),
+                Value::String("1710000000.000001".to_string()),
+            ),
+            ("attempt".to_string(), Value::String("1".to_string())),
         ])
     }
 }

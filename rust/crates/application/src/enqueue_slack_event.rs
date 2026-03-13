@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -12,7 +11,7 @@ use sre_shared::ports::outbound::{
 use sre_shared::types::{InvestigationJob, InvestigationJobPayload, SlackMessage};
 use uuid::Uuid;
 
-use crate::investigation::InvestigationLogger;
+use crate::investigation::{InvestigationLogger, string_log_meta};
 
 pub struct EnqueueSlackEventUseCaseDeps {
     pub job_queue: Arc<InvestigationJobQueuePort>,
@@ -50,16 +49,16 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
 
                 self.deps.logger.info(
                     "Queued investigation job",
-                    BTreeMap::from([
-                        ("slackEventId".to_string(), message.slack_event_id),
-                        ("jobId".to_string(), job.job_id),
-                        ("channel".to_string(), message.channel),
-                        ("threadTs".to_string(), thread_ts),
+                    string_log_meta([
+                        ("slackEventId", message.slack_event_id),
+                        ("jobId", job.job_id),
+                        ("channel", message.channel),
+                        ("threadTs", thread_ts),
                         (
-                            "ingress_ack_latency_ms".to_string(),
+                            "ingress_ack_latency_ms",
                             event_started_at.elapsed().as_millis().to_string(),
                         ),
-                        ("worker_queue_depth".to_string(), worker_queue_depth),
+                        ("worker_queue_depth", worker_queue_depth),
                     ]),
                 );
 
@@ -68,14 +67,14 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
             Err(enqueue_error) => {
                 self.deps.logger.error(
                     "Failed to enqueue investigation job",
-                    BTreeMap::from([
-                        ("slackEventId".to_string(), message.slack_event_id),
-                        ("jobId".to_string(), job.job_id),
-                        ("channel".to_string(), message.channel.clone()),
-                        ("threadTs".to_string(), thread_ts.clone()),
-                        ("error".to_string(), enqueue_error.message.clone()),
+                    string_log_meta([
+                        ("slackEventId", message.slack_event_id),
+                        ("jobId", job.job_id),
+                        ("channel", message.channel.clone()),
+                        ("threadTs", thread_ts.clone()),
+                        ("error", enqueue_error.message.clone()),
                         (
-                            "ingress_ack_latency_ms".to_string(),
+                            "ingress_ack_latency_ms",
                             event_started_at.elapsed().as_millis().to_string(),
                         ),
                     ]),
@@ -105,7 +104,7 @@ async fn read_worker_queue_depth(input: ReadWorkerQueueDepthInput) -> String {
         Err(error) => {
             input.logger.warn(
                 "Failed to read worker queue depth after enqueue",
-                BTreeMap::from([("error".to_string(), error.message)]),
+                string_log_meta([("error", error.message)]),
             );
             "unknown".to_string()
         }
@@ -137,12 +136,13 @@ mod tests {
         EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, InvestigationLogger, PortError,
         SlackMessage, SlackMessageHandlerPort, SlackThreadReplyInput, SlackThreadReplyPort,
     };
+    use crate::investigation::InvestigationLogMeta;
     use async_trait::async_trait;
+    use serde_json::Value;
     use sre_shared::ports::outbound::{
         CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailResult, JobQueuePort,
     };
     use sre_shared::types::SlackTriggerType;
-    use std::collections::BTreeMap;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
@@ -151,7 +151,7 @@ mod tests {
     #[derive(Debug, Clone)]
     struct LogEntry {
         message: String,
-        meta: BTreeMap<String, String>,
+        meta: InvestigationLogMeta,
     }
 
     #[derive(Default)]
@@ -273,21 +273,21 @@ mod tests {
     }
 
     impl InvestigationLogger for MockLogger {
-        fn info(&self, message: &str, meta: BTreeMap<String, String>) {
+        fn info(&self, message: &str, meta: InvestigationLogMeta) {
             self.infos.lock().expect("lock infos").push(LogEntry {
                 message: message.to_string(),
                 meta,
             });
         }
 
-        fn warn(&self, message: &str, meta: BTreeMap<String, String>) {
+        fn warn(&self, message: &str, meta: InvestigationLogMeta) {
             self.warns.lock().expect("lock warns").push(LogEntry {
                 message: message.to_string(),
                 meta,
             });
         }
 
-        fn error(&self, message: &str, meta: BTreeMap<String, String>) {
+        fn error(&self, message: &str, meta: InvestigationLogMeta) {
             self.errors.lock().expect("lock errors").push(LogEntry {
                 message: message.to_string(),
                 meta,
@@ -406,6 +406,9 @@ mod tests {
         let errors = context.logger.errors();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].message, "Failed to enqueue investigation job");
-        assert_eq!(errors[0].meta.get("error"), Some(&"fail-1".to_string()));
+        assert_eq!(
+            errors[0].meta.get("error").and_then(Value::as_str),
+            Some("fail-1")
+        );
     }
 }

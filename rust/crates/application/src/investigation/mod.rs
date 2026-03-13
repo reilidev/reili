@@ -11,7 +11,7 @@ pub use execution_errors::{
     ExecuteInvestigationJobError, ResolvedInvestigationFailureError,
     resolve_investigation_failure_error,
 };
-pub use logger::InvestigationLogger;
+pub use logger::{InvestigationLogMeta, InvestigationLogger, string_log_meta};
 pub use slack_thread_context_loader::{
     SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
     ThreadContextFetchFailedLogInput, ThreadContextLoaderLogger,

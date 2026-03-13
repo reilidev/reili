@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum::body::Bytes;
@@ -13,7 +12,7 @@ use sre_adapters::inbound::slack::{
     ParsedSlackEvent, parse_slack_event, verify_slack_signature_middleware,
 };
 use sre_adapters::observability::logger::init_json_logger;
-use sre_application::investigation::InvestigationLogger;
+use sre_application::investigation::{InvestigationLogger, string_log_meta};
 use sre_shared::ports::inbound::SlackMessageHandlerPort;
 
 use crate::bootstrap::{RuntimeBootstrapError, build_runtime_deps};
@@ -86,7 +85,7 @@ async fn handle_slack_events(State(state): State<Arc<AppHttpState>>, body: Bytes
         Err(error) => {
             state.logger.warn(
                 "Failed to parse Slack event payload",
-                BTreeMap::from([("error".to_string(), error.message)]),
+                string_log_meta([("error", error.message)]),
             );
             return StatusCode::BAD_REQUEST.into_response();
         }
@@ -100,7 +99,7 @@ async fn handle_slack_events(State(state): State<Arc<AppHttpState>>, body: Bytes
             if let Err(error) = state.slack_message_handler.handle(message).await {
                 state.logger.error(
                     "Failed to handle Slack message event",
-                    BTreeMap::from([("error".to_string(), error.message)]),
+                    string_log_meta([("error", error.message)]),
                 );
             }
 

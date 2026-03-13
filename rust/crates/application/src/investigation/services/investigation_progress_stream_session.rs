@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use serde_json::Value;
 use sre_shared::ports::outbound::slack_progress_stream::{
     SlackMarkdownTextChunk, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
 };
@@ -10,7 +10,7 @@ use sre_shared::ports::outbound::{
     SlackThreadReplyPort, StartSlackProgressStreamInput, StopSlackProgressStreamInput,
 };
 
-use crate::investigation::logger::InvestigationLogger;
+use crate::investigation::logger::{InvestigationLogger, string_log_meta};
 
 use super::progress_stream_state::{
     ProgressStreamState, ReasoningScope, ReasoningScopeStatus, ReasoningScopeToolStatus,
@@ -198,14 +198,14 @@ impl SlackInvestigationProgressStreamSession {
 
         self.input.logger.info(
             "reasoning_scope_reopened_for_tool_started",
-            BTreeMap::from([
-                ("channel".to_string(), self.input.channel.clone()),
-                ("threadTs".to_string(), self.input.thread_ts.clone()),
-                ("ownerId".to_string(), input.owner_id.clone()),
-                ("taskId".to_string(), input.task_id.clone()),
-                ("toolName".to_string(), input.title.clone()),
-                ("reopenedScopeId".to_string(), output.scope_id.clone()),
-                ("reopenedFromScopeId".to_string(), reopened_from_scope_id),
+            string_log_meta([
+                ("channel", self.input.channel.clone()),
+                ("threadTs", self.input.thread_ts.clone()),
+                ("ownerId", input.owner_id.clone()),
+                ("taskId", input.task_id.clone()),
+                ("toolName", input.title.clone()),
+                ("reopenedScopeId", output.scope_id.clone()),
+                ("reopenedFromScopeId", reopened_from_scope_id),
             ]),
         );
     }
@@ -213,12 +213,12 @@ impl SlackInvestigationProgressStreamSession {
     fn log_missing_scope_for_tool_completed(&self, input: &InvestigationProgressTaskUpdateInput) {
         self.input.logger.warn(
             "reasoning_scope_not_found_for_tool_completed",
-            BTreeMap::from([
-                ("channel".to_string(), self.input.channel.clone()),
-                ("threadTs".to_string(), self.input.thread_ts.clone()),
-                ("ownerId".to_string(), input.owner_id.clone()),
-                ("taskId".to_string(), input.task_id.clone()),
-                ("toolName".to_string(), input.title.clone()),
+            string_log_meta([
+                ("channel", self.input.channel.clone()),
+                ("threadTs", self.input.thread_ts.clone()),
+                ("ownerId", input.owner_id.clone()),
+                ("taskId", input.task_id.clone()),
+                ("toolName", input.title.clone()),
             ]),
         );
     }
@@ -250,12 +250,12 @@ impl SlackInvestigationProgressStreamSession {
             self.last_error_message = Some(error.message.clone());
             self.input.logger.warn(
                 "Failed to stop Slack progress stream",
-                BTreeMap::from([
-                    ("channel".to_string(), self.input.channel.clone()),
-                    ("threadTs".to_string(), self.input.thread_ts.clone()),
-                    ("streamTs".to_string(), stream_ts),
-                    ("error".to_string(), error.message.clone()),
-                    ("slack_stream_last_error".to_string(), error.message),
+                string_log_meta([
+                    ("channel", self.input.channel.clone()),
+                    ("threadTs", self.input.thread_ts.clone()),
+                    ("streamTs", stream_ts),
+                    ("error", error.message.clone()),
+                    ("slack_stream_last_error", error.message),
                 ]),
             );
         }
@@ -306,15 +306,12 @@ impl SlackInvestigationProgressStreamSession {
         self.last_error_message = Some(input.error_message.clone());
         self.input.logger.warn(
             "Failed to append Slack progress stream",
-            BTreeMap::from([
-                ("channel".to_string(), self.input.channel.clone()),
-                ("threadTs".to_string(), self.input.thread_ts.clone()),
-                ("streamTs".to_string(), input.failed_stream_ts.clone()),
-                ("error".to_string(), input.error_message.clone()),
-                (
-                    "slack_stream_last_error".to_string(),
-                    input.error_message.clone(),
-                ),
+            string_log_meta([
+                ("channel", self.input.channel.clone()),
+                ("threadTs", self.input.thread_ts.clone()),
+                ("streamTs", input.failed_stream_ts.clone()),
+                ("error", input.error_message.clone()),
+                ("slack_stream_last_error", input.error_message.clone()),
             ]),
         );
 
@@ -369,15 +366,18 @@ impl SlackInvestigationProgressStreamSession {
         self.stream_ts = Some(stream.stream_ts.clone());
         self.append_count = self.append_count.saturating_add(1);
 
-        let mut meta = BTreeMap::from([
-            ("channel".to_string(), self.input.channel.clone()),
-            ("threadTs".to_string(), self.input.thread_ts.clone()),
-            ("streamTs".to_string(), stream.stream_ts),
-            ("error".to_string(), error_message.clone()),
-            ("slack_stream_last_error".to_string(), error_message),
+        let mut meta = string_log_meta([
+            ("channel", self.input.channel.clone()),
+            ("threadTs", self.input.thread_ts.clone()),
+            ("streamTs", stream.stream_ts),
+            ("error", error_message.clone()),
+            ("slack_stream_last_error", error_message),
         ]);
         if let Some(previous_stream_ts) = failed_stream_ts {
-            meta.insert("previousStreamTs".to_string(), previous_stream_ts);
+            meta.insert(
+                "previousStreamTs".to_string(),
+                Value::String(previous_stream_ts),
+            );
         }
         self.input.logger.info("slack_stream_restarted", meta);
     }
@@ -386,19 +386,16 @@ impl SlackInvestigationProgressStreamSession {
         self.fallback_mode = true;
         self.last_error_message = Some(error_message.clone());
 
-        let mut meta = BTreeMap::from([
-            ("channel".to_string(), self.input.channel.clone()),
-            ("threadTs".to_string(), self.input.thread_ts.clone()),
-            ("reason".to_string(), reason.to_string()),
-            ("error".to_string(), error_message.clone()),
-            (
-                "slack_stream_fallback_mode".to_string(),
-                self.fallback_mode.to_string(),
-            ),
-            ("slack_stream_last_error".to_string(), error_message),
+        let mut meta = string_log_meta([
+            ("channel", self.input.channel.clone()),
+            ("threadTs", self.input.thread_ts.clone()),
+            ("reason", reason.to_string()),
+            ("error", error_message.clone()),
+            ("slack_stream_fallback_mode", self.fallback_mode.to_string()),
+            ("slack_stream_last_error", error_message),
         ]);
         if let Some(stream_ts) = &self.stream_ts {
-            meta.insert("streamTs".to_string(), stream_ts.clone());
+            meta.insert("streamTs".to_string(), Value::String(stream_ts.clone()));
         }
         self.input.logger.warn("slack_stream_fallback_mode", meta);
     }
@@ -417,35 +414,29 @@ impl SlackInvestigationProgressStreamSession {
         if let Err(error) = post_result {
             self.input.logger.warn(
                 "Failed to post fallback progress message",
-                BTreeMap::from([
-                    ("channel".to_string(), self.input.channel.clone()),
-                    ("threadTs".to_string(), self.input.thread_ts.clone()),
-                    ("error".to_string(), error.message),
+                string_log_meta([
+                    ("channel", self.input.channel.clone()),
+                    ("threadTs", self.input.thread_ts.clone()),
+                    ("error", error.message),
                 ]),
             );
         }
     }
 
     fn log_stop(&self) {
-        let mut meta = BTreeMap::from([
-            ("channel".to_string(), self.input.channel.clone()),
-            ("threadTs".to_string(), self.input.thread_ts.clone()),
-            (
-                "slack_stream_append_count".to_string(),
-                self.append_count.to_string(),
-            ),
-            (
-                "slack_stream_fallback_mode".to_string(),
-                self.fallback_mode.to_string(),
-            ),
+        let mut meta = string_log_meta([
+            ("channel", self.input.channel.clone()),
+            ("threadTs", self.input.thread_ts.clone()),
+            ("slack_stream_append_count", self.append_count.to_string()),
+            ("slack_stream_fallback_mode", self.fallback_mode.to_string()),
         ]);
         if let Some(stream_ts) = &self.stream_ts {
-            meta.insert("streamTs".to_string(), stream_ts.clone());
+            meta.insert("streamTs".to_string(), Value::String(stream_ts.clone()));
         }
         if let Some(last_error_message) = &self.last_error_message {
             meta.insert(
                 "slack_stream_last_error".to_string(),
-                last_error_message.clone(),
+                Value::String(last_error_message.clone()),
             );
         }
 
@@ -478,19 +469,16 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
         match start_result {
             Ok(stream) => {
                 self.stream_ts = Some(stream.stream_ts.clone());
-                let mut meta = BTreeMap::from([
-                    ("channel".to_string(), self.input.channel.clone()),
-                    ("threadTs".to_string(), self.input.thread_ts.clone()),
-                    ("streamTs".to_string(), stream.stream_ts),
-                    (
-                        "slack_stream_fallback_mode".to_string(),
-                        self.fallback_mode.to_string(),
-                    ),
+                let mut meta = string_log_meta([
+                    ("channel", self.input.channel.clone()),
+                    ("threadTs", self.input.thread_ts.clone()),
+                    ("streamTs", stream.stream_ts),
+                    ("slack_stream_fallback_mode", self.fallback_mode.to_string()),
                 ]);
                 if let Some(last_error_message) = &self.last_error_message {
                     meta.insert(
                         "slack_stream_last_error".to_string(),
-                        last_error_message.clone(),
+                        Value::String(last_error_message.clone()),
                     );
                 }
                 self.input.logger.info("slack_stream_started", meta);
@@ -654,9 +642,10 @@ fn is_message_not_in_streaming_state_error(error_message: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, VecDeque};
+    use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
+    use crate::investigation::InvestigationLogMeta;
     use async_trait::async_trait;
     use sre_shared::errors::PortError;
     use sre_shared::ports::outbound::slack_progress_stream::SlackTaskUpdateStatus;
@@ -794,37 +783,37 @@ mod tests {
 
     #[derive(Default)]
     struct MockLogger {
-        info_logs: Mutex<Vec<(String, BTreeMap<String, String>)>>,
-        warn_logs: Mutex<Vec<(String, BTreeMap<String, String>)>>,
-        error_logs: Mutex<Vec<(String, BTreeMap<String, String>)>>,
+        info_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
+        warn_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
+        error_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
     }
 
     impl MockLogger {
-        fn info_logs(&self) -> Vec<(String, BTreeMap<String, String>)> {
+        fn info_logs(&self) -> Vec<(String, InvestigationLogMeta)> {
             self.info_logs.lock().expect("lock info logs").clone()
         }
 
-        fn warn_logs(&self) -> Vec<(String, BTreeMap<String, String>)> {
+        fn warn_logs(&self) -> Vec<(String, InvestigationLogMeta)> {
             self.warn_logs.lock().expect("lock warn logs").clone()
         }
     }
 
     impl InvestigationLogger for MockLogger {
-        fn info(&self, message: &str, meta: BTreeMap<String, String>) {
+        fn info(&self, message: &str, meta: InvestigationLogMeta) {
             self.info_logs
                 .lock()
                 .expect("lock info logs")
                 .push((message.to_string(), meta));
         }
 
-        fn warn(&self, message: &str, meta: BTreeMap<String, String>) {
+        fn warn(&self, message: &str, meta: InvestigationLogMeta) {
             self.warn_logs
                 .lock()
                 .expect("lock warn logs")
                 .push((message.to_string(), meta));
         }
 
-        fn error(&self, message: &str, meta: BTreeMap<String, String>) {
+        fn error(&self, message: &str, meta: InvestigationLogMeta) {
             self.error_logs
                 .lock()
                 .expect("lock error logs")

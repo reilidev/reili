@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -14,6 +13,7 @@ use tokio::time::sleep;
 
 use crate::investigation::{
     ExecuteInvestigationJobInput, InvestigationExecutionDeps, execute_investigation_job,
+    string_log_meta,
 };
 
 const IDLE_WAIT_MS: u64 = 150;
@@ -100,9 +100,9 @@ async fn run_worker_iteration(input: RunWorkerIterationInput) {
         Err(error) => {
             input.deps.investigation_execution_deps.logger.error(
                 "Failed to claim worker job",
-                BTreeMap::from([
-                    ("workerIndex".to_string(), input.worker_index.to_string()),
-                    ("error".to_string(), error.message),
+                string_log_meta([
+                    ("workerIndex", input.worker_index.to_string()),
+                    ("error", error.message),
                 ]),
             );
             sleep(Duration::from_millis(IDLE_WAIT_MS)).await;
@@ -145,30 +145,24 @@ async fn process_claimed_job(input: ProcessClaimedJobInput) {
 
                     input.deps.investigation_execution_deps.logger.info(
                         "Completed worker job",
-                        BTreeMap::from([
-                            ("workerIndex".to_string(), input.worker_index.to_string()),
+                        string_log_meta([
+                            ("workerIndex", input.worker_index.to_string()),
+                            ("slackEventId", input.job.payload.slack_event_id.clone()),
+                            ("jobId", input.job.job_id),
+                            ("channel", input.job.payload.message.channel.clone()),
                             (
-                                "slackEventId".to_string(),
-                                input.job.payload.slack_event_id.clone(),
-                            ),
-                            ("jobId".to_string(), input.job.job_id),
-                            (
-                                "channel".to_string(),
-                                input.job.payload.message.channel.clone(),
-                            ),
-                            (
-                                "threadTs".to_string(),
+                                "threadTs",
                                 input.job.payload.message.thread_ts_or_ts().to_string(),
                             ),
                             (
-                                "attempt".to_string(),
+                                "attempt",
                                 input.job.retry_count.saturating_add(1).to_string(),
                             ),
                             (
-                                "worker_job_duration_ms".to_string(),
+                                "worker_job_duration_ms",
                                 started_at.elapsed().as_millis().to_string(),
                             ),
-                            ("worker_queue_depth".to_string(), queue_depth),
+                            ("worker_queue_depth", queue_depth),
                         ]),
                     );
                 }
@@ -222,31 +216,25 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
         Err(queue_fail_error) => {
             input.deps.investigation_execution_deps.logger.error(
                 "Failed worker job",
-                BTreeMap::from([
-                    ("workerIndex".to_string(), input.worker_index.to_string()),
+                string_log_meta([
+                    ("workerIndex", input.worker_index.to_string()),
+                    ("slackEventId", input.job.payload.slack_event_id.clone()),
+                    ("jobId", input.job.job_id),
+                    ("channel", input.job.payload.message.channel.clone()),
                     (
-                        "slackEventId".to_string(),
-                        input.job.payload.slack_event_id.clone(),
-                    ),
-                    ("jobId".to_string(), input.job.job_id),
-                    (
-                        "channel".to_string(),
-                        input.job.payload.message.channel.clone(),
-                    ),
-                    (
-                        "threadTs".to_string(),
+                        "threadTs",
                         input.job.payload.message.thread_ts_or_ts().to_string(),
                     ),
                     (
-                        "attempt".to_string(),
+                        "attempt",
                         input.job.retry_count.saturating_add(1).to_string(),
                     ),
                     (
-                        "worker_job_duration_ms".to_string(),
+                        "worker_job_duration_ms",
                         input.started_at.elapsed().as_millis().to_string(),
                     ),
-                    ("status".to_string(), "queue_fail_error".to_string()),
-                    ("error".to_string(), queue_fail_error.message),
+                    ("status", "queue_fail_error".to_string()),
+                    ("error", queue_fail_error.message),
                 ]),
             );
             return;
@@ -261,36 +249,27 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
 
     input.deps.investigation_execution_deps.logger.error(
         "Failed worker job",
-        BTreeMap::from([
-            ("workerIndex".to_string(), input.worker_index.to_string()),
+        string_log_meta([
+            ("workerIndex", input.worker_index.to_string()),
+            ("slackEventId", input.job.payload.slack_event_id.clone()),
+            ("jobId", input.job.job_id.clone()),
+            ("channel", input.job.payload.message.channel.clone()),
             (
-                "slackEventId".to_string(),
-                input.job.payload.slack_event_id.clone(),
-            ),
-            ("jobId".to_string(), input.job.job_id.clone()),
-            (
-                "channel".to_string(),
-                input.job.payload.message.channel.clone(),
-            ),
-            (
-                "threadTs".to_string(),
+                "threadTs",
                 input.job.payload.message.thread_ts_or_ts().to_string(),
             ),
             (
-                "attempt".to_string(),
+                "attempt",
                 input.job.retry_count.saturating_add(1).to_string(),
             ),
             (
-                "worker_job_duration_ms".to_string(),
+                "worker_job_duration_ms",
                 input.started_at.elapsed().as_millis().to_string(),
             ),
-            ("worker_queue_depth".to_string(), queue_depth),
-            ("worker_job_failure_total".to_string(), "1".to_string()),
-            (
-                "status".to_string(),
-                job_fail_status_to_string(&fail_result.status),
-            ),
-            ("error".to_string(), input.error_message.clone()),
+            ("worker_queue_depth", queue_depth),
+            ("worker_job_failure_total", "1".to_string()),
+            ("status", job_fail_status_to_string(&fail_result.status)),
+            ("error", input.error_message.clone()),
         ]),
     );
 
@@ -307,18 +286,12 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
     {
         input.deps.investigation_execution_deps.logger.error(
             "Failed dead-letter notification",
-            BTreeMap::from([
+            string_log_meta([
+                ("slackEventId", fail_result.job.payload.slack_event_id),
+                ("jobId", fail_result.job.job_id),
+                ("channel", fail_result.job.payload.message.channel.clone()),
                 (
-                    "slackEventId".to_string(),
-                    fail_result.job.payload.slack_event_id,
-                ),
-                ("jobId".to_string(), fail_result.job.job_id),
-                (
-                    "channel".to_string(),
-                    fail_result.job.payload.message.channel.clone(),
-                ),
-                (
-                    "threadTs".to_string(),
+                    "threadTs",
                     fail_result
                         .job
                         .payload
@@ -326,7 +299,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
                         .thread_ts_or_ts()
                         .to_string(),
                 ),
-                ("error".to_string(), dead_letter_error.message),
+                ("error", dead_letter_error.message),
             ]),
         );
     }
@@ -343,9 +316,9 @@ async fn read_worker_queue_depth(input: ReadWorkerQueueDepthInput) -> String {
         Err(error) => {
             input.deps.investigation_execution_deps.logger.error(
                 "Failed to read worker queue depth",
-                BTreeMap::from([
-                    ("workerIndex".to_string(), input.worker_index.to_string()),
-                    ("error".to_string(), error.message),
+                string_log_meta([
+                    ("workerIndex", input.worker_index.to_string()),
+                    ("error", error.message),
                 ]),
             );
             "unknown".to_string()
@@ -385,12 +358,14 @@ fn job_fail_status_to_string(value: &JobFailStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Arc, BTreeMap, InvestigationExecutionDeps, InvestigationJob, InvestigationJobQueuePort,
+        Arc, InvestigationExecutionDeps, InvestigationJob, InvestigationJobQueuePort,
         JobFailStatus, PortError, ProcessClaimedJobInput, SlackThreadReplyInput,
         SlackThreadReplyPort, StartInvestigationWorkerRunnerUseCaseDeps, handle_failed_claimed_job,
         process_claimed_job,
     };
+    use crate::investigation::InvestigationLogMeta;
     use async_trait::async_trait;
+    use serde_json::Value;
     use sre_shared::ports::outbound::{
         CompleteJobInput, DatadogEventSearchParams, DatadogEventSearchPort,
         DatadogEventSearchResult, DatadogLogAggregateBucket, DatadogLogAggregateParams,
@@ -426,7 +401,7 @@ mod tests {
     #[derive(Debug, Clone)]
     struct LogEntry {
         message: String,
-        meta: BTreeMap<String, String>,
+        meta: InvestigationLogMeta,
     }
 
     #[derive(Default)]
@@ -730,16 +705,16 @@ mod tests {
     }
 
     impl InvestigationLogger for MockLogger {
-        fn info(&self, message: &str, meta: BTreeMap<String, String>) {
+        fn info(&self, message: &str, meta: InvestigationLogMeta) {
             self.infos.lock().expect("lock infos").push(LogEntry {
                 message: message.to_string(),
                 meta,
             });
         }
 
-        fn warn(&self, _message: &str, _meta: BTreeMap<String, String>) {}
+        fn warn(&self, _message: &str, _meta: InvestigationLogMeta) {}
 
-        fn error(&self, message: &str, meta: BTreeMap<String, String>) {
+        fn error(&self, message: &str, meta: InvestigationLogMeta) {
             self.errors.lock().expect("lock errors").push(LogEntry {
                 message: message.to_string(),
                 meta,
@@ -856,8 +831,9 @@ mod tests {
             info_logs
                 .iter()
                 .find(|entry| entry.message == "Completed worker job")
-                .and_then(|entry| entry.meta.get("worker_queue_depth")),
-            Some(&"3".to_string())
+                .and_then(|entry| entry.meta.get("worker_queue_depth"))
+                .and_then(Value::as_str),
+            Some("3")
         );
     }
 
@@ -897,8 +873,8 @@ mod tests {
         assert_eq!(error_logs.len(), 1);
         assert_eq!(error_logs[0].message, "Failed worker job");
         assert_eq!(
-            error_logs[0].meta.get("status"),
-            Some(&"requeued".to_string())
+            error_logs[0].meta.get("status").and_then(Value::as_str),
+            Some("requeued")
         );
         assert_eq!(context.slack_reply_port.posted_replies().len(), 0);
     }
