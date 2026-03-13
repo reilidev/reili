@@ -156,7 +156,7 @@ pub async fn execute_investigation_job(
             let failure_error = resolve_investigation_failure_error(&error);
             let llm_telemetry =
                 build_investigation_llm_telemetry(BuildInvestigationLlmTelemetryInput {
-                    coordinator_usage: failure_error.coordinator_usage,
+                    usage: failure_error.usage,
                 });
 
             let duration_ms = started_at.elapsed().as_millis();
@@ -235,7 +235,7 @@ async fn run_investigation(
         .map_err(ExecuteInvestigationJobError::from)?;
 
     let llm_telemetry = build_investigation_llm_telemetry(BuildInvestigationLlmTelemetryInput {
-        coordinator_usage: coordinator_report.usage,
+        usage: coordinator_report.usage,
     });
     let report_text = if coordinator_report.result_text.is_empty() {
         FALLBACK_REPORT_TEXT.to_string()

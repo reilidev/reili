@@ -19,8 +19,8 @@ pub fn build_investigation_llm_telemetry(
     input: BuildInvestigationLlmTelemetryInput,
 ) -> InvestigationLlmTelemetry {
     InvestigationLlmTelemetry {
-        coordinator: input.coordinator_usage.clone(),
-        total: input.coordinator_usage,
+        coordinator: input.usage.clone(),
+        total: input.usage,
     }
 }
 
@@ -41,9 +41,9 @@ mod tests {
     }
 
     #[test]
-    fn builds_total_usage_from_coordinator_snapshot() {
+    fn builds_telemetry_from_usage() {
         let telemetry = build_investigation_llm_telemetry(BuildInvestigationLlmTelemetryInput {
-            coordinator_usage: snapshot(1, 10, 20, 30),
+            usage: snapshot(1, 10, 20, 30),
         });
 
         assert_eq!(telemetry.coordinator, snapshot(1, 10, 20, 30));

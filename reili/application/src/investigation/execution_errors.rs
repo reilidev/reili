@@ -35,7 +35,7 @@ impl From<InvestigationExecutionFailedError> for ExecuteInvestigationJobError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedInvestigationFailureError {
     pub error_message: String,
-    pub coordinator_usage: LlmUsageSnapshot,
+    pub usage: LlmUsageSnapshot,
 }
 
 #[must_use]
@@ -46,16 +46,16 @@ pub fn resolve_investigation_failure_error(
         ExecuteInvestigationJobError::InvestigationExecutionFailed(value) => {
             ResolvedInvestigationFailureError {
                 error_message: value.cause_message.clone(),
-                coordinator_usage: value.coordinator_usage.clone(),
+                usage: value.usage.clone(),
             }
         }
         ExecuteInvestigationJobError::AgentRunFailed(value) => ResolvedInvestigationFailureError {
             error_message: value.cause_message.clone(),
-            coordinator_usage: value.usage.clone(),
+            usage: value.usage.clone(),
         },
         ExecuteInvestigationJobError::Port(value) => ResolvedInvestigationFailureError {
             error_message: value.message.clone(),
-            coordinator_usage: create_empty_llm_usage_snapshot(),
+            usage: create_empty_llm_usage_snapshot(),
         },
     }
 }
@@ -78,14 +78,14 @@ mod tests {
         let resolved = resolve_investigation_failure_error(&error);
 
         assert_eq!(resolved.error_message, "coordinator failed");
-        assert_eq!(resolved.coordinator_usage, snapshot(2));
+        assert_eq!(resolved.usage, snapshot(2));
     }
 
     #[test]
     fn resolves_usage_for_wrapped_execution_failure() {
         let llm_telemetry =
             build_investigation_llm_telemetry(BuildInvestigationLlmTelemetryInput {
-                coordinator_usage: snapshot(3),
+                usage: snapshot(3),
             });
         let error = ExecuteInvestigationJobError::InvestigationExecutionFailed(
             reili_shared::errors::InvestigationExecutionFailedError::new(
@@ -97,7 +97,7 @@ mod tests {
         let resolved = resolve_investigation_failure_error(&error);
 
         assert_eq!(resolved.error_message, "reply failed");
-        assert_eq!(resolved.coordinator_usage, snapshot(3));
+        assert_eq!(resolved.usage, snapshot(3));
     }
 
     #[test]
@@ -107,7 +107,7 @@ mod tests {
         let port_resolved = resolve_investigation_failure_error(&port_error);
 
         assert_eq!(port_resolved.error_message, "slack failed");
-        assert_eq!(port_resolved.coordinator_usage, snapshot(0));
+        assert_eq!(port_resolved.usage, snapshot(0));
     }
 
     fn snapshot(requests: u32) -> LlmUsageSnapshot {

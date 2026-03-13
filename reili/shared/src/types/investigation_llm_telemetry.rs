@@ -19,7 +19,7 @@ pub struct InvestigationLlmTelemetry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildInvestigationLlmTelemetryInput {
-    pub coordinator_usage: LlmUsageSnapshot,
+    pub usage: LlmUsageSnapshot,
 }
 
 #[cfg(test)]
@@ -42,7 +42,7 @@ mod tests {
             total: snapshot(10),
         };
         let build_input = BuildInvestigationLlmTelemetryInput {
-            coordinator_usage: snapshot(10),
+            usage: snapshot(10),
         };
 
         let telemetry_json = serde_json::to_string(&telemetry).expect("serialize telemetry");
