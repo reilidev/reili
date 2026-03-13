@@ -1,3 +1,4 @@
+mod datadog_api_retry_config;
 pub mod datadog_http_client;
 pub mod event_search_adapter;
 pub mod log_aggregate_adapter;
@@ -5,6 +6,7 @@ pub mod log_search_adapter;
 pub mod metric_catalog_adapter;
 pub mod metric_query_adapter;
 
+pub use datadog_api_retry_config::DatadogApiRetryConfig;
 pub use datadog_http_client::{
     DatadogApiVersion, DatadogHttpClient, DatadogHttpClientConfig, DatadogRequestInput,
 };

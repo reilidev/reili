@@ -1,11 +1,12 @@
 use std::time::Duration;
 
 use reili_shared::errors::PortError;
-use reili_shared::types::DatadogApiRetryConfig;
 use reqwest::{Method, StatusCode};
 use serde_json::Value;
 
 use crate::json_utils::truncate_for_error;
+
+use super::DatadogApiRetryConfig;
 
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 100 * 1024;
 
@@ -209,14 +210,14 @@ fn normalize_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use reili_shared::types::DatadogApiRetryConfig;
     use reqwest::Method;
     use serde_json::json;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::{
-        DatadogApiVersion, DatadogHttpClient, DatadogHttpClientConfig, DatadogRequestInput,
+        DatadogApiRetryConfig, DatadogApiVersion, DatadogHttpClient, DatadogHttpClientConfig,
+        DatadogRequestInput,
     };
 
     #[tokio::test]

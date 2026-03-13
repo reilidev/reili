@@ -99,14 +99,13 @@ mod tests {
     use std::sync::Arc;
 
     use reili_shared::ports::outbound::{DatadogMetricCatalogParams, DatadogMetricCatalogPort};
-    use reili_shared::types::DatadogApiRetryConfig;
     use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::DatadogMetricCatalogAdapter;
-    use crate::outbound::datadog::datadog_http_client::{
-        DatadogHttpClient, DatadogHttpClientConfig,
+    use crate::outbound::datadog::{
+        DatadogApiRetryConfig, DatadogHttpClient, DatadogHttpClientConfig,
     };
 
     #[tokio::test]

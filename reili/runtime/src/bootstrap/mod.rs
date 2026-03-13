@@ -6,7 +6,7 @@ use reili_adapters::outbound::agents::{
 };
 use reili_adapters::outbound::datadog::DatadogEventSearchAdapter;
 use reili_adapters::outbound::datadog::{
-    DatadogHttpClient, DatadogHttpClientConfig, DatadogLogAggregateAdapter,
+    DatadogApiRetryConfig, DatadogHttpClient, DatadogHttpClientConfig, DatadogLogAggregateAdapter,
     DatadogLogSearchAdapter, DatadogMetricCatalogAdapter, DatadogMetricQueryAdapter,
 };
 use reili_adapters::outbound::github::{GitHubSearchAdapter, GitHubSearchAdapterConfig};
@@ -32,7 +32,7 @@ use reili_shared::ports::outbound::{
     InvestigationResources, SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyPort,
     WebSearchPort,
 };
-use reili_shared::types::{DatadogApiRetryConfig, InvestigationJob};
+use reili_shared::types::InvestigationJob;
 use serde_json::{Value, json};
 use thiserror::Error;
 
