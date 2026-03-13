@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde::Serialize;
 use reili_shared::errors::PortError;
 use reili_shared::ports::outbound::{
     AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort, SlackStreamBlock,
     StartSlackProgressStreamInput, StartSlackProgressStreamOutput, StopSlackProgressStreamInput,
 };
+use serde::Serialize;
 
 use super::slack_web_api_client::SlackWebApiClient;
 use crate::json_utils::read_non_empty_json_string;
@@ -129,7 +129,6 @@ struct StopSlackProgressStreamRequest {
 mod tests {
     use std::sync::Arc;
 
-    use serde_json::json;
     use reili_shared::ports::outbound::slack_progress_stream::{
         SlackTaskUpdateChunk, SlackTaskUpdateStatus,
     };
@@ -137,6 +136,7 @@ mod tests {
         AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort,
         StartSlackProgressStreamInput, StopSlackProgressStreamInput,
     };
+    use serde_json::json;
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -259,7 +259,7 @@ mod tests {
                 "chunks": [
                     {
                         "type": "task_update",
-                        "id": "reasoning-1",
+                        "id": "progress-step-1",
                         "title": "Collect evidence",
                         "status": "in_progress",
                     }
@@ -278,7 +278,7 @@ mod tests {
                 stream_ts: "1710000000.000100".to_string(),
                 markdown_text: None,
                 chunks: Some(vec![SlackAnyChunk::TaskUpdate(SlackTaskUpdateChunk {
-                    id: "reasoning-1".to_string(),
+                    id: "progress-step-1".to_string(),
                     title: "Collect evidence".to_string(),
                     status: SlackTaskUpdateStatus::InProgress,
                     details: None,

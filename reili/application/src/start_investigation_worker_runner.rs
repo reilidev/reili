@@ -365,7 +365,6 @@ mod tests {
     };
     use crate::investigation::InvestigationLogMeta;
     use async_trait::async_trait;
-    use serde_json::Value;
     use reili_shared::ports::outbound::{
         CompleteJobInput, DatadogEventSearchParams, DatadogEventSearchPort,
         DatadogEventSearchResult, DatadogLogAggregateBucket, DatadogLogAggregateParams,
@@ -386,6 +385,7 @@ mod tests {
         InvestigationJobPayload, LlmUsageSnapshot, SlackMessage, SlackThreadMessage,
         SlackTriggerType,
     };
+    use serde_json::Value;
     use std::collections::VecDeque;
     use std::sync::Mutex;
 

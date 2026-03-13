@@ -138,11 +138,11 @@ mod tests {
     };
     use crate::investigation::InvestigationLogMeta;
     use async_trait::async_trait;
-    use serde_json::Value;
     use reili_shared::ports::outbound::{
         CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailResult, JobQueuePort,
     };
     use reili_shared::types::SlackTriggerType;
+    use serde_json::Value;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 

@@ -13,42 +13,18 @@
 `Reili` starts from Slack messages and investigation requests, then:
 
 - Investigates Datadog Logs, Metrics, and Events
-- Explores GitHub repositories, PRs, and code
+- Explores GitHub repositories, PRs, Issues, and code
 
-It focuses on read-oriented DevOps work: triage, investigation, and synthesis.
+It focuses on read-oriented DevOps work: triage, investigation.
 
 ## Core Features
 
-- Slack-native intake via `message` and `app_mention` events
-- Single-process runtime:
-  - One HTTP server receives Slack events at `/slack/events`
-  - In-process worker tasks claim jobs from `InMemoryJobQueue`
-- Multi-agent investigation:
-  - Specialized sub-agents for Logs, Metrics, Events, and GitHub
-  - A Coordinator orchestrates the flow, then a Synthesizer writes the final report
-- Database-free operations:
-  - In-memory job queue (`InMemoryJobQueue`)
-  - No extra DB infrastructure required
-
-## Architecture
-
-```mermaid
-flowchart LR
-  A[Slack Events API] --> B[Reili Runtime<br/>/slack/events]
-  B --> C[InMemoryJobQueue]
-  C --> D[Worker Runner<br/>tokio tasks]
-  D --> E[Investigation Use Case]
-  E --> F[OpenAI Agents SDK]
-  E --> G[Datadog API v2]
-  E --> H[GitHub App API]
-  E --> I[Slack Thread Reply / Progress Stream]
-```
+- Slack-native intake via `app_mention` events
 
 ### Runtime Characteristics
 
 - Database-free: no persistent state component
 - Job queue is in-memory, so pending jobs are lost on app restart
-- Datadog API calls use retry configuration (max 3 retries)
 
 ## Quick Start
 
@@ -69,6 +45,7 @@ cp .env.example .env
 ### 3. Configure Environment Variables
 
 Required:
+
 - `SLACK_BOT_TOKEN`
 - `SLACK_SIGNING_SECRET`
 - `DATADOG_API_KEY`

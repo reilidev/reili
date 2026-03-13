@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use octocrab::models::{AppId, InstallationId};
 use octocrab::{Octocrab, models};
-use serde_json::Value;
 use reili_shared::errors::PortError;
 use reili_shared::ports::outbound::github_search::{
     GithubRepositoryDirectoryContent, GithubRepositoryDirectoryEntry, GithubRepositoryFileContent,
@@ -13,6 +12,7 @@ use reili_shared::ports::outbound::{
     GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
     GithubRepositoryContentParams, GithubRepositoryContentPort, GithubSearchParams,
 };
+use serde_json::Value;
 
 const MAX_RESULTS_PER_PAGE: u8 = 30;
 const MAX_CONTENT_BYTES: usize = 200_000;

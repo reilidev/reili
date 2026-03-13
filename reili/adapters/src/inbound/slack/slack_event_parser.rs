@@ -1,6 +1,6 @@
-use serde::Deserialize;
 use reili_shared::errors::PortError;
 use reili_shared::types::{SlackMessage, SlackTriggerType};
+use serde::Deserialize;
 
 use crate::json_utils::read_non_empty_string;
 
@@ -130,8 +130,8 @@ struct SlackCallbackEvent {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
     use reili_shared::types::{SlackMessage, SlackTriggerType};
+    use serde_json::json;
 
     use super::{ParsedSlackEvent, parse_slack_event};
 

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::json;
 use reili_shared::errors::PortError;
 use reili_shared::ports::outbound::{SlackThreadReplyInput, SlackThreadReplyPort};
+use serde_json::json;
 
 use super::slack_web_api_client::SlackWebApiClient;
 
@@ -40,8 +40,8 @@ impl SlackThreadReplyPort for SlackThreadReplyAdapter {
 mod tests {
     use std::sync::Arc;
 
-    use serde_json::json;
     use reili_shared::ports::outbound::{SlackThreadReplyInput, SlackThreadReplyPort};
+    use serde_json::json;
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

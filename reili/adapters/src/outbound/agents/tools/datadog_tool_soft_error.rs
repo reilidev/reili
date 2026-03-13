@@ -1,5 +1,5 @@
-use serde::Serialize;
 use reili_shared::errors::PortError;
+use serde::Serialize;
 
 use super::status_code_parser::extract_http_status_code;
 

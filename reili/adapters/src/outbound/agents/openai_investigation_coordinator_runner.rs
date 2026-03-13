@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rig::completion::{Prompt, Usage};
-use rig::{client::ProviderClient, providers::openai};
 use reili_shared::errors::{AgentRole, AgentRunFailedError};
 use reili_shared::ports::outbound::{
     COORDINATOR_PROGRESS_OWNER_ID, CoordinatorRunReport, InvestigationCoordinatorRunnerPort,
     InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
     RunCoordinatorInput,
 };
+use rig::completion::{Prompt, Usage};
+use rig::{client::ProviderClient, providers::openai};
 
 use super::investigation_agents::{
     BuildCoordinatorAgentInput, build_coordinator_agent, build_coordinator_prompt,

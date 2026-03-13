@@ -88,10 +88,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use serde_json::Value;
     use reili_shared::errors::PortError;
     use reili_shared::ports::outbound::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
     use reili_shared::types::{SlackMessage, SlackThreadMessage, SlackTriggerType};
+    use serde_json::Value;
 
     use crate::investigation::InvestigationLogMeta;
 

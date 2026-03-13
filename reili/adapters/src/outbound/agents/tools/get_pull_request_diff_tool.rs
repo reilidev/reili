@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use reili_shared::errors::PortError;
+use reili_shared::ports::outbound::{GithubPullRequestParams, GithubPullRequestPort};
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use reili_shared::errors::PortError;
-use reili_shared::ports::outbound::{GithubPullRequestParams, GithubPullRequestPort};
 
 use super::assert_github_owner_in_scope::assert_github_owner_in_scope;
 use super::github_tool_soft_error::to_github_tool_soft_error;

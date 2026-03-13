@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use reqwest::{Method, StatusCode};
-use serde_json::Value;
 use reili_shared::errors::PortError;
 use reili_shared::types::DatadogApiRetryConfig;
+use reqwest::{Method, StatusCode};
+use serde_json::Value;
 
 use crate::json_utils::truncate_for_error;
 
@@ -209,9 +209,9 @@ fn normalize_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use reili_shared::types::DatadogApiRetryConfig;
     use reqwest::Method;
     use serde_json::json;
-    use reili_shared::types::DatadogApiRetryConfig;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
+use reili_shared::errors::PortError;
+use reili_shared::ports::outbound::{
+    InvestigationResources, WebSearchInput, WebSearchUserLocation,
+};
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use reili_shared::errors::PortError;
-use reili_shared::ports::outbound::{InvestigationResources, WebSearchInput, WebSearchUserLocation};
 
 use super::tool_json::to_json_string;
 
@@ -75,11 +77,11 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use rig::tool::Tool;
     use reili_shared::errors::PortError;
     use reili_shared::ports::outbound::{
         WebCitation, WebSearchExecution, WebSearchInput, WebSearchPort, WebSearchResult,
     };
+    use rig::tool::Tool;
 
     use super::*;
     use crate::outbound::agents::tools::search_web_tool::SearchWebArgs;
@@ -221,7 +223,8 @@ mod tests {
             async fn get_pull_request_diff(
                 &self,
                 _: reili_shared::ports::outbound::GithubPullRequestParams,
-            ) -> Result<reili_shared::ports::outbound::GithubPullRequestDiff, PortError> {
+            ) -> Result<reili_shared::ports::outbound::GithubPullRequestDiff, PortError>
+            {
                 unimplemented!()
             }
         }

@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use rig::agent::Agent;
-use rig::prelude::CompletionClient;
-use rig::providers::openai;
-use serde_json::json;
 use reili_shared::ports::outbound::{
     COORDINATOR_PROGRESS_OWNER_ID, InvestigationProgressEventPort, InvestigationResources,
     InvestigationRuntime,
 };
 use reili_shared::types::AlertContext;
+use rig::agent::Agent;
+use rig::prelude::CompletionClient;
+use rig::providers::openai;
+use serde_json::json;
 
 use super::tools::{
     AggregateDatadogLogsByFacetTool, GetPullRequestDiffTool, GetPullRequestTool,
@@ -460,9 +460,9 @@ Use {language} for all responses.",
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
     use reili_shared::ports::outbound::InvestigationRuntime;
     use reili_shared::types::AlertContext;
+    use serde_json::json;
 
     use super::{
         BuildCoordinatorInstructionsInput, BuildGithubInstructionsInput,

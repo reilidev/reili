@@ -7,13 +7,13 @@ use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use serde_json::json;
 use reili_adapters::inbound::slack::{
     ParsedSlackEvent, parse_slack_event, verify_slack_signature_middleware,
 };
 use reili_adapters::observability::logger::init_json_logger;
 use reili_application::investigation::{InvestigationLogger, string_log_meta};
 use reili_shared::ports::inbound::SlackMessageHandlerPort;
+use serde_json::json;
 
 use crate::bootstrap::{RuntimeBootstrapError, build_runtime_deps};
 use crate::config::env::{EnvConfigError, load_app_config};

@@ -2,12 +2,12 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use reqwest::Client;
-use serde_json::{Value, json};
 use reili_shared::errors::PortError;
 use reili_shared::ports::outbound::{
     WebCitation, WebSearchExecution, WebSearchInput, WebSearchPort, WebSearchResult,
 };
+use reqwest::Client;
+use serde_json::{Value, json};
 
 const MAX_CITATIONS: usize = 10;
 const MAX_SUMMARY_CHARS: usize = 4_000;

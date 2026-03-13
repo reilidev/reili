@@ -1,6 +1,6 @@
+use reili_shared::errors::PortError;
 use serde::Serialize;
 use serde_json::Value;
-use reili_shared::errors::PortError;
 
 use crate::json_utils::{read_non_empty_json_string, truncate_for_error};
 

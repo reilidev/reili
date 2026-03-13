@@ -1,35 +1,35 @@
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ReasoningScopeStatus {
+pub(super) enum ProgressStepStatus {
     InProgress,
     Complete,
 }
 
-pub(super) type ReasoningScopeToolStatus = ReasoningScopeStatus;
+pub(super) type ToolCallStatus = ProgressStepStatus;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ReasoningScope {
-    pub scope_id: String,
+pub(super) struct ProgressStep {
+    pub progress_step_id: String,
     pub owner_id: String,
     pub title: String,
-    pub tool_status_by_task_id: HashMap<String, ReasoningScopeToolStatus>,
+    pub tool_call_status_by_task_id: HashMap<String, ToolCallStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ResolveToolStartedScopeOutput {
-    pub scope_id: String,
-    pub reopened_from_scope_id: Option<String>,
+pub(super) struct ResolveToolStartedProgressStepOutput {
+    pub progress_step_id: String,
+    pub reopened_from_progress_step_id: Option<String>,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct ProgressStreamState {
-    active_reasoning_scope_id_by_owner_id: HashMap<String, String>,
-    reasoning_scope_by_id: HashMap<String, ReasoningScope>,
-    reasoning_scope_id_by_task_key: HashMap<String, String>,
-    completed_reasoning_scope_ids_by_owner_id: HashMap<String, HashSet<String>>,
-    latest_completed_reasoning_scope_id_by_owner_id: HashMap<String, String>,
-    next_scope_number: u64,
+    active_progress_step_id_by_owner_id: HashMap<String, String>,
+    progress_step_by_id: HashMap<String, ProgressStep>,
+    progress_step_id_by_task_key: HashMap<String, String>,
+    completed_progress_step_ids_by_owner_id: HashMap<String, HashSet<String>>,
+    latest_completed_progress_step_id_by_owner_id: HashMap<String, String>,
+    next_progress_step_number: u64,
 }
 
 impl ProgressStreamState {
@@ -37,218 +37,232 @@ impl ProgressStreamState {
         Self::default()
     }
 
-    pub(super) fn create_reasoning_scope(&mut self, owner_id: &str, title: &str) -> String {
-        let scope_id = self.create_reasoning_scope_id();
-        let scope = ReasoningScope {
-            scope_id: scope_id.clone(),
+    pub(super) fn create_progress_step(&mut self, owner_id: &str, title: &str) -> String {
+        let progress_step_id = self.create_progress_step_id();
+        let progress_step = ProgressStep {
+            progress_step_id: progress_step_id.clone(),
             owner_id: owner_id.to_string(),
             title: title.to_string(),
-            tool_status_by_task_id: HashMap::new(),
+            tool_call_status_by_task_id: HashMap::new(),
         };
-        self.reasoning_scope_by_id.insert(scope_id.clone(), scope);
-        scope_id
+        self.progress_step_by_id
+            .insert(progress_step_id.clone(), progress_step);
+        progress_step_id
     }
 
-    pub(super) fn set_active_scope(&mut self, owner_id: &str, scope_id: String) {
-        self.active_reasoning_scope_id_by_owner_id
-            .insert(owner_id.to_string(), scope_id);
+    pub(super) fn set_active_progress_step(&mut self, owner_id: &str, progress_step_id: String) {
+        self.active_progress_step_id_by_owner_id
+            .insert(owner_id.to_string(), progress_step_id);
     }
 
-    pub(super) fn clear_active_scope(&mut self, owner_id: &str) {
-        self.active_reasoning_scope_id_by_owner_id.remove(owner_id);
+    pub(super) fn clear_active_progress_step(&mut self, owner_id: &str) {
+        self.active_progress_step_id_by_owner_id.remove(owner_id);
     }
 
-    pub(super) fn resolve_scope_for_tool_started(
+    pub(super) fn resolve_progress_step_for_tool_started(
         &mut self,
         owner_id: &str,
         task_id: &str,
-        reopened_scope_default_title: &str,
-    ) -> ResolveToolStartedScopeOutput {
+        reopened_progress_step_default_title: &str,
+    ) -> ResolveToolStartedProgressStepOutput {
         let task_ownership_key = build_task_ownership_key(owner_id, task_id);
-        if let Some(existing_scope_id) = self
-            .reasoning_scope_id_by_task_key
+        if let Some(existing_progress_step_id) = self
+            .progress_step_id_by_task_key
             .get(&task_ownership_key)
-            .filter(|scope_id| self.reasoning_scope_by_id.contains_key(*scope_id))
+            .filter(|progress_step_id| self.progress_step_by_id.contains_key(*progress_step_id))
         {
-            return ResolveToolStartedScopeOutput {
-                scope_id: existing_scope_id.clone(),
-                reopened_from_scope_id: None,
+            return ResolveToolStartedProgressStepOutput {
+                progress_step_id: existing_progress_step_id.clone(),
+                reopened_from_progress_step_id: None,
             };
         }
 
-        if let Some(active_scope_id) = self
-            .active_reasoning_scope_id_by_owner_id
+        if let Some(active_progress_step_id) = self
+            .active_progress_step_id_by_owner_id
             .get(owner_id)
             .cloned()
         {
-            if self.reasoning_scope_by_id.contains_key(&active_scope_id) {
-                self.reasoning_scope_id_by_task_key
-                    .insert(task_ownership_key, active_scope_id.clone());
-                return ResolveToolStartedScopeOutput {
-                    scope_id: active_scope_id,
-                    reopened_from_scope_id: None,
+            if self
+                .progress_step_by_id
+                .contains_key(&active_progress_step_id)
+            {
+                self.progress_step_id_by_task_key
+                    .insert(task_ownership_key, active_progress_step_id.clone());
+                return ResolveToolStartedProgressStepOutput {
+                    progress_step_id: active_progress_step_id,
+                    reopened_from_progress_step_id: None,
                 };
             }
 
-            self.active_reasoning_scope_id_by_owner_id.remove(owner_id);
+            self.active_progress_step_id_by_owner_id.remove(owner_id);
         }
 
-        let last_completed_scope = self.resolve_latest_completed_scope_by_owner_id(owner_id);
-        let reopened_scope_title = last_completed_scope.as_ref().map_or_else(
-            || reopened_scope_default_title.to_string(),
-            |scope| scope.title.clone(),
+        let last_completed_progress_step =
+            self.resolve_latest_completed_progress_step_by_owner_id(owner_id);
+        let reopened_progress_step_title = last_completed_progress_step.as_ref().map_or_else(
+            || reopened_progress_step_default_title.to_string(),
+            |progress_step| progress_step.title.clone(),
         );
-        let reopened_scope_id = self.create_reasoning_scope(owner_id, &reopened_scope_title);
-        self.set_active_scope(owner_id, reopened_scope_id.clone());
+        let reopened_progress_step_id =
+            self.create_progress_step(owner_id, &reopened_progress_step_title);
+        self.set_active_progress_step(owner_id, reopened_progress_step_id.clone());
 
-        ResolveToolStartedScopeOutput {
-            scope_id: reopened_scope_id,
-            reopened_from_scope_id: last_completed_scope.map(|scope| scope.scope_id),
+        ResolveToolStartedProgressStepOutput {
+            progress_step_id: reopened_progress_step_id,
+            reopened_from_progress_step_id: last_completed_progress_step
+                .map(|progress_step| progress_step.progress_step_id),
         }
     }
 
-    pub(super) fn resolve_scope_for_tool_completed(
+    pub(super) fn resolve_progress_step_for_tool_completed(
         &self,
         owner_id: &str,
         task_id: &str,
     ) -> Option<String> {
         let task_ownership_key = build_task_ownership_key(owner_id, task_id);
-        self.reasoning_scope_id_by_task_key
+        self.progress_step_id_by_task_key
             .get(&task_ownership_key)
-            .filter(|scope_id| self.reasoning_scope_by_id.contains_key(*scope_id))
+            .filter(|progress_step_id| self.progress_step_by_id.contains_key(*progress_step_id))
             .cloned()
     }
 
-    pub(super) fn upsert_scope_tool_status(
+    pub(super) fn upsert_progress_step_tool_call_status(
         &mut self,
-        scope_id: &str,
+        progress_step_id: &str,
         owner_id: &str,
         task_id: &str,
-        status: ReasoningScopeToolStatus,
+        status: ToolCallStatus,
     ) {
-        if let Some(scope) = self.reasoning_scope_by_id.get_mut(scope_id) {
-            scope
-                .tool_status_by_task_id
+        if let Some(progress_step) = self.progress_step_by_id.get_mut(progress_step_id) {
+            progress_step
+                .tool_call_status_by_task_id
                 .insert(task_id.to_string(), status);
         }
 
-        self.reasoning_scope_id_by_task_key.insert(
+        self.progress_step_id_by_task_key.insert(
             build_task_ownership_key(owner_id, task_id),
-            scope_id.to_string(),
+            progress_step_id.to_string(),
         );
     }
 
-    pub(super) fn mark_scope_incomplete(&mut self, owner_id: &str, scope_id: &str) {
-        self.resolve_completed_reasoning_scope_ids_by_owner_id(owner_id)
-            .remove(scope_id);
+    pub(super) fn mark_progress_step_incomplete(&mut self, owner_id: &str, progress_step_id: &str) {
+        self.resolve_completed_progress_step_ids_by_owner_id(owner_id)
+            .remove(progress_step_id);
     }
 
-    pub(super) fn complete_active_scope_if_idle(
+    pub(super) fn complete_active_progress_step_if_idle(
         &mut self,
         owner_id: &str,
-    ) -> Option<ReasoningScope> {
-        let active_scope_id = self
-            .active_reasoning_scope_id_by_owner_id
+    ) -> Option<ProgressStep> {
+        let active_progress_step_id = self
+            .active_progress_step_id_by_owner_id
             .get(owner_id)
             .cloned()?;
-        let active_scope = match self.reasoning_scope_by_id.get(&active_scope_id).cloned() {
-            Some(scope) => scope,
+        let active_progress_step = match self
+            .progress_step_by_id
+            .get(&active_progress_step_id)
+            .cloned()
+        {
+            Some(progress_step) => progress_step,
             None => {
-                self.active_reasoning_scope_id_by_owner_id.remove(owner_id);
+                self.active_progress_step_id_by_owner_id.remove(owner_id);
                 return None;
             }
         };
 
-        if scope_has_in_progress_tool(&active_scope) {
+        if progress_step_has_in_progress_tool_call(&active_progress_step) {
             return None;
         }
 
-        self.mark_scope_completed(&active_scope_id)
+        self.mark_progress_step_completed(&active_progress_step_id)
     }
 
-    pub(super) fn mark_scope_completed(&mut self, scope_id: &str) -> Option<ReasoningScope> {
-        let scope = self.reasoning_scope_by_id.get(scope_id).cloned()?;
-        let completed_scope_ids =
-            self.resolve_completed_reasoning_scope_ids_by_owner_id(&scope.owner_id);
-        if completed_scope_ids.contains(scope_id) {
+    pub(super) fn mark_progress_step_completed(
+        &mut self,
+        progress_step_id: &str,
+    ) -> Option<ProgressStep> {
+        let progress_step = self.progress_step_by_id.get(progress_step_id).cloned()?;
+        let completed_progress_step_ids =
+            self.resolve_completed_progress_step_ids_by_owner_id(&progress_step.owner_id);
+        if completed_progress_step_ids.contains(progress_step_id) {
             return None;
         }
-        completed_scope_ids.insert(scope_id.to_string());
-        self.latest_completed_reasoning_scope_id_by_owner_id
-            .insert(scope.owner_id.clone(), scope_id.to_string());
-        Some(scope)
+        completed_progress_step_ids.insert(progress_step_id.to_string());
+        self.latest_completed_progress_step_id_by_owner_id
+            .insert(progress_step.owner_id.clone(), progress_step_id.to_string());
+        Some(progress_step)
     }
 
-    pub(super) fn scope(&self, scope_id: &str) -> Option<ReasoningScope> {
-        self.reasoning_scope_by_id.get(scope_id).cloned()
+    pub(super) fn progress_step(&self, progress_step_id: &str) -> Option<ProgressStep> {
+        self.progress_step_by_id.get(progress_step_id).cloned()
     }
 
-    pub(super) fn scope_ids_for_owner(&self, owner_id: &str) -> Vec<String> {
-        self.reasoning_scope_by_id
+    pub(super) fn progress_step_ids_for_owner(&self, owner_id: &str) -> Vec<String> {
+        self.progress_step_by_id
             .values()
-            .filter(|scope| scope.owner_id == owner_id)
-            .map(|scope| scope.scope_id.clone())
+            .filter(|progress_step| progress_step.owner_id == owner_id)
+            .map(|progress_step| progress_step.progress_step_id.clone())
             .collect()
     }
 
-    fn create_reasoning_scope_id(&mut self) -> String {
-        self.next_scope_number = self.next_scope_number.saturating_add(1);
-        let mut scope_id = format!("reasoning-{}", self.next_scope_number);
-        while self.reasoning_scope_by_id.contains_key(&scope_id) {
-            self.next_scope_number = self.next_scope_number.saturating_add(1);
-            scope_id = format!("reasoning-{}", self.next_scope_number);
+    fn create_progress_step_id(&mut self) -> String {
+        self.next_progress_step_number = self.next_progress_step_number.saturating_add(1);
+        let mut progress_step_id = format!("progress-step-{}", self.next_progress_step_number);
+        while self.progress_step_by_id.contains_key(&progress_step_id) {
+            self.next_progress_step_number = self.next_progress_step_number.saturating_add(1);
+            progress_step_id = format!("progress-step-{}", self.next_progress_step_number);
         }
 
-        scope_id
+        progress_step_id
     }
 
-    fn resolve_latest_completed_scope_by_owner_id(
+    fn resolve_latest_completed_progress_step_by_owner_id(
         &mut self,
         owner_id: &str,
-    ) -> Option<ReasoningScope> {
-        let latest_completed_scope_id = self
-            .latest_completed_reasoning_scope_id_by_owner_id
+    ) -> Option<ProgressStep> {
+        let latest_completed_progress_step_id = self
+            .latest_completed_progress_step_id_by_owner_id
             .get(owner_id)
             .cloned()?;
-        let scope = self
-            .reasoning_scope_by_id
-            .get(&latest_completed_scope_id)
+        let progress_step = self
+            .progress_step_by_id
+            .get(&latest_completed_progress_step_id)
             .cloned();
-        if scope.is_none() {
-            self.latest_completed_reasoning_scope_id_by_owner_id
+        if progress_step.is_none() {
+            self.latest_completed_progress_step_id_by_owner_id
                 .remove(owner_id);
         }
 
-        scope
+        progress_step
     }
 
-    fn resolve_completed_reasoning_scope_ids_by_owner_id(
+    fn resolve_completed_progress_step_ids_by_owner_id(
         &mut self,
         owner_id: &str,
     ) -> &mut HashSet<String> {
-        self.completed_reasoning_scope_ids_by_owner_id
+        self.completed_progress_step_ids_by_owner_id
             .entry(owner_id.to_string())
             .or_default()
     }
 }
 
-pub(super) fn scope_has_in_progress_tool(scope: &ReasoningScope) -> bool {
-    scope
-        .tool_status_by_task_id
+pub(super) fn progress_step_has_in_progress_tool_call(progress_step: &ProgressStep) -> bool {
+    progress_step
+        .tool_call_status_by_task_id
         .values()
-        .any(|status| *status == ReasoningScopeToolStatus::InProgress)
+        .any(|status| *status == ToolCallStatus::InProgress)
 }
 
-pub(super) fn resolve_reasoning_scope_status(scope: &ReasoningScope) -> ReasoningScopeStatus {
-    if scope.tool_status_by_task_id.is_empty() {
-        return ReasoningScopeStatus::InProgress;
+pub(super) fn resolve_progress_step_status(progress_step: &ProgressStep) -> ProgressStepStatus {
+    if progress_step.tool_call_status_by_task_id.is_empty() {
+        return ProgressStepStatus::InProgress;
     }
 
-    if scope_has_in_progress_tool(scope) {
-        return ReasoningScopeStatus::InProgress;
+    if progress_step_has_in_progress_tool_call(progress_step) {
+        return ProgressStepStatus::InProgress;
     }
 
-    ReasoningScopeStatus::Complete
+    ProgressStepStatus::Complete
 }
 
 fn build_task_ownership_key(owner_id: &str, task_id: &str) -> String {
@@ -258,60 +272,67 @@ fn build_task_ownership_key(owner_id: &str, task_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ProgressStreamState, ReasoningScopeStatus, ResolveToolStartedScopeOutput,
-        resolve_reasoning_scope_status,
+        ProgressStepStatus, ProgressStreamState, ResolveToolStartedProgressStepOutput,
+        resolve_progress_step_status,
     };
 
     #[test]
-    fn reopens_latest_completed_scope_for_new_tool_activity() {
+    fn reopens_latest_completed_progress_step_for_new_tool_activity() {
         let mut state = ProgressStreamState::new();
-        let scope_id = state.create_reasoning_scope("owner-1", "Collect evidence");
-        state.set_active_scope("owner-1", scope_id.clone());
+        let progress_step_id = state.create_progress_step("owner-1", "Collect evidence");
+        state.set_active_progress_step("owner-1", progress_step_id.clone());
         state
-            .mark_scope_completed(&scope_id)
-            .expect("complete existing scope");
-        state.clear_active_scope("owner-1");
+            .mark_progress_step_completed(&progress_step_id)
+            .expect("complete existing progress step");
+        state.clear_active_progress_step("owner-1");
 
-        let resolved = state.resolve_scope_for_tool_started("owner-1", "task-1", "Tool executions");
+        let resolved =
+            state.resolve_progress_step_for_tool_started("owner-1", "task-1", "Tool executions");
 
         assert_eq!(
             resolved,
-            ResolveToolStartedScopeOutput {
-                scope_id: "reasoning-2".to_string(),
-                reopened_from_scope_id: Some(scope_id),
+            ResolveToolStartedProgressStepOutput {
+                progress_step_id: "progress-step-2".to_string(),
+                reopened_from_progress_step_id: Some(progress_step_id),
             }
         );
 
-        let reopened_scope = state.scope(&resolved.scope_id).expect("reopened scope");
-        assert_eq!(reopened_scope.title, "Collect evidence");
+        let reopened_progress_step = state
+            .progress_step(&resolved.progress_step_id)
+            .expect("reopened progress step");
+        assert_eq!(reopened_progress_step.title, "Collect evidence");
     }
 
     #[test]
-    fn completes_active_scope_only_after_all_tools_complete() {
+    fn completes_active_progress_step_only_after_all_tools_complete() {
         let mut state = ProgressStreamState::new();
-        let scope_id = state.create_reasoning_scope("owner-1", "Collect evidence");
-        state.set_active_scope("owner-1", scope_id.clone());
+        let progress_step_id = state.create_progress_step("owner-1", "Collect evidence");
+        state.set_active_progress_step("owner-1", progress_step_id.clone());
 
-        state.upsert_scope_tool_status(
-            &scope_id,
+        state.upsert_progress_step_tool_call_status(
+            &progress_step_id,
             "owner-1",
             "task-1",
-            ReasoningScopeStatus::InProgress,
+            ProgressStepStatus::InProgress,
         );
-        assert!(state.complete_active_scope_if_idle("owner-1").is_none());
+        assert!(
+            state
+                .complete_active_progress_step_if_idle("owner-1")
+                .is_none()
+        );
 
-        state.upsert_scope_tool_status(
-            &scope_id,
+        state.upsert_progress_step_tool_call_status(
+            &progress_step_id,
             "owner-1",
             "task-1",
-            ReasoningScopeStatus::Complete,
+            ProgressStepStatus::Complete,
         );
-        let completed_scope = state
-            .complete_active_scope_if_idle("owner-1")
-            .expect("complete idle scope");
+        let completed_progress_step = state
+            .complete_active_progress_step_if_idle("owner-1")
+            .expect("complete idle progress step");
         assert_eq!(
-            resolve_reasoning_scope_status(&completed_scope),
-            ReasoningScopeStatus::Complete
+            resolve_progress_step_status(&completed_progress_step),
+            ProgressStepStatus::Complete
         );
     }
 }

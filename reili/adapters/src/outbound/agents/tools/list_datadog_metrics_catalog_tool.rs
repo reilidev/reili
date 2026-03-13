@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use reili_shared::errors::PortError;
+use reili_shared::ports::outbound::{DatadogMetricCatalogParams, InvestigationResources};
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use reili_shared::errors::PortError;
-use reili_shared::ports::outbound::{DatadogMetricCatalogParams, InvestigationResources};
 
 use super::datadog_tool_soft_error::to_datadog_tool_soft_error;
 use super::tool_json::to_json_string;

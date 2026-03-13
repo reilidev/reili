@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use serde_json::{Value, json};
 use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::outbound::agents::{
     OpenAiInvestigationCoordinatorRunner, OpenAiInvestigationCoordinatorRunnerInput,
@@ -35,6 +34,7 @@ use reili_shared::ports::outbound::{
     SlackThreadHistoryPort, SlackThreadReplyPort, WebSearchPort,
 };
 use reili_shared::types::{DatadogApiRetryConfig, InvestigationJob};
+use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::config::env::AppConfig;

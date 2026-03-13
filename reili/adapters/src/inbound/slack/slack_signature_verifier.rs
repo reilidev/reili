@@ -6,8 +6,8 @@ use axum::extract::State;
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::Response;
-use ring::hmac;
 use reili_shared::errors::PortError;
+use ring::hmac;
 
 const SLACK_SIGNATURE_HEADER: &str = "x-slack-signature";
 const SLACK_REQUEST_TIMESTAMP_HEADER: &str = "x-slack-request-timestamp";

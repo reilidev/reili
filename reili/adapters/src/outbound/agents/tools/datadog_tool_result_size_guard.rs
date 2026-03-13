@@ -1,5 +1,5 @@
-use serde::Serialize;
 use reili_shared::errors::PortError;
+use serde::Serialize;
 
 use super::tool_json::to_json_string;
 

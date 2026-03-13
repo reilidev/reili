@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reqwest::Method;
-use serde_json::Value;
 use reili_shared::errors::PortError;
 use reili_shared::ports::outbound::{DatadogMetricCatalogParams, DatadogMetricCatalogPort};
+use reqwest::Method;
+use serde_json::Value;
 
 use super::datadog_http_client::{DatadogApiVersion, DatadogHttpClient, DatadogRequestInput};
 
@@ -98,9 +98,9 @@ fn normalize_from_epoch_sec(from_epoch_sec: i64) -> i64 {
 mod tests {
     use std::sync::Arc;
 
-    use serde_json::json;
     use reili_shared::ports::outbound::{DatadogMetricCatalogParams, DatadogMetricCatalogPort};
     use reili_shared::types::DatadogApiRetryConfig;
+    use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

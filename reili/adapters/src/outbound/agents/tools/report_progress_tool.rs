@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use rig::completion::ToolDefinition;
-use rig::tool::Tool;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 use reili_shared::errors::PortError;
 use reili_shared::ports::outbound::{
     InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
 };
+use rig::completion::ToolDefinition;
+use rig::tool::Tool;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use super::tool_json::to_json_string;
 
@@ -101,11 +101,11 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use rig::tool::Tool;
     use reili_shared::errors::PortError;
     use reili_shared::ports::outbound::{
         InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
     };
+    use rig::tool::Tool;
 
     use super::{ReportProgressArgs, ReportProgressTool, ReportProgressToolInput};
 

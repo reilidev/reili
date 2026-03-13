@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use rig::agent::{HookAction, PromptHook};
-use rig::completion::CompletionModel;
 use reili_shared::ports::outbound::{
     InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
 };
+use rig::agent::{HookAction, PromptHook};
+use rig::completion::CompletionModel;
 
 const REPORT_PROGRESS_TOOL_NAME: &str = "report_progress";
 

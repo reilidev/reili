@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::Value;
 use reili_shared::ports::outbound::slack_progress_stream::{
     SlackChunkSourceType, SlackMarkdownTextChunk, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
 };
@@ -9,12 +8,13 @@ use reili_shared::ports::outbound::{
     AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort,
     StartSlackProgressStreamInput, StopSlackProgressStreamInput,
 };
+use serde_json::Value;
 
 use crate::investigation::logger::{InvestigationLogger, string_log_meta};
 
 use super::progress_stream_state::{
-    ProgressStreamState, ReasoningScope, ReasoningScopeStatus, ReasoningScopeToolStatus,
-    ResolveToolStartedScopeOutput, resolve_reasoning_scope_status,
+    ProgressStep, ProgressStepStatus, ProgressStreamState, ResolveToolStartedProgressStepOutput,
+    ToolCallStatus, resolve_progress_step_status,
 };
 
 const STREAM_START_TEXT: &str = ":hourglass_flowing_sand:";
@@ -140,18 +140,18 @@ impl SlackInvestigationProgressStreamSession {
         }
     }
 
-    async fn append_reasoning_scope_update(
+    async fn append_progress_step_update(
         &mut self,
-        scope: &ReasoningScope,
-        status: ReasoningScopeStatus,
+        progress_step: &ProgressStep,
+        status: ProgressStepStatus,
         detail_line: Option<String>,
     ) {
         let chunk = SlackAnyChunk::TaskUpdate(SlackTaskUpdateChunk {
-            id: scope.scope_id.clone(),
-            title: scope.title.clone(),
+            id: progress_step.progress_step_id.clone(),
+            title: progress_step.title.clone(),
             status: to_slack_task_status(&status),
             details: detail_line.clone(),
-            output: if status == ReasoningScopeStatus::Complete {
+            output: if status == ProgressStepStatus::Complete {
                 Some("done".to_string())
             } else {
                 None
@@ -162,50 +162,54 @@ impl SlackInvestigationProgressStreamSession {
         self.append(vec![chunk]).await;
     }
 
-    async fn complete_active_reasoning_scope_if_idle(&mut self, owner_id: &str) {
-        let Some(scope) = self.state.complete_active_scope_if_idle(owner_id) else {
+    async fn complete_active_progress_step_if_idle(&mut self, owner_id: &str) {
+        let Some(progress_step) = self.state.complete_active_progress_step_if_idle(owner_id) else {
             return;
         };
 
-        self.append_reasoning_scope_update(&scope, ReasoningScopeStatus::Complete, None)
+        self.append_progress_step_update(&progress_step, ProgressStepStatus::Complete, None)
             .await;
     }
 
-    async fn complete_scope_if_needed(&mut self, scope_id: &str) {
-        let Some(scope) = self.state.mark_scope_completed(scope_id) else {
+    async fn complete_progress_step_if_needed(&mut self, progress_step_id: &str) {
+        let Some(progress_step) = self.state.mark_progress_step_completed(progress_step_id) else {
             return;
         };
 
-        self.append_reasoning_scope_update(&scope, ReasoningScopeStatus::Complete, None)
+        self.append_progress_step_update(&progress_step, ProgressStepStatus::Complete, None)
             .await;
     }
 
-    fn log_reopened_scope(
+    fn log_reopened_progress_step(
         &self,
         input: &InvestigationProgressTaskUpdateInput,
-        output: &ResolveToolStartedScopeOutput,
+        output: &ResolveToolStartedProgressStepOutput,
     ) {
-        let Some(reopened_from_scope_id) = output.reopened_from_scope_id.clone() else {
+        let Some(reopened_from_progress_step_id) = output.reopened_from_progress_step_id.clone()
+        else {
             return;
         };
 
         self.input.logger.info(
-            "reasoning_scope_reopened_for_tool_started",
+            "progress_step_reopened_for_tool_started",
             string_log_meta([
                 ("channel", self.input.channel.clone()),
                 ("threadTs", self.input.thread_ts.clone()),
                 ("ownerId", input.owner_id.clone()),
                 ("taskId", input.task_id.clone()),
                 ("toolName", input.title.clone()),
-                ("reopenedScopeId", output.scope_id.clone()),
-                ("reopenedFromScopeId", reopened_from_scope_id),
+                ("reopenedProgressStepId", output.progress_step_id.clone()),
+                ("reopenedFromProgressStepId", reopened_from_progress_step_id),
             ]),
         );
     }
 
-    fn log_missing_scope_for_tool_completed(&self, input: &InvestigationProgressTaskUpdateInput) {
+    fn log_missing_progress_step_for_tool_completed(
+        &self,
+        input: &InvestigationProgressTaskUpdateInput,
+    ) {
         self.input.logger.warn(
-            "reasoning_scope_not_found_for_tool_completed",
+            "progress_step_not_found_for_tool_completed",
             string_log_meta([
                 ("channel", self.input.channel.clone()),
                 ("threadTs", self.input.thread_ts.clone()),
@@ -584,19 +588,19 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
             return;
         }
 
-        self.complete_active_reasoning_scope_if_idle(&input.owner_id)
+        self.complete_active_progress_step_if_idle(&input.owner_id)
             .await;
 
-        let scope_id = self
+        let progress_step_id = self
             .state
-            .create_reasoning_scope(&input.owner_id, &input.title);
+            .create_progress_step(&input.owner_id, &input.title);
         self.state
-            .set_active_scope(&input.owner_id, scope_id.clone());
+            .set_active_progress_step(&input.owner_id, progress_step_id.clone());
 
-        if let Some(scope) = self.state.scope(&scope_id) {
-            self.append_reasoning_scope_update(
-                &scope,
-                ReasoningScopeStatus::InProgress,
+        if let Some(progress_step) = self.state.progress_step(&progress_step_id) {
+            self.append_progress_step_update(
+                &progress_step,
+                ProgressStepStatus::InProgress,
                 normalize_reasoning_summary(&input.summary),
             )
             .await;
@@ -604,26 +608,26 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
     }
 
     async fn post_tool_started(&mut self, input: InvestigationProgressTaskUpdateInput) {
-        let resolved = self.state.resolve_scope_for_tool_started(
+        let resolved = self.state.resolve_progress_step_for_tool_started(
             &input.owner_id,
             &input.task_id,
             "Tool executions",
         );
-        self.log_reopened_scope(&input, &resolved);
-        self.state.upsert_scope_tool_status(
-            &resolved.scope_id,
+        self.log_reopened_progress_step(&input, &resolved);
+        self.state.upsert_progress_step_tool_call_status(
+            &resolved.progress_step_id,
             &input.owner_id,
             &input.task_id,
-            ReasoningScopeToolStatus::InProgress,
+            ToolCallStatus::InProgress,
         );
 
         self.state
-            .mark_scope_incomplete(&input.owner_id, &resolved.scope_id);
+            .mark_progress_step_incomplete(&input.owner_id, &resolved.progress_step_id);
 
-        if let Some(scope) = self.state.scope(&resolved.scope_id) {
-            self.append_reasoning_scope_update(
-                &scope,
-                ReasoningScopeStatus::InProgress,
+        if let Some(progress_step) = self.state.progress_step(&resolved.progress_step_id) {
+            self.append_progress_step_update(
+                &progress_step,
+                ProgressStepStatus::InProgress,
                 Some(build_tool_detail_line(&input.title)),
             )
             .await;
@@ -631,30 +635,30 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
     }
 
     async fn post_tool_completed(&mut self, input: InvestigationProgressTaskUpdateInput) {
-        let Some(scope_id) = self
+        let Some(progress_step_id) = self
             .state
-            .resolve_scope_for_tool_completed(&input.owner_id, &input.task_id)
+            .resolve_progress_step_for_tool_completed(&input.owner_id, &input.task_id)
         else {
-            self.log_missing_scope_for_tool_completed(&input);
+            self.log_missing_progress_step_for_tool_completed(&input);
             return;
         };
 
-        self.state.upsert_scope_tool_status(
-            &scope_id,
+        self.state.upsert_progress_step_tool_call_status(
+            &progress_step_id,
             &input.owner_id,
             &input.task_id,
-            ReasoningScopeToolStatus::Complete,
+            ToolCallStatus::Complete,
         );
 
-        let Some(scope) = self.state.scope(&scope_id) else {
+        let Some(progress_step) = self.state.progress_step(&progress_step_id) else {
             return;
         };
 
-        if resolve_reasoning_scope_status(&scope) == ReasoningScopeStatus::Complete {
+        if resolve_progress_step_status(&progress_step) == ProgressStepStatus::Complete {
             return;
         }
 
-        self.append_reasoning_scope_update(&scope, ReasoningScopeStatus::InProgress, None)
+        self.append_progress_step_update(&progress_step, ProgressStepStatus::InProgress, None)
             .await;
     }
 
@@ -662,11 +666,12 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
         &mut self,
         input: InvestigationProgressMessageOutputCreatedInput,
     ) {
-        for scope_id in self.state.scope_ids_for_owner(&input.owner_id) {
-            self.complete_scope_if_needed(&scope_id).await;
+        for progress_step_id in self.state.progress_step_ids_for_owner(&input.owner_id) {
+            self.complete_progress_step_if_needed(&progress_step_id)
+                .await;
         }
 
-        self.state.clear_active_scope(&input.owner_id);
+        self.state.clear_active_progress_step(&input.owner_id);
     }
 
     async fn stop_as_succeeded(&mut self) {
@@ -678,10 +683,10 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
     }
 }
 
-fn to_slack_task_status(status: &ReasoningScopeStatus) -> SlackTaskUpdateStatus {
+fn to_slack_task_status(status: &ProgressStepStatus) -> SlackTaskUpdateStatus {
     match status {
-        ReasoningScopeStatus::InProgress => SlackTaskUpdateStatus::InProgress,
-        ReasoningScopeStatus::Complete => SlackTaskUpdateStatus::Complete,
+        ProgressStepStatus::InProgress => SlackTaskUpdateStatus::InProgress,
+        ProgressStepStatus::Complete => SlackTaskUpdateStatus::Complete,
     }
 }
 

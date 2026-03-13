@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
-use serde_json::Value;
 use reili_shared::errors::PortError;
 use reili_shared::ports::outbound::{
     CoordinatorRunReport, InvestigationContext, InvestigationCoordinatorRunnerPort,
@@ -16,6 +15,7 @@ use reili_shared::types::{
     AlertContext, BuildInvestigationLlmTelemetryInput, InvestigationJobPayload,
     InvestigationLlmTelemetry,
 };
+use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
 
 use super::execution_errors::{ExecuteInvestigationJobError, resolve_investigation_failure_error};
@@ -835,10 +835,12 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(
             slack_thread_history_port.calls(),
-            vec![reili_shared::ports::outbound::FetchSlackThreadHistoryInput {
-                channel: "C001".to_string(),
-                thread_ts: "1710000000.000001".to_string(),
-            }]
+            vec![
+                reili_shared::ports::outbound::FetchSlackThreadHistoryInput {
+                    channel: "C001".to_string(),
+                    thread_ts: "1710000000.000001".to_string(),
+                }
+            ]
         );
 
         let captured = coordinator_runner.captured();

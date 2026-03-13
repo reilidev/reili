@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use reili_shared::errors::PortError;
+use reili_shared::ports::outbound::{GithubCodeSearchPort, GithubSearchParams};
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use reili_shared::errors::PortError;
-use reili_shared::ports::outbound::{GithubCodeSearchPort, GithubSearchParams};
 
 use super::github_tool_soft_error::to_github_tool_soft_error;
 use super::tool_json::to_json_string;

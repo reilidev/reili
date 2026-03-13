@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
+use reili_shared::ports::outbound::{
+    InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
+};
 use rig::agent::Agent;
 use rig::completion::{CompletionModel, Prompt, PromptError, ToolDefinition};
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use reili_shared::ports::outbound::{
-    InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
-};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProgressReportingSubAgentToolArgs {
@@ -119,11 +119,11 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use rig::client::{CompletionClient, ProviderClient};
     use reili_shared::errors::PortError;
     use reili_shared::ports::outbound::{
         InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
     };
+    use rig::client::{CompletionClient, ProviderClient};
 
     use super::ProgressReportingSubAgentTool;
 

@@ -1,5 +1,5 @@
-use rig::completion::Usage;
 use reili_shared::types::LlmUsageSnapshot;
+use rig::completion::Usage;
 
 pub struct MapRigUsageToSnapshotInput {
     pub usage: Option<Usage>,
@@ -25,8 +25,8 @@ pub fn map_rig_usage_to_llm_usage_snapshot(input: MapRigUsageToSnapshotInput) ->
 
 #[cfg(test)]
 mod tests {
-    use rig::completion::Usage;
     use reili_shared::types::LlmUsageSnapshot;
+    use rig::completion::Usage;
 
     use super::{MapRigUsageToSnapshotInput, map_rig_usage_to_llm_usage_snapshot};
 

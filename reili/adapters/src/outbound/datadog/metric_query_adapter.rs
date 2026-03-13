@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
-use reqwest::Method;
-use serde_json::{Value, json};
 use reili_shared::errors::PortError;
 use reili_shared::ports::outbound::{
     DatadogMetricQueryParams, DatadogMetricQueryPoint, DatadogMetricQueryPort,
     DatadogMetricQueryResult,
 };
+use reqwest::Method;
+use serde_json::{Value, json};
 
 use super::datadog_http_client::{DatadogApiVersion, DatadogHttpClient, DatadogRequestInput};
 use crate::json_utils::read_non_empty_json_string;
@@ -287,9 +287,9 @@ fn to_epoch_ms(value: &str) -> Result<i64, PortError> {
 mod tests {
     use std::sync::Arc;
 
-    use serde_json::json;
     use reili_shared::ports::outbound::{DatadogMetricQueryParams, DatadogMetricQueryPort};
     use reili_shared::types::DatadogApiRetryConfig;
+    use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

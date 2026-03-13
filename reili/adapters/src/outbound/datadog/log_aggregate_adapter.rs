@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reqwest::Method;
-use serde_json::{Value, json};
 use reili_shared::errors::PortError;
 use reili_shared::ports::outbound::{
     DatadogLogAggregateBucket, DatadogLogAggregateParams, DatadogLogAggregatePort,
 };
+use reqwest::Method;
+use serde_json::{Value, json};
 
 use super::datadog_http_client::{DatadogApiVersion, DatadogHttpClient, DatadogRequestInput};
 
@@ -171,9 +171,9 @@ fn f64_to_u64(value: f64) -> Option<u64> {
 mod tests {
     use std::sync::Arc;
 
-    use serde_json::json;
     use reili_shared::ports::outbound::{DatadogLogAggregateParams, DatadogLogAggregatePort};
     use reili_shared::types::DatadogApiRetryConfig;
+    use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
