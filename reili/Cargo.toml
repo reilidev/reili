@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "shared",
+    "runtime",
+    "adapters",
+    "application",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"

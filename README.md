@@ -97,14 +97,14 @@ Single-process runtime:
 
 ```bash
 cd rust
-bash -lc 'set -a; source ../.env; set +a; cargo run -p sre_runtime'
+bash -lc 'set -a; source ../.env; set +a; cargo run -p reili_runtime'
 ```
 
 If you use `cargo-watch`:
 
 ```bash
 cd rust
-bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p sre_runtime"'
+bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p reili_runtime"'
 ```
 
 ## Usage

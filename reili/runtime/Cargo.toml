@@ -1,0 +1,15 @@
+[package]
+name = "reili_runtime"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+serde_json = "1"
+reili_adapters = { path = "../adapters" }
+reili_application = { path = "../application" }
+reili_shared = { path = "../shared" }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tracing = "0.1"
