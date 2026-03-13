@@ -69,7 +69,6 @@ pub async fn execute_investigation_job(
     let progress_session_factory = create_investigation_progress_stream_session_factory(
         CreateInvestigationProgressStreamSessionFactoryInput {
             slack_stream_reply_port: Arc::clone(&input.deps.slack_progress_stream_port),
-            reply_port: Arc::clone(&input.deps.slack_reply_port),
             logger: Arc::clone(&input.deps.logger),
         },
     );

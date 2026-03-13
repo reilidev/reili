@@ -3,11 +3,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use sre_shared::ports::outbound::slack_progress_stream::{
-    SlackMarkdownTextChunk, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
+    SlackChunkSourceType, SlackMarkdownTextChunk, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
 };
 use sre_shared::ports::outbound::{
-    AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort, SlackThreadReplyInput,
-    SlackThreadReplyPort, StartSlackProgressStreamInput, StopSlackProgressStreamInput,
+    AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort,
+    StartSlackProgressStreamInput, StopSlackProgressStreamInput,
 };
 
 use crate::investigation::logger::{InvestigationLogger, string_log_meta};
@@ -18,10 +18,10 @@ use super::progress_stream_state::{
 };
 
 const STREAM_START_TEXT: &str = ":hourglass_flowing_sand:";
+const STREAM_ROTATION_CHARACTER_LIMIT: usize = 2800;
 
 pub struct CreateInvestigationProgressStreamSessionFactoryInput {
     pub slack_stream_reply_port: Arc<dyn SlackProgressStreamPort>,
-    pub reply_port: Arc<dyn SlackThreadReplyPort>,
     pub logger: Arc<dyn InvestigationLogger>,
 }
 
@@ -92,7 +92,6 @@ impl InvestigationProgressStreamSessionFactory for SlackInvestigationProgressStr
         Box::new(SlackInvestigationProgressStreamSession::new(
             CreateSlackInvestigationProgressStreamSessionInput {
                 slack_stream_reply_port: Arc::clone(&self.input.slack_stream_reply_port),
-                reply_port: Arc::clone(&self.input.reply_port),
                 logger: Arc::clone(&self.input.logger),
                 channel: input.channel,
                 thread_ts: input.thread_ts,
@@ -105,7 +104,6 @@ impl InvestigationProgressStreamSessionFactory for SlackInvestigationProgressStr
 
 struct CreateSlackInvestigationProgressStreamSessionInput {
     slack_stream_reply_port: Arc<dyn SlackProgressStreamPort>,
-    reply_port: Arc<dyn SlackThreadReplyPort>,
     logger: Arc<dyn InvestigationLogger>,
     channel: String,
     thread_ts: String,
@@ -116,8 +114,8 @@ struct CreateSlackInvestigationProgressStreamSessionInput {
 struct SlackInvestigationProgressStreamSession {
     input: CreateSlackInvestigationProgressStreamSessionInput,
     stream_ts: Option<String>,
+    current_stream_character_count: usize,
     stream_stopped: bool,
-    fallback_mode: bool,
     append_count: u64,
     last_error_message: Option<String>,
     state: ProgressStreamState,
@@ -125,7 +123,6 @@ struct SlackInvestigationProgressStreamSession {
 
 struct RecoverFromAppendFailureInput {
     chunks: Vec<SlackAnyChunk>,
-    fallback_text: String,
     failed_stream_ts: String,
     error_message: String,
 }
@@ -135,8 +132,8 @@ impl SlackInvestigationProgressStreamSession {
         Self {
             input,
             stream_ts: None,
+            current_stream_character_count: 0,
             stream_stopped: false,
-            fallback_mode: false,
             append_count: 0,
             last_error_message: None,
             state: ProgressStreamState::new(),
@@ -162,11 +159,7 @@ impl SlackInvestigationProgressStreamSession {
             sources: None,
         });
 
-        self.append(
-            vec![chunk],
-            build_reasoning_scope_fallback_text(scope, &status, detail_line.as_deref()),
-        )
-        .await;
+        self.append(vec![chunk]).await;
     }
 
     async fn complete_active_reasoning_scope_if_idle(&mut self, owner_id: &str) {
@@ -228,7 +221,7 @@ impl SlackInvestigationProgressStreamSession {
             return;
         }
 
-        if self.fallback_mode || self.stream_ts.is_none() {
+        if self.stream_ts.is_none() {
             self.stream_stopped = true;
             self.log_stop();
             return;
@@ -264,17 +257,22 @@ impl SlackInvestigationProgressStreamSession {
         self.log_stop();
     }
 
-    async fn append(&mut self, chunks: Vec<SlackAnyChunk>, fallback_text: String) {
+    async fn append(&mut self, chunks: Vec<SlackAnyChunk>) {
         if self.stream_stopped {
             return;
         }
 
-        if self.fallback_mode || self.stream_ts.is_none() {
-            self.post_fallback_message(&fallback_text).await;
+        if self.stream_ts.is_none() {
+            return;
+        }
+
+        if self.should_rotate_stream(&chunks) {
+            self.rotate_stream_with_chunks(chunks).await;
             return;
         }
 
         let stream_ts = self.stream_ts.clone().unwrap_or_default();
+        let chunk_character_count = count_chunk_characters(&chunks);
         let append_result = self
             .input
             .slack_stream_reply_port
@@ -288,12 +286,14 @@ impl SlackInvestigationProgressStreamSession {
 
         if append_result.is_ok() {
             self.append_count = self.append_count.saturating_add(1);
+            self.current_stream_character_count = self
+                .current_stream_character_count
+                .saturating_add(chunk_character_count);
             return;
         }
 
         self.recover_from_append_failure(RecoverFromAppendFailureInput {
             chunks,
-            fallback_text,
             failed_stream_ts: stream_ts,
             error_message: append_result
                 .expect_err("append_result should be error")
@@ -318,7 +318,6 @@ impl SlackInvestigationProgressStreamSession {
         if is_message_not_in_streaming_state_error(&input.error_message) {
             self.restart_stream_with_chunks(
                 input.chunks,
-                input.fallback_text,
                 Some(input.failed_stream_ts),
                 input.error_message,
             )
@@ -326,20 +325,29 @@ impl SlackInvestigationProgressStreamSession {
             return;
         }
 
-        if is_permanent_stream_append_error(&input.error_message) {
-            self.enable_fallback_mode(input.error_message, "append_failed_permanent")
-                .await;
-            self.post_fallback_message(&input.fallback_text).await;
+        if is_message_too_long_error(&input.error_message) {
+            self.rotate_stream_with_chunks(input.chunks).await;
+            return;
         }
+
+        if is_permanent_stream_append_error(&input.error_message) {
+            self.disable_stream(input.error_message, "append_failed_permanent");
+        }
+    }
+
+    fn should_rotate_stream(&self, chunks: &[SlackAnyChunk]) -> bool {
+        self.current_stream_character_count
+            .saturating_add(count_chunk_characters(chunks))
+            > STREAM_ROTATION_CHARACTER_LIMIT
     }
 
     async fn restart_stream_with_chunks(
         &mut self,
         chunks: Vec<SlackAnyChunk>,
-        fallback_text: String,
         failed_stream_ts: Option<String>,
         error_message: String,
     ) {
+        let chunk_character_count = count_chunk_characters(&chunks);
         let start_result = self
             .input
             .slack_stream_reply_port
@@ -357,13 +365,12 @@ impl SlackInvestigationProgressStreamSession {
             let restart_error_message = start_result
                 .expect_err("start_result should be error")
                 .message;
-            self.enable_fallback_mode(restart_error_message, "append_failed_stream_restart_failed")
-                .await;
-            self.post_fallback_message(&fallback_text).await;
+            self.disable_stream(restart_error_message, "append_failed_stream_restart_failed");
             return;
         };
 
         self.stream_ts = Some(stream.stream_ts.clone());
+        self.current_stream_character_count = chunk_character_count;
         self.append_count = self.append_count.saturating_add(1);
 
         let mut meta = string_log_meta([
@@ -382,45 +389,124 @@ impl SlackInvestigationProgressStreamSession {
         self.input.logger.info("slack_stream_restarted", meta);
     }
 
-    async fn enable_fallback_mode(&mut self, error_message: String, reason: &str) {
-        self.fallback_mode = true;
-        self.last_error_message = Some(error_message.clone());
+    async fn rotate_stream_with_chunks(&mut self, chunks: Vec<SlackAnyChunk>) {
+        let previous_stream_ts = self.stream_ts.clone();
+        let previous_character_count = self.current_stream_character_count;
+        let chunk_character_count = count_chunk_characters(&chunks);
+
+        self.stop_current_stream_for_rotation().await;
+
+        let start_result = self
+            .input
+            .slack_stream_reply_port
+            .start(StartSlackProgressStreamInput {
+                channel: self.input.channel.clone(),
+                thread_ts: self.input.thread_ts.clone(),
+                recipient_user_id: self.input.recipient_user_id.clone(),
+                recipient_team_id: self.input.recipient_team_id.clone(),
+                markdown_text: None,
+                chunks: Some(chunks),
+            })
+            .await;
+
+        let Ok(stream) = start_result else {
+            let error_message = start_result
+                .expect_err("start_result should be error")
+                .message;
+            self.disable_stream(error_message, "stream_rotation_start_failed");
+            return;
+        };
+
+        self.stream_ts = Some(stream.stream_ts.clone());
+        self.current_stream_character_count = chunk_character_count;
+        self.append_count = self.append_count.saturating_add(1);
 
         let mut meta = string_log_meta([
             ("channel", self.input.channel.clone()),
             ("threadTs", self.input.thread_ts.clone()),
-            ("reason", reason.to_string()),
-            ("error", error_message.clone()),
-            ("slack_stream_fallback_mode", self.fallback_mode.to_string()),
-            ("slack_stream_last_error", error_message),
+            ("streamTs", stream.stream_ts),
+            (
+                "slack_stream_character_count",
+                self.current_stream_character_count.to_string(),
+            ),
+            (
+                "slack_stream_character_limit",
+                STREAM_ROTATION_CHARACTER_LIMIT.to_string(),
+            ),
+            (
+                "previousSlackStreamCharacterCount",
+                previous_character_count.to_string(),
+            ),
         ]);
-        if let Some(stream_ts) = &self.stream_ts {
-            meta.insert("streamTs".to_string(), Value::String(stream_ts.clone()));
+        if let Some(previous_stream_ts) = previous_stream_ts {
+            meta.insert(
+                "previousStreamTs".to_string(),
+                Value::String(previous_stream_ts),
+            );
         }
-        self.input.logger.warn("slack_stream_fallback_mode", meta);
+        self.input.logger.info("slack_stream_rotated", meta);
     }
 
-    async fn post_fallback_message(&self, text: &str) {
-        let post_result = self
+    async fn stop_current_stream_for_rotation(&mut self) {
+        let Some(stream_ts) = self.stream_ts.clone() else {
+            return;
+        };
+
+        let stop_result = self
             .input
-            .reply_port
-            .post_thread_reply(SlackThreadReplyInput {
+            .slack_stream_reply_port
+            .stop(StopSlackProgressStreamInput {
                 channel: self.input.channel.clone(),
-                thread_ts: self.input.thread_ts.clone(),
-                text: text.to_string(),
+                stream_ts: stream_ts.clone(),
+                markdown_text: None,
+                chunks: None,
+                blocks: None,
             })
             .await;
 
-        if let Err(error) = post_result {
+        if let Err(error) = stop_result {
+            self.last_error_message = Some(error.message.clone());
             self.input.logger.warn(
-                "Failed to post fallback progress message",
+                "Failed to stop Slack progress stream before rotation",
                 string_log_meta([
                     ("channel", self.input.channel.clone()),
                     ("threadTs", self.input.thread_ts.clone()),
-                    ("error", error.message),
+                    ("streamTs", stream_ts),
+                    ("error", error.message.clone()),
+                    ("slack_stream_last_error", error.message),
                 ]),
             );
         }
+    }
+
+    fn disable_stream(&mut self, error_message: String, reason: &str) {
+        self.stream_ts = None;
+        self.current_stream_character_count = 0;
+        self.last_error_message = Some(error_message.clone());
+
+        self.input.logger.warn(
+            "slack_progress_stream_disabled",
+            string_log_meta([
+                ("channel", self.input.channel.clone()),
+                ("threadTs", self.input.thread_ts.clone()),
+                ("reason", reason.to_string()),
+                ("error", error_message.clone()),
+                ("slack_stream_last_error", error_message),
+            ]),
+        );
+    }
+
+    fn log_start_failure(&mut self, error_message: String) {
+        self.last_error_message = Some(error_message.clone());
+        self.input.logger.warn(
+            "Failed to start Slack progress stream",
+            string_log_meta([
+                ("channel", self.input.channel.clone()),
+                ("threadTs", self.input.thread_ts.clone()),
+                ("error", error_message.clone()),
+                ("slack_stream_last_error", error_message),
+            ]),
+        );
     }
 
     fn log_stop(&self) {
@@ -428,7 +514,6 @@ impl SlackInvestigationProgressStreamSession {
             ("channel", self.input.channel.clone()),
             ("threadTs", self.input.thread_ts.clone()),
             ("slack_stream_append_count", self.append_count.to_string()),
-            ("slack_stream_fallback_mode", self.fallback_mode.to_string()),
         ]);
         if let Some(stream_ts) = &self.stream_ts {
             meta.insert("streamTs".to_string(), Value::String(stream_ts.clone()));
@@ -469,11 +554,16 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
         match start_result {
             Ok(stream) => {
                 self.stream_ts = Some(stream.stream_ts.clone());
+                self.current_stream_character_count =
+                    count_chunk_characters(&[SlackAnyChunk::MarkdownText(
+                        SlackMarkdownTextChunk {
+                            text: STREAM_START_TEXT.to_string(),
+                        },
+                    )]);
                 let mut meta = string_log_meta([
                     ("channel", self.input.channel.clone()),
                     ("threadTs", self.input.thread_ts.clone()),
                     ("streamTs", stream.stream_ts),
-                    ("slack_stream_fallback_mode", self.fallback_mode.to_string()),
                 ]);
                 if let Some(last_error_message) = &self.last_error_message {
                     meta.insert(
@@ -484,9 +574,7 @@ impl InvestigationProgressStreamSession for SlackInvestigationProgressStreamSess
                 self.input.logger.info("slack_stream_started", meta);
             }
             Err(error) => {
-                self.enable_fallback_mode(error.message, "start_failed")
-                    .await;
-                self.post_fallback_message(STREAM_START_TEXT).await;
+                self.log_start_failure(error.message);
             }
         }
     }
@@ -597,22 +685,6 @@ fn to_slack_task_status(status: &ReasoningScopeStatus) -> SlackTaskUpdateStatus 
     }
 }
 
-fn build_reasoning_scope_fallback_text(
-    scope: &ReasoningScope,
-    status: &ReasoningScopeStatus,
-    detail_line: Option<&str>,
-) -> String {
-    let details_text = detail_line.map_or_else(String::new, |detail| format!("\n{detail}"));
-    if *status == ReasoningScopeStatus::Complete {
-        return format!(
-            ":white_check_mark: {} が完了しました{details_text}",
-            scope.title
-        );
-    }
-
-    format!(":hammer_and_wrench: {}{details_text}", scope.title)
-}
-
 fn build_tool_detail_line(tool_name: &str) -> String {
     format!("{tool_name}\n")
 }
@@ -634,10 +706,67 @@ fn is_permanent_stream_append_error(error_message: &str) -> bool {
         || lower_message.contains("invalid_arguments")
 }
 
+fn is_message_too_long_error(error_message: &str) -> bool {
+    error_message.to_lowercase().contains("msg_too_long")
+}
+
 fn is_message_not_in_streaming_state_error(error_message: &str) -> bool {
     error_message
         .to_lowercase()
         .contains("message_not_in_streaming_state")
+}
+
+fn count_chunk_characters(chunks: &[SlackAnyChunk]) -> usize {
+    chunks.iter().map(count_single_chunk_characters).sum()
+}
+
+fn count_single_chunk_characters(chunk: &SlackAnyChunk) -> usize {
+    match chunk {
+        SlackAnyChunk::MarkdownText(chunk) => chunk.text.chars().count(),
+        SlackAnyChunk::PlanUpdate(chunk) => chunk.title.chars().count(),
+        SlackAnyChunk::TaskUpdate(chunk) => {
+            let details_character_count = chunk
+                .details
+                .as_ref()
+                .map_or(0, |details| details.chars().count());
+            let output_character_count = chunk
+                .output
+                .as_ref()
+                .map_or(0, |output| output.chars().count());
+            let sources_character_count = chunk.sources.as_ref().map_or(0, |sources| {
+                sources
+                    .iter()
+                    .map(|source| {
+                        source.url.chars().count()
+                            + source.text.chars().count()
+                            + count_chunk_source_type_characters(&source.source_type)
+                    })
+                    .sum::<usize>()
+            });
+
+            chunk.id.chars().count()
+                + chunk.title.chars().count()
+                + count_task_status_characters(&chunk.status)
+                + details_character_count
+                + output_character_count
+                + sources_character_count
+        }
+    }
+}
+
+fn count_task_status_characters(status: &SlackTaskUpdateStatus) -> usize {
+    match status {
+        SlackTaskUpdateStatus::Pending => "pending".chars().count(),
+        SlackTaskUpdateStatus::InProgress => "in_progress".chars().count(),
+        SlackTaskUpdateStatus::Complete => "complete".chars().count(),
+        SlackTaskUpdateStatus::Error => "error".chars().count(),
+    }
+}
+
+fn count_chunk_source_type_characters(source_type: &SlackChunkSourceType) -> usize {
+    match source_type {
+        SlackChunkSourceType::Url => "url".chars().count(),
+    }
 }
 
 #[cfg(test)]
@@ -651,15 +780,15 @@ mod tests {
     use sre_shared::ports::outbound::slack_progress_stream::SlackTaskUpdateStatus;
     use sre_shared::ports::outbound::{
         AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort,
-        SlackThreadReplyInput, SlackThreadReplyPort, StartSlackProgressStreamInput,
-        StartSlackProgressStreamOutput, StopSlackProgressStreamInput,
+        StartSlackProgressStreamInput, StartSlackProgressStreamOutput,
+        StopSlackProgressStreamInput,
     };
 
     use super::{
         CreateInvestigationProgressStreamSessionFactoryInput,
         CreateInvestigationProgressStreamSessionInput,
         InvestigationProgressMessageOutputCreatedInput, InvestigationProgressReasoningInput,
-        InvestigationProgressStreamSessionFactory,
+        InvestigationProgressStreamSessionFactory, InvestigationProgressTaskUpdateInput,
         create_investigation_progress_stream_session_factory, is_permanent_stream_append_error,
     };
     use crate::investigation::logger::InvestigationLogger;
@@ -763,25 +892,6 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct MockSlackThreadReplyPort {
-        calls: Mutex<Vec<SlackThreadReplyInput>>,
-    }
-
-    impl MockSlackThreadReplyPort {
-        fn calls(&self) -> Vec<SlackThreadReplyInput> {
-            self.calls.lock().expect("lock reply calls").clone()
-        }
-    }
-
-    #[async_trait]
-    impl SlackThreadReplyPort for MockSlackThreadReplyPort {
-        async fn post_thread_reply(&self, input: SlackThreadReplyInput) -> Result<(), PortError> {
-            self.calls.lock().expect("lock reply calls").push(input);
-            Ok(())
-        }
-    }
-
-    #[derive(Default)]
     struct MockLogger {
         info_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
         warn_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
@@ -839,14 +949,12 @@ mod tests {
         )));
         stream_port.push_stop_response(Ok(()));
 
-        let reply_port = Arc::new(MockSlackThreadReplyPort::default());
         let logger = Arc::new(MockLogger::default());
 
         let factory = create_investigation_progress_stream_session_factory(
             CreateInvestigationProgressStreamSessionFactoryInput {
                 slack_stream_reply_port: Arc::clone(&stream_port)
                     as Arc<dyn SlackProgressStreamPort>,
-                reply_port: Arc::clone(&reply_port) as Arc<dyn SlackThreadReplyPort>,
                 logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
             },
         );
@@ -876,7 +984,6 @@ mod tests {
         assert_eq!(append_calls.len(), 1);
         assert_eq!(stop_calls.len(), 1);
         assert_eq!(stop_calls[0].stream_ts, "stream-restarted");
-        assert!(reply_port.calls().is_empty());
 
         let restarted_logged = logger
             .info_logs()
@@ -897,7 +1004,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn falls_back_to_thread_reply_when_stream_restart_fails() {
+    async fn disables_stream_when_stream_restart_fails() {
         let stream_port = Arc::new(MockSlackProgressStreamPort::new());
         stream_port.push_start_response(Ok(StartSlackProgressStreamOutput {
             stream_ts: "stream-initial".to_string(),
@@ -907,14 +1014,12 @@ mod tests {
             "Error: An API error occurred: message_not_in_streaming_state",
         )));
 
-        let reply_port = Arc::new(MockSlackThreadReplyPort::default());
         let logger = Arc::new(MockLogger::default());
 
         let factory = create_investigation_progress_stream_session_factory(
             CreateInvestigationProgressStreamSessionFactoryInput {
                 slack_stream_reply_port: Arc::clone(&stream_port)
                     as Arc<dyn SlackProgressStreamPort>,
-                reply_port: Arc::clone(&reply_port) as Arc<dyn SlackThreadReplyPort>,
                 logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
             },
         );
@@ -939,23 +1044,155 @@ mod tests {
 
         assert_eq!(stream_port.start_calls().len(), 2);
         assert!(stream_port.stop_calls().is_empty());
+        assert_eq!(stream_port.append_calls().len(), 1);
 
-        let reply_calls = reply_port.calls();
-        assert_eq!(reply_calls.len(), 1);
-        assert_eq!(
-            reply_calls[0],
-            SlackThreadReplyInput {
-                channel: CHANNEL.to_string(),
-                thread_ts: THREAD_TS.to_string(),
-                text: ":hammer_and_wrench: Collect evidence".to_string(),
-            }
-        );
-
-        let fallback_logged = logger
+        let disabled_logged = logger
             .warn_logs()
             .iter()
-            .any(|(message, _)| message == "slack_stream_fallback_mode");
-        assert!(fallback_logged);
+            .any(|(message, _)| message == "slack_progress_stream_disabled");
+        assert!(disabled_logged);
+    }
+
+    #[tokio::test]
+    async fn rotates_stream_before_append_when_character_limit_would_be_exceeded() {
+        let stream_port = Arc::new(MockSlackProgressStreamPort::new());
+        stream_port.push_start_response(Ok(StartSlackProgressStreamOutput {
+            stream_ts: "stream-initial".to_string(),
+        }));
+        stream_port.push_start_response(Ok(StartSlackProgressStreamOutput {
+            stream_ts: "stream-rotated".to_string(),
+        }));
+        stream_port.push_append_response(Ok(()));
+        stream_port.push_stop_response(Ok(()));
+        stream_port.push_stop_response(Ok(()));
+
+        let logger = Arc::new(MockLogger::default());
+
+        let factory = create_investigation_progress_stream_session_factory(
+            CreateInvestigationProgressStreamSessionFactoryInput {
+                slack_stream_reply_port: Arc::clone(&stream_port)
+                    as Arc<dyn SlackProgressStreamPort>,
+                logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+            },
+        );
+
+        let mut session =
+            factory.create_for_thread(CreateInvestigationProgressStreamSessionInput {
+                channel: CHANNEL.to_string(),
+                thread_ts: THREAD_TS.to_string(),
+                recipient_user_id: RECIPIENT_USER_ID.to_string(),
+                recipient_team_id: None,
+            });
+
+        session.start().await;
+        session
+            .post_reasoning(InvestigationProgressReasoningInput {
+                owner_id: "coordinator".to_string(),
+                title: "Collect evidence".to_string(),
+                summary: "a".repeat(2650),
+            })
+            .await;
+        session
+            .post_tool_started(InvestigationProgressTaskUpdateInput {
+                owner_id: "coordinator".to_string(),
+                task_id: "task-1".to_string(),
+                title: "b".repeat(200),
+            })
+            .await;
+        session.stop_as_succeeded().await;
+
+        let start_calls = stream_port.start_calls();
+        let append_calls = stream_port.append_calls();
+        let stop_calls = stream_port.stop_calls();
+
+        assert_eq!(start_calls.len(), 2);
+        assert_eq!(append_calls.len(), 1);
+        assert_eq!(stop_calls.len(), 2);
+        assert_eq!(stop_calls[0].stream_ts, "stream-initial");
+        assert_eq!(stop_calls[1].stream_ts, "stream-rotated");
+
+        let rotated_chunks = start_calls[1].chunks.clone().unwrap_or_default();
+        let expected_detail = format!("{}\n", "b".repeat(200));
+        assert_eq!(rotated_chunks.len(), 1);
+        match &rotated_chunks[0] {
+            SlackAnyChunk::TaskUpdate(chunk) => {
+                assert_eq!(chunk.title, "Collect evidence");
+                assert_eq!(chunk.status, SlackTaskUpdateStatus::InProgress);
+                assert_eq!(chunk.details.as_deref(), Some(expected_detail.as_str()));
+            }
+            _ => panic!("expected task update chunk"),
+        }
+
+        let rotation_logged = logger
+            .info_logs()
+            .iter()
+            .any(|(message, _)| message == "slack_stream_rotated");
+        assert!(rotation_logged);
+    }
+
+    #[tokio::test]
+    async fn rotates_stream_when_append_fails_with_msg_too_long() {
+        let stream_port = Arc::new(MockSlackProgressStreamPort::new());
+        stream_port.push_start_response(Ok(StartSlackProgressStreamOutput {
+            stream_ts: "stream-initial".to_string(),
+        }));
+        stream_port.push_start_response(Ok(StartSlackProgressStreamOutput {
+            stream_ts: "stream-rotated".to_string(),
+        }));
+        stream_port.push_append_response(Err(PortError::new(
+            "Error: An API error occurred: msg_too_long",
+        )));
+        stream_port.push_stop_response(Ok(()));
+        stream_port.push_stop_response(Ok(()));
+
+        let logger = Arc::new(MockLogger::default());
+
+        let factory = create_investigation_progress_stream_session_factory(
+            CreateInvestigationProgressStreamSessionFactoryInput {
+                slack_stream_reply_port: Arc::clone(&stream_port)
+                    as Arc<dyn SlackProgressStreamPort>,
+                logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+            },
+        );
+
+        let mut session =
+            factory.create_for_thread(CreateInvestigationProgressStreamSessionInput {
+                channel: CHANNEL.to_string(),
+                thread_ts: THREAD_TS.to_string(),
+                recipient_user_id: RECIPIENT_USER_ID.to_string(),
+                recipient_team_id: None,
+            });
+
+        session.start().await;
+        session
+            .post_reasoning(InvestigationProgressReasoningInput {
+                owner_id: "coordinator".to_string(),
+                title: "Collect evidence".to_string(),
+                summary: "Inspect logs".to_string(),
+            })
+            .await;
+        session.stop_as_succeeded().await;
+
+        let start_calls = stream_port.start_calls();
+        let append_calls = stream_port.append_calls();
+        let stop_calls = stream_port.stop_calls();
+
+        assert_eq!(start_calls.len(), 2);
+        assert_eq!(append_calls.len(), 1);
+        assert_eq!(stop_calls.len(), 2);
+        assert_eq!(stop_calls[0].stream_ts, "stream-initial");
+        assert_eq!(stop_calls[1].stream_ts, "stream-rotated");
+
+        let rotated_chunks = start_calls[1].chunks.clone().unwrap_or_default();
+        assert_eq!(rotated_chunks.len(), 1);
+        match &rotated_chunks[0] {
+            SlackAnyChunk::TaskUpdate(chunk) => {
+                assert_eq!(chunk.title, "Collect evidence");
+                assert_eq!(chunk.status, SlackTaskUpdateStatus::InProgress);
+                assert_eq!(chunk.details.as_deref(), Some("Inspect logs\n"));
+            }
+            _ => panic!("expected task update chunk"),
+        }
     }
 
     #[tokio::test]
@@ -968,14 +1205,12 @@ mod tests {
         stream_port.push_append_response(Ok(()));
         stream_port.push_stop_response(Ok(()));
 
-        let reply_port = Arc::new(MockSlackThreadReplyPort::default());
         let logger = Arc::new(MockLogger::default());
 
         let factory = create_investigation_progress_stream_session_factory(
             CreateInvestigationProgressStreamSessionFactoryInput {
                 slack_stream_reply_port: Arc::clone(&stream_port)
                     as Arc<dyn SlackProgressStreamPort>,
-                reply_port: Arc::clone(&reply_port) as Arc<dyn SlackThreadReplyPort>,
                 logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
             },
         );
