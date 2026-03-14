@@ -1,16 +1,16 @@
 use async_trait::async_trait;
 use octocrab::models::{AppId, InstallationId};
 use octocrab::{Octocrab, models};
-use reili_shared::errors::PortError;
-use reili_shared::ports::outbound::github_search::{
-    GithubRepositoryDirectoryContent, GithubRepositoryDirectoryEntry, GithubRepositoryFileContent,
-    GithubRepositoryFileEncoding,
-};
-use reili_shared::ports::outbound::{
+use reili_shared::error::PortError;
+use reili_shared::source_code::github::{
     GithubCodeSearchPort, GithubCodeSearchResultItem, GithubIssueSearchResultItem,
     GithubPullRequestDiff, GithubPullRequestParams, GithubPullRequestPort,
     GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
     GithubRepositoryContentParams, GithubRepositoryContentPort, GithubSearchParams,
+};
+use reili_shared::source_code::github::{
+    GithubRepositoryDirectoryContent, GithubRepositoryDirectoryEntry, GithubRepositoryFileContent,
+    GithubRepositoryFileEncoding,
 };
 use serde_json::Value;
 

@@ -1,4 +1,4 @@
-use reili_shared::errors::PortError;
+use reili_shared::error::PortError;
 use serde::Serialize;
 use serde_json::Value;
 

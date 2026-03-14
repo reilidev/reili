@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use reili_shared::errors::PortError;
-use reili_shared::ports::outbound::{DatadogEventSearchParams, InvestigationResources};
+use reili_shared::error::PortError;
+use reili_shared::investigation::InvestigationResources;
+use reili_shared::monitoring::datadog::DatadogEventSearchParams;
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};

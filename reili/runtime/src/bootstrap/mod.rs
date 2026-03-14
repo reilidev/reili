@@ -23,16 +23,22 @@ use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, StartInvestigationWorkerRunnerUseCase,
     StartInvestigationWorkerRunnerUseCaseDeps,
 };
-use reili_shared::errors::PortError;
-use reili_shared::ports::inbound::SlackMessageHandlerPort;
-use reili_shared::ports::outbound::{
-    DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
-    DatadogMetricCatalogPort, DatadogMetricQueryPort, GithubCodeSearchPort, GithubPullRequestPort,
-    GithubRepositoryContentPort, InvestigationCoordinatorRunnerPort, InvestigationJobQueuePort,
-    InvestigationResources, SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyPort,
-    WebSearchPort,
+use reili_shared::error::PortError;
+use reili_shared::investigation::InvestigationJob;
+use reili_shared::investigation::{InvestigationCoordinatorRunnerPort, InvestigationResources};
+use reili_shared::knowledge::WebSearchPort;
+use reili_shared::messaging::slack::SlackMessageHandlerPort;
+use reili_shared::messaging::slack::{
+    SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyPort,
 };
-use reili_shared::types::InvestigationJob;
+use reili_shared::monitoring::datadog::{
+    DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
+    DatadogMetricCatalogPort, DatadogMetricQueryPort,
+};
+use reili_shared::queue::InvestigationJobQueuePort;
+use reili_shared::source_code::github::{
+    GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
+};
 use serde_json::{Value, json};
 use thiserror::Error;
 

@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
-use reili_shared::errors::PortError;
-use reili_shared::ports::outbound::{GithubRepositoryContentParams, GithubRepositoryContentPort};
+use reili_shared::error::PortError;
+use reili_shared::source_code::github::{
+    GithubRepositoryContentParams, GithubRepositoryContentPort,
+};
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};

@@ -1,4 +1,4 @@
-use reili_shared::errors::PortError;
+use reili_shared::error::PortError;
 use serde::Serialize;
 
 pub fn to_json_string<T>(value: &T) -> Result<String, PortError>

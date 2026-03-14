@@ -1,5 +1,5 @@
-use reili_shared::errors::{AgentRunFailedError, InvestigationExecutionFailedError, PortError};
-use reili_shared::types::LlmUsageSnapshot;
+use reili_shared::error::{AgentRunFailedError, InvestigationExecutionFailedError, PortError};
+use reili_shared::investigation::LlmUsageSnapshot;
 use thiserror::Error;
 
 use super::services::create_empty_llm_usage_snapshot;
@@ -62,8 +62,8 @@ pub fn resolve_investigation_failure_error(
 
 #[cfg(test)]
 mod tests {
-    use reili_shared::errors::{AgentRunFailedError, PortError};
-    use reili_shared::types::{BuildInvestigationLlmTelemetryInput, LlmUsageSnapshot};
+    use reili_shared::error::{AgentRunFailedError, PortError};
+    use reili_shared::investigation::{BuildInvestigationLlmTelemetryInput, LlmUsageSnapshot};
 
     use super::{ExecuteInvestigationJobError, resolve_investigation_failure_error};
     use crate::investigation::services::build_investigation_llm_telemetry;
@@ -88,7 +88,7 @@ mod tests {
                 usage: snapshot(3),
             });
         let error = ExecuteInvestigationJobError::InvestigationExecutionFailed(
-            reili_shared::errors::InvestigationExecutionFailedError::new(
+            reili_shared::error::InvestigationExecutionFailedError::new(
                 "reply failed",
                 llm_telemetry,
             ),

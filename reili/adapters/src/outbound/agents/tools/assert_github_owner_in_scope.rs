@@ -1,4 +1,4 @@
-use reili_shared::errors::PortError;
+use reili_shared::error::PortError;
 
 pub fn assert_github_owner_in_scope(owner: &str, scope_org: &str) -> Result<(), PortError> {
     if owner.eq_ignore_ascii_case(scope_org) {

@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use reili_shared::errors::PortError;
-use reili_shared::ports::outbound::{
+use reili_shared::error::PortError;
+use reili_shared::knowledge::{
     WebCitation, WebSearchExecution, WebSearchInput, WebSearchPort, WebSearchResult,
 };
 use reqwest::Client;
@@ -282,7 +282,7 @@ fn parse_response(response: &Value) -> WebSearchResult {
 
 #[cfg(test)]
 mod tests {
-    use reili_shared::ports::outbound::WebSearchUserLocation;
+    use reili_shared::knowledge::WebSearchUserLocation;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

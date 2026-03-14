@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use reili_shared::ports::outbound::{
+use reili_shared::investigation::AlertContext;
+use reili_shared::investigation::{
     COORDINATOR_PROGRESS_OWNER_ID, InvestigationProgressEventPort, InvestigationResources,
     InvestigationRuntime,
 };
-use reili_shared::types::AlertContext;
 use rig::agent::Agent;
 use rig::prelude::CompletionClient;
 use rig::providers::openai;
@@ -406,8 +406,8 @@ Use {language} for all responses.",
 
 #[cfg(test)]
 mod tests {
-    use reili_shared::ports::outbound::InvestigationRuntime;
-    use reili_shared::types::AlertContext;
+    use reili_shared::investigation::AlertContext;
+    use reili_shared::investigation::InvestigationRuntime;
     use serde_json::json;
 
     use super::{

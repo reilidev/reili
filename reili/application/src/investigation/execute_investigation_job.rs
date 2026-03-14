@@ -3,15 +3,17 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
-use reili_shared::errors::PortError;
-use reili_shared::ports::outbound::{
+use reili_shared::error::PortError;
+use reili_shared::investigation::{
+    BuildInvestigationLlmTelemetryInput, InvestigationJobPayload, InvestigationLlmTelemetry,
+};
+use reili_shared::investigation::{
     InvestigationContext, InvestigationCoordinatorRunnerPort, InvestigationProgressEventInput,
     InvestigationProgressEventPort, InvestigationResources, InvestigationRuntime,
-    RunCoordinatorInput, SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput,
-    SlackThreadReplyPort,
+    RunCoordinatorInput,
 };
-use reili_shared::types::{
-    BuildInvestigationLlmTelemetryInput, InvestigationJobPayload, InvestigationLlmTelemetry,
+use reili_shared::messaging::slack::{
+    SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
 };
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
@@ -265,7 +267,7 @@ async fn post_slack_reply_stage(
         .await
         .map_err(|error| {
             ExecuteInvestigationJobError::InvestigationExecutionFailed(
-                reili_shared::errors::InvestigationExecutionFailedError::new(
+                reili_shared::error::InvestigationExecutionFailedError::new(
                     error.message,
                     llm_telemetry,
                 ),
@@ -372,25 +374,30 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use reili_shared::errors::{AgentRunFailedError, PortError};
-    use reili_shared::ports::outbound::{
+    use reili_shared::error::{AgentRunFailedError, PortError};
+    use reili_shared::investigation::{AlertContext, InvestigationJobPayload, LlmUsageSnapshot};
+    use reili_shared::investigation::{
+        InvestigationCoordinatorRunnerPort, InvestigationResources, InvestigationRuntime,
+        RunCoordinatorInput,
+    };
+    use reili_shared::knowledge::{WebSearchInput, WebSearchPort, WebSearchResult};
+    use reili_shared::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
+    use reili_shared::messaging::slack::{
+        SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput,
+        SlackThreadReplyPort, StartSlackProgressStreamInput, StartSlackProgressStreamOutput,
+    };
+    use reili_shared::monitoring::datadog::{
         DatadogEventSearchParams, DatadogEventSearchPort, DatadogEventSearchResult,
         DatadogLogAggregateBucket, DatadogLogAggregateParams, DatadogLogAggregatePort,
         DatadogLogSearchParams, DatadogLogSearchPort, DatadogLogSearchResult,
         DatadogMetricCatalogParams, DatadogMetricCatalogPort, DatadogMetricQueryParams,
-        DatadogMetricQueryPort, DatadogMetricQueryResult, GithubCodeSearchPort,
-        GithubCodeSearchResultItem, GithubIssueSearchResultItem, GithubPullRequestDiff,
-        GithubPullRequestParams, GithubPullRequestPort, GithubPullRequestSummary,
-        GithubRepoSearchResultItem, GithubRepositoryContent, GithubRepositoryContentParams,
-        GithubRepositoryContentPort, GithubSearchParams, InvestigationCoordinatorRunnerPort,
-        InvestigationResources, InvestigationRuntime, RunCoordinatorInput, SlackProgressStreamPort,
-        SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
-        StartSlackProgressStreamInput, StartSlackProgressStreamOutput, WebSearchInput,
-        WebSearchPort, WebSearchResult,
+        DatadogMetricQueryPort, DatadogMetricQueryResult,
     };
-    use reili_shared::types::{
-        AlertContext, InvestigationJobPayload, LlmUsageSnapshot, SlackMessage, SlackThreadMessage,
-        SlackTriggerType,
+    use reili_shared::source_code::github::{
+        GithubCodeSearchPort, GithubCodeSearchResultItem, GithubIssueSearchResultItem,
+        GithubPullRequestDiff, GithubPullRequestParams, GithubPullRequestPort,
+        GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
+        GithubRepositoryContentParams, GithubRepositoryContentPort, GithubSearchParams,
     };
 
     use super::{
@@ -433,14 +440,14 @@ mod tests {
 
         async fn append(
             &self,
-            _input: reili_shared::ports::outbound::AppendSlackProgressStreamInput,
+            _input: reili_shared::messaging::slack::AppendSlackProgressStreamInput,
         ) -> Result<(), PortError> {
             Ok(())
         }
 
         async fn stop(
             &self,
-            _input: reili_shared::ports::outbound::StopSlackProgressStreamInput,
+            _input: reili_shared::messaging::slack::StopSlackProgressStreamInput,
         ) -> Result<(), PortError> {
             Ok(())
         }
@@ -448,7 +455,7 @@ mod tests {
 
     struct MockSlackThreadHistoryPort {
         response: Mutex<Result<Vec<SlackThreadMessage>, PortError>>,
-        calls: Mutex<Vec<reili_shared::ports::outbound::FetchSlackThreadHistoryInput>>,
+        calls: Mutex<Vec<reili_shared::messaging::slack::FetchSlackThreadHistoryInput>>,
     }
 
     impl MockSlackThreadHistoryPort {
@@ -466,7 +473,7 @@ mod tests {
             }
         }
 
-        fn calls(&self) -> Vec<reili_shared::ports::outbound::FetchSlackThreadHistoryInput> {
+        fn calls(&self) -> Vec<reili_shared::messaging::slack::FetchSlackThreadHistoryInput> {
             self.calls.lock().expect("lock history calls").clone()
         }
     }
@@ -475,7 +482,7 @@ mod tests {
     impl SlackThreadHistoryPort for MockSlackThreadHistoryPort {
         async fn fetch_thread_history(
             &self,
-            input: reili_shared::ports::outbound::FetchSlackThreadHistoryInput,
+            input: reili_shared::messaging::slack::FetchSlackThreadHistoryInput,
         ) -> Result<Vec<SlackThreadMessage>, PortError> {
             self.calls.lock().expect("lock history calls").push(input);
             self.response.lock().expect("lock history response").clone()
@@ -509,7 +516,7 @@ mod tests {
         async fn run(
             &self,
             input: RunCoordinatorInput,
-        ) -> Result<reili_shared::ports::outbound::CoordinatorRunReport, AgentRunFailedError>
+        ) -> Result<reili_shared::investigation::CoordinatorRunReport, AgentRunFailedError>
         {
             self.captured
                 .lock()
@@ -519,7 +526,7 @@ mod tests {
                     runtime: input.context.runtime,
                 });
 
-            Ok(reili_shared::ports::outbound::CoordinatorRunReport {
+            Ok(reili_shared::investigation::CoordinatorRunReport {
                 result_text: "coordinator result".to_string(),
                 usage: USAGE_SNAPSHOT,
             })
@@ -771,7 +778,7 @@ mod tests {
         assert_eq!(
             slack_thread_history_port.calls(),
             vec![
-                reili_shared::ports::outbound::FetchSlackThreadHistoryInput {
+                reili_shared::messaging::slack::FetchSlackThreadHistoryInput {
                     channel: "C001".to_string(),
                     thread_ts: "1710000000.000001".to_string(),
                 }

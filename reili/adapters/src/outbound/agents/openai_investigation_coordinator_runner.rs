@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reili_shared::errors::AgentRunFailedError;
-use reili_shared::ports::outbound::{
+use reili_shared::error::AgentRunFailedError;
+use reili_shared::investigation::{
     COORDINATOR_PROGRESS_OWNER_ID, CoordinatorRunReport, InvestigationCoordinatorRunnerPort,
     InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
     RunCoordinatorInput,

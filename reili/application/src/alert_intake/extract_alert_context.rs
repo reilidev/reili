@@ -1,5 +1,6 @@
 use chrono::{DateTime, SecondsFormat, Utc};
-use reili_shared::types::{AlertContext, SlackThreadMessage};
+use reili_shared::investigation::AlertContext;
+use reili_shared::messaging::slack::SlackThreadMessage;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractAlertContextInput {
@@ -91,7 +92,7 @@ fn normalize_milliseconds(milliseconds_part: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use reili_shared::types::SlackThreadMessage;
+    use reili_shared::messaging::slack::SlackThreadMessage;
 
     use super::{ExtractAlertContextInput, extract_alert_context};
 

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use reili_shared::errors::PortError;
-use reili_shared::ports::outbound::{
+use reili_shared::error::PortError;
+use reili_shared::queue::{
     CompleteJobInput, FailJobInput, JobFailResult, JobFailStatus, JobQueuePort, QueueJob,
 };
 use tokio::sync::Mutex;
@@ -194,7 +194,7 @@ fn current_timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::InMemoryJobQueue;
-    use reili_shared::ports::outbound::{
+    use reili_shared::queue::{
         CompleteJobInput, FailJobInput, JobFailStatus, JobQueuePort, QueueJob,
     };
     use tokio::time::{Duration, advance, pause};
