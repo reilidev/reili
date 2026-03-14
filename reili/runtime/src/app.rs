@@ -12,7 +12,7 @@ use reili_adapters::inbound::slack::{
 };
 use reili_adapters::observability::logger::init_json_logger;
 use reili_application::investigation::{InvestigationLogger, string_log_meta};
-use reili_shared::messaging::slack::SlackMessageHandlerPort;
+use reili_core::messaging::slack::SlackMessageHandlerPort;
 use serde_json::json;
 
 use crate::bootstrap::{RuntimeBootstrapError, build_runtime_deps};

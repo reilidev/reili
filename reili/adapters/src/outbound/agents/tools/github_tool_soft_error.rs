@@ -1,4 +1,4 @@
-use reili_shared::error::PortError;
+use reili_core::error::PortError;
 use serde::Serialize;
 
 use super::status_code_parser::extract_http_status_code;
@@ -42,7 +42,7 @@ fn is_local_input_validation_error(message: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use reili_shared::error::PortError;
+    use reili_core::error::PortError;
 
     use super::to_github_tool_soft_error;
 

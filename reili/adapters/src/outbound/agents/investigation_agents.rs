@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use reili_shared::investigation::AlertContext;
-use reili_shared::investigation::{
+use reili_core::investigation::AlertContext;
+use reili_core::investigation::{
     COORDINATOR_PROGRESS_OWNER_ID, InvestigationProgressEventPort, InvestigationResources,
     InvestigationRuntime,
 };
@@ -406,8 +406,8 @@ Use {language} for all responses.",
 
 #[cfg(test)]
 mod tests {
-    use reili_shared::investigation::AlertContext;
-    use reili_shared::investigation::InvestigationRuntime;
+    use reili_core::investigation::AlertContext;
+    use reili_core::investigation::InvestigationRuntime;
     use serde_json::json;
 
     use super::{

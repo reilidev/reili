@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use reili_shared::error::PortError;
-use reili_shared::investigation::InvestigationResources;
-use reili_shared::knowledge::{WebSearchInput, WebSearchUserLocation};
+use reili_core::error::PortError;
+use reili_core::investigation::InvestigationResources;
+use reili_core::knowledge::{WebSearchInput, WebSearchUserLocation};
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
@@ -76,8 +76,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use reili_shared::error::PortError;
-    use reili_shared::knowledge::{
+    use reili_core::error::PortError;
+    use reili_core::knowledge::{
         WebCitation, WebSearchExecution, WebSearchInput, WebSearchPort, WebSearchResult,
     };
     use rig::tool::Tool;
@@ -108,11 +108,11 @@ mod tests {
     }
 
     fn build_test_resources(web_search_port: Arc<dyn WebSearchPort>) -> InvestigationResources {
-        use reili_shared::monitoring::datadog::{
+        use reili_core::monitoring::datadog::{
             DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
             DatadogMetricCatalogPort, DatadogMetricQueryPort,
         };
-        use reili_shared::source_code::github::{
+        use reili_core::source_code::github::{
             GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
         };
 
@@ -121,8 +121,8 @@ mod tests {
         impl DatadogLogAggregatePort for StubLogAggregate {
             async fn aggregate_by_facet(
                 &self,
-                _: reili_shared::monitoring::datadog::DatadogLogAggregateParams,
-            ) -> Result<Vec<reili_shared::monitoring::datadog::DatadogLogAggregateBucket>, PortError>
+                _: reili_core::monitoring::datadog::DatadogLogAggregateParams,
+            ) -> Result<Vec<reili_core::monitoring::datadog::DatadogLogAggregateBucket>, PortError>
             {
                 Ok(Vec::new())
             }
@@ -133,8 +133,8 @@ mod tests {
         impl DatadogLogSearchPort for StubLogSearch {
             async fn search_logs(
                 &self,
-                _: reili_shared::monitoring::datadog::DatadogLogSearchParams,
-            ) -> Result<Vec<reili_shared::monitoring::datadog::DatadogLogSearchResult>, PortError>
+                _: reili_core::monitoring::datadog::DatadogLogSearchParams,
+            ) -> Result<Vec<reili_core::monitoring::datadog::DatadogLogSearchResult>, PortError>
             {
                 unimplemented!()
             }
@@ -145,7 +145,7 @@ mod tests {
         impl DatadogMetricCatalogPort for StubMetricCatalog {
             async fn list_metrics(
                 &self,
-                _: reili_shared::monitoring::datadog::DatadogMetricCatalogParams,
+                _: reili_core::monitoring::datadog::DatadogMetricCatalogParams,
             ) -> Result<Vec<String>, PortError> {
                 Ok(Vec::new())
             }
@@ -156,8 +156,8 @@ mod tests {
         impl DatadogMetricQueryPort for StubMetricQuery {
             async fn query_metrics(
                 &self,
-                _: reili_shared::monitoring::datadog::DatadogMetricQueryParams,
-            ) -> Result<Vec<reili_shared::monitoring::datadog::DatadogMetricQueryResult>, PortError>
+                _: reili_core::monitoring::datadog::DatadogMetricQueryParams,
+            ) -> Result<Vec<reili_core::monitoring::datadog::DatadogMetricQueryResult>, PortError>
             {
                 unimplemented!()
             }
@@ -168,8 +168,8 @@ mod tests {
         impl DatadogEventSearchPort for StubEventSearch {
             async fn search_events(
                 &self,
-                _: reili_shared::monitoring::datadog::DatadogEventSearchParams,
-            ) -> Result<Vec<reili_shared::monitoring::datadog::DatadogEventSearchResult>, PortError>
+                _: reili_core::monitoring::datadog::DatadogEventSearchParams,
+            ) -> Result<Vec<reili_core::monitoring::datadog::DatadogEventSearchResult>, PortError>
             {
                 unimplemented!()
             }
@@ -180,25 +180,23 @@ mod tests {
         impl GithubCodeSearchPort for StubGithubSearch {
             async fn search_code(
                 &self,
-                _: reili_shared::source_code::github::GithubSearchParams,
-            ) -> Result<Vec<reili_shared::source_code::github::GithubCodeSearchResultItem>, PortError>
+                _: reili_core::source_code::github::GithubSearchParams,
+            ) -> Result<Vec<reili_core::source_code::github::GithubCodeSearchResultItem>, PortError>
             {
                 unimplemented!()
             }
             async fn search_repos(
                 &self,
-                _: reili_shared::source_code::github::GithubSearchParams,
-            ) -> Result<Vec<reili_shared::source_code::github::GithubRepoSearchResultItem>, PortError>
+                _: reili_core::source_code::github::GithubSearchParams,
+            ) -> Result<Vec<reili_core::source_code::github::GithubRepoSearchResultItem>, PortError>
             {
                 unimplemented!()
             }
             async fn search_issues_and_pull_requests(
                 &self,
-                _: reili_shared::source_code::github::GithubSearchParams,
-            ) -> Result<
-                Vec<reili_shared::source_code::github::GithubIssueSearchResultItem>,
-                PortError,
-            > {
+                _: reili_core::source_code::github::GithubSearchParams,
+            ) -> Result<Vec<reili_core::source_code::github::GithubIssueSearchResultItem>, PortError>
+            {
                 unimplemented!()
             }
         }
@@ -207,8 +205,8 @@ mod tests {
         impl GithubRepositoryContentPort for StubGithubSearch {
             async fn get_repository_content(
                 &self,
-                _: reili_shared::source_code::github::GithubRepositoryContentParams,
-            ) -> Result<reili_shared::source_code::github::GithubRepositoryContent, PortError>
+                _: reili_core::source_code::github::GithubRepositoryContentParams,
+            ) -> Result<reili_core::source_code::github::GithubRepositoryContent, PortError>
             {
                 unimplemented!()
             }
@@ -218,15 +216,15 @@ mod tests {
         impl GithubPullRequestPort for StubGithubSearch {
             async fn get_pull_request(
                 &self,
-                _: reili_shared::source_code::github::GithubPullRequestParams,
-            ) -> Result<reili_shared::source_code::github::GithubPullRequestSummary, PortError>
+                _: reili_core::source_code::github::GithubPullRequestParams,
+            ) -> Result<reili_core::source_code::github::GithubPullRequestSummary, PortError>
             {
                 unimplemented!()
             }
             async fn get_pull_request_diff(
                 &self,
-                _: reili_shared::source_code::github::GithubPullRequestParams,
-            ) -> Result<reili_shared::source_code::github::GithubPullRequestDiff, PortError>
+                _: reili_core::source_code::github::GithubPullRequestParams,
+            ) -> Result<reili_core::source_code::github::GithubPullRequestDiff, PortError>
             {
                 unimplemented!()
             }

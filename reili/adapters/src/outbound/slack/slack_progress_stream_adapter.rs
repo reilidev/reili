@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reili_shared::error::PortError;
-use reili_shared::messaging::slack::{
+use reili_core::error::PortError;
+use reili_core::messaging::slack::{
     AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort, SlackStreamBlock,
     StartSlackProgressStreamInput, StartSlackProgressStreamOutput, StopSlackProgressStreamInput,
 };
@@ -129,10 +129,10 @@ struct StopSlackProgressStreamRequest {
 mod tests {
     use std::sync::Arc;
 
-    use reili_shared::messaging::slack::progress_stream::{
+    use reili_core::messaging::slack::progress_stream::{
         SlackTaskUpdateChunk, SlackTaskUpdateStatus,
     };
-    use reili_shared::messaging::slack::{
+    use reili_core::messaging::slack::{
         AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort,
         StartSlackProgressStreamInput, StopSlackProgressStreamInput,
     };

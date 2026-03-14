@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use reili_shared::investigation::{InvestigationProgressEvent, InvestigationProgressEventInput};
+use reili_core::investigation::{InvestigationProgressEvent, InvestigationProgressEventInput};
 use tokio::sync::Mutex;
 
 use super::investigation_progress_stream_session::{
@@ -22,9 +22,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use reili_shared::investigation::{
-        InvestigationProgressEvent, InvestigationProgressEventInput,
-    };
+    use reili_core::investigation::{InvestigationProgressEvent, InvestigationProgressEventInput};
     use tokio::sync::Mutex as TokioMutex;
 
     use super::{CoordinatorProgressEventHandler, CoordinatorProgressEventHandlerInput};

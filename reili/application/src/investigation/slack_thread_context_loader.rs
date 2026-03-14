@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use reili_shared::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
-use reili_shared::messaging::slack::{SlackMessage, SlackThreadMessage};
+use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
+use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage};
 
 use super::logger::InvestigationLogMeta;
 
@@ -88,9 +88,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use reili_shared::error::PortError;
-    use reili_shared::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
-    use reili_shared::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
+    use reili_core::error::PortError;
+    use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
+    use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
     use serde_json::Value;
 
     use crate::investigation::InvestigationLogMeta;

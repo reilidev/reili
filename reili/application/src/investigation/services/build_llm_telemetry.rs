@@ -1,4 +1,4 @@
-use reili_shared::investigation::{
+use reili_core::investigation::{
     BuildInvestigationLlmTelemetryInput, InvestigationLlmTelemetry, LlmUsageSnapshot,
 };
 
@@ -26,7 +26,7 @@ pub fn build_investigation_llm_telemetry(
 
 #[cfg(test)]
 mod tests {
-    use reili_shared::investigation::{BuildInvestigationLlmTelemetryInput, LlmUsageSnapshot};
+    use reili_core::investigation::{BuildInvestigationLlmTelemetryInput, LlmUsageSnapshot};
 
     use super::{build_investigation_llm_telemetry, create_empty_llm_usage_snapshot};
 

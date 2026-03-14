@@ -2,12 +2,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use reili_shared::error::PortError;
-use reili_shared::investigation::InvestigationJob;
-use reili_shared::messaging::slack::{SlackThreadReplyInput, SlackThreadReplyPort};
-use reili_shared::queue::{
-    CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailStatus,
-};
+use reili_core::error::PortError;
+use reili_core::investigation::InvestigationJob;
+use reili_core::messaging::slack::{SlackThreadReplyInput, SlackThreadReplyPort};
+use reili_core::queue::{CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailStatus};
 use tokio::task::spawn;
 use tokio::time::sleep;
 
@@ -365,25 +363,25 @@ mod tests {
     };
     use crate::investigation::InvestigationLogMeta;
     use async_trait::async_trait;
-    use reili_shared::investigation::{
+    use reili_core::investigation::{
         InvestigationCoordinatorRunnerPort, InvestigationResources, RunCoordinatorInput,
     };
-    use reili_shared::investigation::{InvestigationJobPayload, LlmUsageSnapshot};
-    use reili_shared::knowledge::{WebSearchInput, WebSearchPort, WebSearchResult};
-    use reili_shared::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
-    use reili_shared::messaging::slack::{
+    use reili_core::investigation::{InvestigationJobPayload, LlmUsageSnapshot};
+    use reili_core::knowledge::{WebSearchInput, WebSearchPort, WebSearchResult};
+    use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
+    use reili_core::messaging::slack::{
         SlackProgressStreamPort, SlackThreadHistoryPort, StartSlackProgressStreamInput,
         StartSlackProgressStreamOutput,
     };
-    use reili_shared::monitoring::datadog::{
+    use reili_core::monitoring::datadog::{
         DatadogEventSearchParams, DatadogEventSearchPort, DatadogEventSearchResult,
         DatadogLogAggregateBucket, DatadogLogAggregateParams, DatadogLogAggregatePort,
         DatadogLogSearchParams, DatadogLogSearchPort, DatadogLogSearchResult,
         DatadogMetricCatalogParams, DatadogMetricCatalogPort, DatadogMetricQueryParams,
         DatadogMetricQueryPort, DatadogMetricQueryResult,
     };
-    use reili_shared::queue::{CompleteJobInput, FailJobInput, JobFailResult, JobQueuePort};
-    use reili_shared::source_code::github::{
+    use reili_core::queue::{CompleteJobInput, FailJobInput, JobFailResult, JobQueuePort};
+    use reili_core::source_code::github::{
         GithubCodeSearchPort, GithubCodeSearchResultItem, GithubIssueSearchResultItem,
         GithubPullRequestDiff, GithubPullRequestParams, GithubPullRequestPort,
         GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
@@ -524,14 +522,14 @@ mod tests {
 
         async fn append(
             &self,
-            _input: reili_shared::messaging::slack::AppendSlackProgressStreamInput,
+            _input: reili_core::messaging::slack::AppendSlackProgressStreamInput,
         ) -> Result<(), PortError> {
             Ok(())
         }
 
         async fn stop(
             &self,
-            _input: reili_shared::messaging::slack::StopSlackProgressStreamInput,
+            _input: reili_core::messaging::slack::StopSlackProgressStreamInput,
         ) -> Result<(), PortError> {
             Ok(())
         }
@@ -543,7 +541,7 @@ mod tests {
     impl SlackThreadHistoryPort for MockSlackThreadHistoryPort {
         async fn fetch_thread_history(
             &self,
-            _input: reili_shared::messaging::slack::FetchSlackThreadHistoryInput,
+            _input: reili_core::messaging::slack::FetchSlackThreadHistoryInput,
         ) -> Result<Vec<SlackThreadMessage>, PortError> {
             Ok(Vec::new())
         }
@@ -557,10 +555,10 @@ mod tests {
             &self,
             _input: RunCoordinatorInput,
         ) -> Result<
-            reili_shared::investigation::CoordinatorRunReport,
-            reili_shared::error::AgentRunFailedError,
+            reili_core::investigation::CoordinatorRunReport,
+            reili_core::error::AgentRunFailedError,
         > {
-            Ok(reili_shared::investigation::CoordinatorRunReport {
+            Ok(reili_core::investigation::CoordinatorRunReport {
                 result_text: "coordinator result".to_string(),
                 usage: USAGE_SNAPSHOT,
             })

@@ -1,4 +1,4 @@
-use reili_shared::error::PortError;
+use reili_core::error::PortError;
 use serde::Serialize;
 
 use super::status_code_parser::extract_http_status_code;
@@ -28,7 +28,7 @@ pub fn to_datadog_tool_soft_error(error: &PortError) -> Option<DatadogToolSoftEr
 
 #[cfg(test)]
 mod tests {
-    use reili_shared::error::PortError;
+    use reili_core::error::PortError;
 
     use super::to_datadog_tool_soft_error;
 

@@ -9,7 +9,7 @@ axum = { version = "0.8", default-features = false, features = ["http1", "json",
 serde_json = "1"
 reili_adapters = { path = "../adapters" }
 reili_application = { path = "../application" }
-reili_shared = { path = "../shared" }
+reili_core = { path = "../core" }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tracing = "0.1"

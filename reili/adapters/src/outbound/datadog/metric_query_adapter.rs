@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
-use reili_shared::error::PortError;
-use reili_shared::monitoring::datadog::{
+use reili_core::error::PortError;
+use reili_core::monitoring::datadog::{
     DatadogMetricQueryParams, DatadogMetricQueryPoint, DatadogMetricQueryPort,
     DatadogMetricQueryResult,
 };
@@ -287,7 +287,7 @@ fn to_epoch_ms(value: &str) -> Result<i64, PortError> {
 mod tests {
     use std::sync::Arc;
 
-    use reili_shared::monitoring::datadog::{DatadogMetricQueryParams, DatadogMetricQueryPort};
+    use reili_core::monitoring::datadog::{DatadogMetricQueryParams, DatadogMetricQueryPort};
     use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

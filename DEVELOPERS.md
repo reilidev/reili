@@ -69,9 +69,9 @@ Project layers:
 
 - `rust/crates/runtime`: bootstrap and runtime entrypoints
 - `rust/crates/application`: use case orchestration
-- `rust/crates/shared/src/ports`: boundary contracts
+- `rust/crates/core/src/ports`: boundary contracts
 - `rust/crates/adapters`: concrete integrations
-- `rust/crates/shared`: cross-cutting types and utilities
+- `rust/crates/core`: cross-cutting types and utilities
 
 Dependency direction:
 

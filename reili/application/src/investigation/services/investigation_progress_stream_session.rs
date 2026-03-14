@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reili_shared::messaging::slack::progress_stream::{
+use reili_core::messaging::slack::progress_stream::{
     SlackChunkSourceType, SlackMarkdownTextChunk, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
 };
-use reili_shared::messaging::slack::{
+use reili_core::messaging::slack::{
     AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort,
     StartSlackProgressStreamInput, StopSlackProgressStreamInput,
 };
@@ -781,9 +781,9 @@ mod tests {
 
     use crate::investigation::InvestigationLogMeta;
     use async_trait::async_trait;
-    use reili_shared::error::PortError;
-    use reili_shared::messaging::slack::progress_stream::SlackTaskUpdateStatus;
-    use reili_shared::messaging::slack::{
+    use reili_core::error::PortError;
+    use reili_core::messaging::slack::progress_stream::SlackTaskUpdateStatus;
+    use reili_core::messaging::slack::{
         AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort,
         StartSlackProgressStreamInput, StartSlackProgressStreamOutput,
         StopSlackProgressStreamInput,

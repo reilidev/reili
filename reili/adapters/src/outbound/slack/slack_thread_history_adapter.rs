@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reili_shared::error::PortError;
-use reili_shared::messaging::slack::SlackThreadMessage;
-use reili_shared::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
+use reili_core::error::PortError;
+use reili_core::messaging::slack::SlackThreadMessage;
+use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
 use serde_json::Value;
 
 use super::slack_web_api_client::SlackWebApiClient;
@@ -97,8 +97,8 @@ impl SlackThreadHistoryPort for SlackThreadHistoryAdapter {
 mod tests {
     use std::sync::Arc;
 
-    use reili_shared::messaging::slack::SlackThreadMessage;
-    use reili_shared::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
+    use reili_core::messaging::slack::SlackThreadMessage;
+    use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
     use serde_json::json;
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

@@ -40,7 +40,7 @@ When you modify the code, run `pnpm lint:deps` to lint layer dependencies.
 rust/
 ├── Cargo.toml                      # Workspace definition
 └── crates/
-    ├── shared/                     # Shared types, ports, errors
+    ├── core/                       # Core types, ports, errors
     ├── application/                # Use cases and orchestration
     ├── adapters/                   # External integrations and port implementations
     └── runtime/                    # App bootstrap and runtime wiring
@@ -48,7 +48,7 @@ rust/
 
 ### Principles
 
-* Keep dependency direction strict: `runtime -> application -> shared`, `runtime -> adapters -> shared`.
+* Keep dependency direction strict: `runtime -> application -> core`, `runtime -> adapters -> core`.
 * Use trait-based ports and constructor injection (`Arc<dyn Trait>`) for testability.
 * Prefer explicit types and domain-focused value objects; avoid primitive obsession.
 * Handle failures with typed errors (`thiserror`) and propagate with context.

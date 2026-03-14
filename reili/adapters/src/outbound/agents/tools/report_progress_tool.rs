@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use reili_shared::error::PortError;
-use reili_shared::investigation::{
+use reili_core::error::PortError;
+use reili_core::investigation::{
     InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
 };
 use rig::completion::ToolDefinition;
@@ -101,8 +101,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
-    use reili_shared::error::PortError;
-    use reili_shared::investigation::{
+    use reili_core::error::PortError;
+    use reili_core::investigation::{
         InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
     };
     use rig::tool::Tool;

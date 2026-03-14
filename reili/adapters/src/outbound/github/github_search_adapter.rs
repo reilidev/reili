@@ -1,14 +1,14 @@
 use async_trait::async_trait;
 use octocrab::models::{AppId, InstallationId};
 use octocrab::{Octocrab, models};
-use reili_shared::error::PortError;
-use reili_shared::source_code::github::{
+use reili_core::error::PortError;
+use reili_core::source_code::github::{
     GithubCodeSearchPort, GithubCodeSearchResultItem, GithubIssueSearchResultItem,
     GithubPullRequestDiff, GithubPullRequestParams, GithubPullRequestPort,
     GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
     GithubRepositoryContentParams, GithubRepositoryContentPort, GithubSearchParams,
 };
-use reili_shared::source_code::github::{
+use reili_core::source_code::github::{
     GithubRepositoryDirectoryContent, GithubRepositoryDirectoryEntry, GithubRepositoryFileContent,
     GithubRepositoryFileEncoding,
 };

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use reili_shared::error::PortError;
+use reili_core::error::PortError;
 use reqwest::{Method, StatusCode};
 use serde_json::Value;
 

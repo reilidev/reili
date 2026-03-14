@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
-use reili_shared::error::PortError;
-use reili_shared::monitoring::datadog::{
+use reili_core::error::PortError;
+use reili_core::monitoring::datadog::{
     DatadogEventSearchParams, DatadogEventSearchPort, DatadogEventSearchResult,
 };
 use reqwest::Method;
@@ -207,7 +207,7 @@ fn to_iso_string(timestamp_ms: i64) -> String {
 mod tests {
     use std::sync::Arc;
 
-    use reili_shared::monitoring::datadog::{DatadogEventSearchParams, DatadogEventSearchPort};
+    use reili_core::monitoring::datadog::{DatadogEventSearchParams, DatadogEventSearchPort};
     use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

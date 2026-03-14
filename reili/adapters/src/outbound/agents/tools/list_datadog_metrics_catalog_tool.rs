@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use reili_shared::error::PortError;
-use reili_shared::investigation::InvestigationResources;
-use reili_shared::monitoring::datadog::DatadogMetricCatalogParams;
+use reili_core::error::PortError;
+use reili_core::investigation::InvestigationResources;
+use reili_core::monitoring::datadog::DatadogMetricCatalogParams;
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};

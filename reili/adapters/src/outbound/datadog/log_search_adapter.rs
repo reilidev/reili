@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reili_shared::error::PortError;
-use reili_shared::monitoring::datadog::{
+use reili_core::error::PortError;
+use reili_core::monitoring::datadog::{
     DatadogLogSearchParams, DatadogLogSearchPort, DatadogLogSearchResult,
 };
 use reqwest::Method;
@@ -96,7 +96,7 @@ fn read_string(value: Option<&Value>) -> Option<String> {
 mod tests {
     use std::sync::Arc;
 
-    use reili_shared::monitoring::datadog::{DatadogLogSearchParams, DatadogLogSearchPort};
+    use reili_core::monitoring::datadog::{DatadogLogSearchParams, DatadogLogSearchPort};
     use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

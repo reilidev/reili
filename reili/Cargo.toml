@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "shared",
+    "core",
     "runtime",
     "adapters",
     "application",

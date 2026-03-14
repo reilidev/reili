@@ -3,12 +3,12 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
-use reili_shared::error::PortError;
-use reili_shared::investigation::{InvestigationJob, InvestigationJobPayload};
-use reili_shared::messaging::slack::SlackMessage;
-use reili_shared::messaging::slack::SlackMessageHandlerPort;
-use reili_shared::messaging::slack::{SlackThreadReplyInput, SlackThreadReplyPort};
-use reili_shared::queue::InvestigationJobQueuePort;
+use reili_core::error::PortError;
+use reili_core::investigation::{InvestigationJob, InvestigationJobPayload};
+use reili_core::messaging::slack::SlackMessage;
+use reili_core::messaging::slack::SlackMessageHandlerPort;
+use reili_core::messaging::slack::{SlackThreadReplyInput, SlackThreadReplyPort};
+use reili_core::queue::InvestigationJobQueuePort;
 use uuid::Uuid;
 
 use crate::investigation::{InvestigationLogger, string_log_meta};
@@ -138,15 +138,15 @@ mod tests {
     };
     use crate::investigation::InvestigationLogMeta;
     use async_trait::async_trait;
-    use reili_shared::messaging::slack::SlackTriggerType;
-    use reili_shared::queue::{
+    use reili_core::messaging::slack::SlackTriggerType;
+    use reili_core::queue::{
         CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailResult, JobQueuePort,
     };
     use serde_json::Value;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
-    use reili_shared::investigation::InvestigationJob;
+    use reili_core::investigation::InvestigationJob;
 
     #[derive(Debug, Clone)]
     struct LogEntry {

@@ -1474,7 +1474,7 @@ dependencies = [
  "futures",
  "jsonwebtoken",
  "octocrab",
- "reili_shared",
+ "reili_core",
  "reqwest 0.12.28",
  "rig-core",
  "ring",
@@ -1492,11 +1492,21 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
- "reili_shared",
+ "reili_core",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "reili_core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1506,21 +1516,11 @@ dependencies = [
  "axum",
  "reili_adapters",
  "reili_application",
- "reili_shared",
+ "reili_core",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "reili_shared"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
 ]
 
 [[package]]
