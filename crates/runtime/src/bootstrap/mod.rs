@@ -42,7 +42,7 @@ use reili_core::source_code::github::{
 use serde_json::{Value, json};
 use thiserror::Error;
 
-use crate::config::env::AppConfig;
+use crate::config::env::{AppConfig, LlmProviderConfig};
 
 const DATADOG_API_RETRY: DatadogApiRetryConfig = DatadogApiRetryConfig {
     enabled: true,
@@ -65,6 +65,20 @@ pub enum RuntimeBootstrapError {
     Port(#[from] PortError),
     #[error("Slack auth.test response did not contain user_id")]
     MissingSlackBotUserId,
+    #[error("LLM provider is not implemented yet: {provider}")]
+    UnsupportedLlmProvider { provider: String },
+}
+
+struct ProviderPorts {
+    web_search_port: Arc<dyn WebSearchPort>,
+    coordinator_runner: Arc<dyn InvestigationCoordinatorRunnerPort>,
+}
+
+struct CreateProviderPortsInput<'a> {
+    llm_provider: &'a LlmProviderConfig,
+    datadog_site: String,
+    github_scope_org: String,
+    language: String,
 }
 
 pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, RuntimeBootstrapError> {
@@ -120,12 +134,12 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let github_repository_content_port: Arc<dyn GithubRepositoryContentPort> =
         github_adapter.clone();
     let github_pull_request_port: Arc<dyn GithubPullRequestPort> = github_adapter;
-    let web_search_port: Arc<dyn WebSearchPort> =
-        Arc::new(OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
-            api_key: config.openai_api_key.clone(),
-            model: config.openai_web_search.model.clone(),
-            timeout_ms: config.openai_web_search.timeout_ms,
-        }));
+    let provider_ports = create_provider_ports(CreateProviderPortsInput {
+        llm_provider: &config.llm.provider,
+        datadog_site: config.datadog_site.clone(),
+        github_scope_org: config.github.scope_org.clone(),
+        language: config.language.clone(),
+    })?;
 
     let investigation_resources = InvestigationResources {
         log_aggregate_port,
@@ -136,16 +150,9 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         github_code_search_port,
         github_repository_content_port,
         github_pull_request_port,
-        web_search_port,
+        web_search_port: provider_ports.web_search_port,
     };
-    let coordinator_runner: Arc<dyn InvestigationCoordinatorRunnerPort> = Arc::new(
-        OpenAiInvestigationCoordinatorRunner::new(OpenAiInvestigationCoordinatorRunnerInput {
-            openai_api_key: config.openai_api_key.clone(),
-            datadog_site: config.datadog_site.clone(),
-            github_scope_org: config.github.scope_org.clone(),
-            language: config.language.clone(),
-        }),
-    );
+    let coordinator_runner = provider_ports.coordinator_runner;
     let slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
@@ -179,6 +186,34 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         worker_runner,
         logger,
     })
+}
+
+fn create_provider_ports(
+    input: CreateProviderPortsInput<'_>,
+) -> Result<ProviderPorts, RuntimeBootstrapError> {
+    match input.llm_provider {
+        LlmProviderConfig::OpenAi(config) => Ok(ProviderPorts {
+            web_search_port: Arc::new(OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
+                api_key: config.api_key.clone(),
+            })),
+            coordinator_runner: Arc::new(OpenAiInvestigationCoordinatorRunner::new(
+                OpenAiInvestigationCoordinatorRunnerInput {
+                    api_key: config.api_key.clone(),
+                    coordinator_model: config.coordinator_model.clone(),
+                    datadog_site: input.datadog_site,
+                    github_scope_org: input.github_scope_org,
+                    language: input.language,
+                },
+            )),
+        }),
+        LlmProviderConfig::Bedrock(config) => Err(RuntimeBootstrapError::UnsupportedLlmProvider {
+            provider: format!(
+                "{} ({})",
+                input.llm_provider.provider_name(),
+                config.model_id
+            ),
+        }),
+    }
 }
 
 pub fn create_investigation_logger() -> Arc<dyn InvestigationLogger> {

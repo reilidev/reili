@@ -8,8 +8,6 @@ use reili_core::investigation::{
 };
 use rig::agent::Agent;
 use rig::prelude::CompletionClient;
-use rig::providers::openai;
-use serde_json::json;
 
 use super::tools::{
     AggregateDatadogLogsByFacetTool, GetPullRequestDiffTool, GetPullRequestTool,
@@ -21,22 +19,23 @@ use super::tools::{
 use super::{
     progress_event_hook::ProgressEventHook,
     progress_reporting_sub_agent_tool::ProgressReportingSubAgentTool,
+    provider_settings::RigProviderSettings,
 };
 
-const INVESTIGATION_MODEL: &str = "gpt-5.3-codex";
-const COORDINATOR_MAX_TURNS: usize = 20;
-const SUBAGENT_MAX_TURNS: usize = 50;
 const LOGS_PROGRESS_OWNER_ID: &str = "investigate_logs";
 const METRICS_PROGRESS_OWNER_ID: &str = "investigate_metrics";
 const EVENTS_PROGRESS_OWNER_ID: &str = "investigate_events";
 const GITHUB_PROGRESS_OWNER_ID: &str = "investigate_github";
 
-type OpenAiCompletionModel = <openai::Client as CompletionClient>::CompletionModel;
-type OpenAiAgent = Agent<OpenAiCompletionModel>;
-type OpenAiSubAgent = Agent<OpenAiCompletionModel, ProgressEventHook>;
+type CompletionAgent<C> = Agent<<C as CompletionClient>::CompletionModel>;
+type SpecialistAgent<C> = Agent<<C as CompletionClient>::CompletionModel, ProgressEventHook>;
 
-pub struct BuildCoordinatorAgentInput {
-    pub client: openai::Client,
+pub struct BuildCoordinatorAgentInput<C>
+where
+    C: CompletionClient,
+{
+    pub client: C,
+    pub settings: RigProviderSettings,
     pub resources: Arc<InvestigationResources>,
     pub datadog_site: String,
     pub github_scope_org: String,
@@ -46,9 +45,14 @@ pub struct BuildCoordinatorAgentInput {
 }
 
 #[must_use]
-pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent {
+pub fn build_coordinator_agent<C>(input: BuildCoordinatorAgentInput<C>) -> CompletionAgent<C>
+where
+    C: CompletionClient + Clone,
+    C::CompletionModel: 'static,
+{
     let logs_agent = build_logs_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
+        settings: input.settings.clone(),
         resources: Arc::clone(&input.resources),
         github_scope_org: String::new(),
         language: input.language.clone(),
@@ -57,6 +61,7 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
     });
     let metrics_agent = build_metrics_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
+        settings: input.settings.clone(),
         resources: Arc::clone(&input.resources),
         github_scope_org: String::new(),
         language: input.language.clone(),
@@ -65,6 +70,7 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
     });
     let events_agent = build_events_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
+        settings: input.settings.clone(),
         resources: Arc::clone(&input.resources),
         github_scope_org: String::new(),
         language: input.language.clone(),
@@ -73,6 +79,7 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
     });
     let github_agent = build_github_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
+        settings: input.settings.clone(),
         resources: Arc::clone(&input.resources),
         github_scope_org: input.github_scope_org.clone(),
         language: input.language.clone(),
@@ -82,7 +89,7 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
 
     input
         .client
-        .agent(INVESTIGATION_MODEL)
+        .agent(input.settings.coordinator_model.clone())
         .name("Coordinator")
         .preamble(&build_coordinator_instructions(
             BuildCoordinatorInstructionsInput {
@@ -92,8 +99,8 @@ pub fn build_coordinator_agent(input: BuildCoordinatorAgentInput) -> OpenAiAgent
                 language: input.language,
             },
         ))
-        .default_max_turns(COORDINATOR_MAX_TURNS)
-        .additional_params(model_additional_params())
+        .default_max_turns(input.settings.coordinator_max_turns)
+        .additional_params(input.settings.additional_params.clone())
         .tool(AggregateDatadogLogsByFacetTool::new(Arc::clone(
             &input.resources,
         )))
@@ -144,8 +151,12 @@ The input may be an alert, request, question, link, or partial context.";
 
     format!("{investigation_prompt}{trigger_message_section}{thread_context_section}")
 }
-struct BuildSpecialistAgentInput {
-    client: openai::Client,
+struct BuildSpecialistAgentInput<C>
+where
+    C: CompletionClient,
+{
+    client: C,
+    settings: RigProviderSettings,
     resources: Arc<InvestigationResources>,
     github_scope_org: String,
     language: String,
@@ -153,15 +164,19 @@ struct BuildSpecialistAgentInput {
     owner_id: String,
 }
 
-fn build_logs_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
+fn build_logs_agent<C>(input: BuildSpecialistAgentInput<C>) -> SpecialistAgent<C>
+where
+    C: CompletionClient,
+    C::CompletionModel: 'static,
+{
     input
         .client
-        .agent(INVESTIGATION_MODEL)
+        .agent(input.settings.specialist_model.clone())
         .name("investigate_logs")
         .description("Delegates Datadog log investigation tasks.")
         .preamble(&build_logs_instructions(&input.language))
-        .default_max_turns(SUBAGENT_MAX_TURNS)
-        .additional_params(model_additional_params())
+        .default_max_turns(input.settings.specialist_max_turns)
+        .additional_params(input.settings.additional_params.clone())
         .hook(ProgressEventHook::new(
             input.owner_id.clone(),
             Arc::clone(&input.on_progress_event),
@@ -175,15 +190,19 @@ fn build_logs_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
         .build()
 }
 
-fn build_metrics_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
+fn build_metrics_agent<C>(input: BuildSpecialistAgentInput<C>) -> SpecialistAgent<C>
+where
+    C: CompletionClient,
+    C::CompletionModel: 'static,
+{
     input
         .client
-        .agent(INVESTIGATION_MODEL)
+        .agent(input.settings.specialist_model.clone())
         .name("investigate_metrics")
         .description("Delegates Datadog metrics investigation tasks.")
         .preamble(&build_metrics_instructions(&input.language))
-        .default_max_turns(SUBAGENT_MAX_TURNS)
-        .additional_params(model_additional_params())
+        .default_max_turns(input.settings.specialist_max_turns)
+        .additional_params(input.settings.additional_params.clone())
         .hook(ProgressEventHook::new(
             input.owner_id.clone(),
             Arc::clone(&input.on_progress_event),
@@ -197,15 +216,19 @@ fn build_metrics_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
         .build()
 }
 
-fn build_events_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
+fn build_events_agent<C>(input: BuildSpecialistAgentInput<C>) -> SpecialistAgent<C>
+where
+    C: CompletionClient,
+    C::CompletionModel: 'static,
+{
     input
         .client
-        .agent(INVESTIGATION_MODEL)
+        .agent(input.settings.specialist_model.clone())
         .name("investigate_events")
         .description("Delegates Datadog event investigation tasks.")
         .preamble(&build_events_instructions(&input.language))
-        .default_max_turns(SUBAGENT_MAX_TURNS)
-        .additional_params(model_additional_params())
+        .default_max_turns(input.settings.specialist_max_turns)
+        .additional_params(input.settings.additional_params.clone())
         .hook(ProgressEventHook::new(
             input.owner_id.clone(),
             Arc::clone(&input.on_progress_event),
@@ -219,18 +242,22 @@ fn build_events_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
         .build()
 }
 
-fn build_github_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
+fn build_github_agent<C>(input: BuildSpecialistAgentInput<C>) -> SpecialistAgent<C>
+where
+    C: CompletionClient,
+    C::CompletionModel: 'static,
+{
     input
         .client
-        .agent(INVESTIGATION_MODEL)
+        .agent(input.settings.specialist_model.clone())
         .name("investigate_github")
         .description("Delegates GitHub repository, code, and pull request investigation tasks.")
         .preamble(&build_github_instructions(BuildGithubInstructionsInput {
             language: input.language,
             github_scope_org: input.github_scope_org.clone(),
         }))
-        .default_max_turns(SUBAGENT_MAX_TURNS)
-        .additional_params(model_additional_params())
+        .default_max_turns(input.settings.specialist_max_turns)
+        .additional_params(input.settings.additional_params.clone())
         .hook(ProgressEventHook::new(
             input.owner_id.clone(),
             Arc::clone(&input.on_progress_event),
@@ -265,22 +292,6 @@ fn build_github_agent(input: BuildSpecialistAgentInput) -> OpenAiSubAgent {
         ))
         .tool(SearchWebTool::new(input.resources))
         .build()
-}
-
-#[must_use]
-fn model_additional_params() -> serde_json::Value {
-    json!({
-        "reasoning": {
-            "effort": "low",
-            "summary": "auto",
-        },
-        "text": {
-            "format": {
-                "type": "text",
-            },
-        },
-        "parallel_tool_calls": true,
-    })
 }
 
 struct BuildCoordinatorInstructionsInput {
@@ -410,11 +421,13 @@ mod tests {
     use reili_core::investigation::InvestigationRuntime;
     use serde_json::json;
 
+    use super::super::provider_settings::{
+        CreateOpenAiProviderSettingsInput, create_openai_provider_settings,
+    };
     use super::{
         BuildCoordinatorInstructionsInput, BuildGithubInstructionsInput,
         build_coordinator_instructions, build_coordinator_prompt, build_events_instructions,
         build_github_instructions, build_logs_instructions, build_metrics_instructions,
-        model_additional_params,
     };
 
     fn sample_alert_context() -> AlertContext {
@@ -433,8 +446,12 @@ mod tests {
     }
 
     #[test]
-    fn model_additional_params_enable_parallel_tool_calls() {
-        let params = model_additional_params();
+    fn provider_settings_enable_parallel_tool_calls() {
+        let settings = create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
+            coordinator_model: "gpt-5.3-codex".to_string(),
+        });
+        let params = settings.additional_params;
+
         assert_eq!(
             params.get("parallel_tool_calls"),
             Some(&serde_json::Value::Bool(true))

@@ -8,7 +8,8 @@ pub mod telemetry;
 pub use alert_context::AlertContext;
 pub use context::{InvestigationContext, InvestigationResources, InvestigationRuntime};
 pub use coordinator_runner::{
-    CoordinatorRunReport, InvestigationCoordinatorRunnerPort, RunCoordinatorInput,
+    CoordinatorRunReport, InvestigationCoordinatorRunnerPort, LlmExecutionMetadata,
+    RunCoordinatorInput,
 };
 pub use job::{InvestigationJob, InvestigationJobPayload};
 pub use progress_event::{

@@ -6,9 +6,6 @@ const DEFAULT_DATADOG_SITE: &str = "datadoghq.com";
 const DEFAULT_LANGUAGE: &str = "English";
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
 const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
-const DEFAULT_OPENAI_WEB_SEARCH_MODEL: &str = "gpt-5.4";
-const DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS: u64 = 20_000;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackAuthConfig {
     pub slack_bot_token: String,
@@ -20,8 +17,41 @@ pub struct InvestigationConfig {
     pub datadog_api_key: String,
     pub datadog_app_key: String,
     pub datadog_site: String,
-    pub openai_api_key: String,
+    pub llm: LlmConfig,
     pub language: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmConfig {
+    pub provider: LlmProviderConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LlmProviderConfig {
+    OpenAi(OpenAiLlmConfig),
+    Bedrock(BedrockLlmConfig),
+}
+
+impl LlmProviderConfig {
+    #[must_use]
+    pub fn provider_name(&self) -> &str {
+        match self {
+            Self::OpenAi(_) => "openai",
+            Self::Bedrock(_) => "bedrock",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenAiLlmConfig {
+    pub api_key: String,
+    pub coordinator_model: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BedrockLlmConfig {
+    pub region: String,
+    pub model_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,12 +60,6 @@ pub struct GitHubAppConfig {
     pub private_key: String,
     pub installation_id: u32,
     pub scope_org: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpenAiWebSearchConfig {
-    pub model: String,
-    pub timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,8 +73,7 @@ pub struct AppConfig {
     pub datadog_api_key: String,
     pub datadog_app_key: String,
     pub datadog_site: String,
-    pub openai_api_key: String,
-    pub openai_web_search: OpenAiWebSearchConfig,
+    pub llm: LlmConfig,
     pub github: GitHubAppConfig,
     pub language: String,
 }
@@ -93,8 +116,7 @@ fn load_app_config_with_env(env: &dyn EnvironmentReader) -> Result<AppConfig, En
         datadog_api_key: investigation_config.datadog_api_key,
         datadog_app_key: investigation_config.datadog_app_key,
         datadog_site: investigation_config.datadog_site,
-        openai_api_key: investigation_config.openai_api_key,
-        openai_web_search: default_openai_web_search_config(),
+        llm: investigation_config.llm,
         github: read_github_app_config(env)?,
         language: investigation_config.language,
     })
@@ -114,8 +136,42 @@ fn read_investigation_config(
         datadog_api_key: read_required_env(env, "DATADOG_API_KEY")?,
         datadog_app_key: read_required_env(env, "DATADOG_APP_KEY")?,
         datadog_site: read_or_default(env, "DATADOG_SITE", DEFAULT_DATADOG_SITE),
-        openai_api_key: read_required_env(env, "OPENAI_API_KEY")?,
+        llm: read_llm_config(env)?,
         language: read_or_default(env, "LANGUAGE", DEFAULT_LANGUAGE),
+    })
+}
+
+fn read_llm_config(env: &dyn EnvironmentReader) -> Result<LlmConfig, EnvConfigError> {
+    let provider = read_required_env(env, "LLM_PROVIDER")?;
+    let provider_config = match provider.as_str() {
+        "openai" => LlmProviderConfig::OpenAi(read_openai_llm_config(env)?),
+        "bedrock" => LlmProviderConfig::Bedrock(read_bedrock_llm_config(env)?),
+        _ => {
+            return Err(EnvConfigError::InvalidValue {
+                name: "LLM_PROVIDER".to_string(),
+                value: provider,
+            });
+        }
+    };
+
+    Ok(LlmConfig {
+        provider: provider_config,
+    })
+}
+
+fn read_openai_llm_config(env: &dyn EnvironmentReader) -> Result<OpenAiLlmConfig, EnvConfigError> {
+    Ok(OpenAiLlmConfig {
+        api_key: read_required_env(env, "LLM_OPENAI_API_KEY")?,
+        coordinator_model: read_required_env(env, "LLM_OPENAI_COORDINATOR_MODEL")?,
+    })
+}
+
+fn read_bedrock_llm_config(
+    env: &dyn EnvironmentReader,
+) -> Result<BedrockLlmConfig, EnvConfigError> {
+    Ok(BedrockLlmConfig {
+        region: read_required_env(env, "LLM_BEDROCK_REGION")?,
+        model_id: read_required_env(env, "LLM_BEDROCK_MODEL_ID")?,
     })
 }
 
@@ -126,19 +182,12 @@ fn read_github_app_config(env: &dyn EnvironmentReader) -> Result<GitHubAppConfig
     Ok(GitHubAppConfig {
         app_id: read_required_env(env, "GITHUB_APP_ID")?,
         private_key: private_key.replace("\\n", "\n"),
-        installation_id: read_required_positive_int(
+        installation_id: read_required_positive_u32(
             "GITHUB_APP_INSTALLATION_ID",
             &installation_id_raw,
         )?,
         scope_org: read_required_env(env, "GITHUB_SEARCH_SCOPE_ORG")?,
     })
-}
-
-fn default_openai_web_search_config() -> OpenAiWebSearchConfig {
-    OpenAiWebSearchConfig {
-        model: DEFAULT_OPENAI_WEB_SEARCH_MODEL.to_string(),
-        timeout_ms: DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS,
-    }
 }
 
 fn read_required_env(env: &dyn EnvironmentReader, name: &str) -> Result<String, EnvConfigError> {
@@ -157,17 +206,23 @@ fn read_or_default(env: &dyn EnvironmentReader, name: &str, default_value: &str)
     }
 }
 
-fn read_required_positive_int(name: &str, value: &str) -> Result<u32, EnvConfigError> {
-    parse_positive_u32(name, value)
+fn read_required_positive_u32(name: &str, value: &str) -> Result<u32, EnvConfigError> {
+    match value.parse::<u32>() {
+        Ok(number) if number > 0 => Ok(number),
+        _ => Err(EnvConfigError::InvalidValue {
+            name: name.to_string(),
+            value: value.to_string(),
+        }),
+    }
 }
 
-fn read_positive_int(
+fn read_positive_u32(
     env: &dyn EnvironmentReader,
     name: &str,
     default_value: u32,
 ) -> Result<u32, EnvConfigError> {
     match env.get(name) {
-        Some(value) if !value.is_empty() => parse_positive_u32(name, &value),
+        Some(value) if !value.is_empty() => read_required_positive_u32(name, &value),
         _ => Ok(default_value),
     }
 }
@@ -177,7 +232,7 @@ fn read_port(
     name: &str,
     default_value: u16,
 ) -> Result<u16, EnvConfigError> {
-    let parsed = read_positive_int(env, name, u32::from(default_value))?;
+    let parsed = read_positive_u32(env, name, u32::from(default_value))?;
     if parsed > 65_535 {
         return Err(EnvConfigError::InvalidValue {
             name: name.to_string(),
@@ -191,24 +246,14 @@ fn read_port(
     })
 }
 
-fn parse_positive_u32(name: &str, value: &str) -> Result<u32, EnvConfigError> {
-    match value.parse::<u32>() {
-        Ok(number) if number > 0 => Ok(number),
-        _ => Err(EnvConfigError::InvalidValue {
-            name: name.to_string(),
-            value: value.to_string(),
-        }),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_OPENAI_WEB_SEARCH_MODEL,
-        DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS, DEFAULT_WORKER_CONCURRENCY,
-    };
-    use super::{EnvironmentReader, load_app_config_with_env};
     use std::collections::HashMap;
+
+    use super::{
+        DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_WORKER_CONCURRENCY,
+        EnvironmentReader, LlmProviderConfig, load_app_config_with_env,
+    };
 
     struct MapEnvironment {
         values: HashMap<String, String>,
@@ -224,7 +269,15 @@ mod tests {
                 ),
                 ("DATADOG_API_KEY".to_string(), "dd-api-key".to_string()),
                 ("DATADOG_APP_KEY".to_string(), "dd-app-key".to_string()),
-                ("OPENAI_API_KEY".to_string(), "openai-api-key".to_string()),
+                ("LLM_PROVIDER".to_string(), "openai".to_string()),
+                (
+                    "LLM_OPENAI_API_KEY".to_string(),
+                    "openai-api-key".to_string(),
+                ),
+                (
+                    "LLM_OPENAI_COORDINATOR_MODEL".to_string(),
+                    "gpt-5.3-codex".to_string(),
+                ),
                 ("GITHUB_APP_ID".to_string(), "12345".to_string()),
                 (
                     "GITHUB_APP_PRIVATE_KEY".to_string(),
@@ -289,21 +342,57 @@ mod tests {
     }
 
     #[test]
-    fn uses_fixed_openai_web_search_settings_even_when_env_vars_are_set() {
+    fn loads_openai_llm_config() {
+        let env = MapEnvironment::from_overrides(&[]);
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        match config.llm.provider {
+            LlmProviderConfig::OpenAi(provider) => {
+                assert_eq!(provider.api_key, "openai-api-key");
+                assert_eq!(provider.coordinator_model, "gpt-5.3-codex");
+            }
+            LlmProviderConfig::Bedrock(_) => panic!("expected openai provider"),
+        }
+    }
+
+    #[test]
+    fn loads_bedrock_llm_config() {
         let env = MapEnvironment::from_overrides(&[
-            ("OPENAI_WEB_SEARCH_MODEL", "gpt-x"),
-            ("OPENAI_WEB_SEARCH_TIMEOUT_MS", "999999"),
+            ("LLM_PROVIDER", "bedrock"),
+            ("LLM_BEDROCK_REGION", "ap-northeast-1"),
+            (
+                "LLM_BEDROCK_MODEL_ID",
+                "anthropic.claude-3-7-sonnet-20250219-v1:0",
+            ),
         ]);
 
         let config = load_app_config_with_env(&env).expect("load app config");
 
+        match config.llm.provider {
+            LlmProviderConfig::Bedrock(provider) => {
+                assert_eq!(provider.region, "ap-northeast-1");
+                assert_eq!(
+                    provider.model_id,
+                    "anthropic.claude-3-7-sonnet-20250219-v1:0"
+                );
+            }
+            LlmProviderConfig::OpenAi(_) => panic!("expected bedrock provider"),
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_llm_provider() {
+        let env = MapEnvironment::from_overrides(&[("LLM_PROVIDER", "invalid")]);
+
+        let error = load_app_config_with_env(&env).expect_err("reject invalid provider");
+
         assert_eq!(
-            config.openai_web_search.model,
-            DEFAULT_OPENAI_WEB_SEARCH_MODEL
-        );
-        assert_eq!(
-            config.openai_web_search.timeout_ms,
-            DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS
+            error,
+            super::EnvConfigError::InvalidValue {
+                name: "LLM_PROVIDER".to_string(),
+                value: "invalid".to_string(),
+            }
         );
     }
 }

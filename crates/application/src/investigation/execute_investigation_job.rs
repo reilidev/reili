@@ -10,7 +10,7 @@ use reili_core::investigation::{
 use reili_core::investigation::{
     InvestigationContext, InvestigationCoordinatorRunnerPort, InvestigationProgressEventInput,
     InvestigationProgressEventPort, InvestigationResources, InvestigationRuntime,
-    RunCoordinatorInput,
+    LlmExecutionMetadata, RunCoordinatorInput,
 };
 use reili_core::messaging::slack::{
     SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
@@ -138,6 +138,7 @@ pub async fn execute_investigation_job(
                 &base_log_meta,
                 &build_llm_token_log_meta(&success.llm_telemetry),
             );
+            meta = merge_log_meta(&meta, &build_llm_execution_log_meta(&success.llm_execution));
             meta.insert(
                 "worker_job_duration_ms".to_string(),
                 Value::String(duration_ms.to_string()),
@@ -185,6 +186,7 @@ pub async fn execute_investigation_job(
 struct InvestigationExecutionSuccess {
     report_text: String,
     llm_telemetry: InvestigationLlmTelemetry,
+    llm_execution: LlmExecutionMetadata,
 }
 
 async fn run_investigation(
@@ -248,7 +250,15 @@ async fn run_investigation(
     Ok(InvestigationExecutionSuccess {
         report_text,
         llm_telemetry,
+        llm_execution: coordinator_report.execution,
     })
+}
+
+fn build_llm_execution_log_meta(execution: &LlmExecutionMetadata) -> InvestigationLogMeta {
+    string_log_meta([
+        ("llm_provider", execution.provider.clone()),
+        ("llm_model", execution.model.clone()),
+    ])
 }
 
 async fn post_slack_reply_stage(
@@ -528,6 +538,10 @@ mod tests {
             Ok(reili_core::investigation::CoordinatorRunReport {
                 result_text: "coordinator result".to_string(),
                 usage: USAGE_SNAPSHOT,
+                execution: reili_core::investigation::LlmExecutionMetadata {
+                    provider: "openai".to_string(),
+                    model: "gpt-test".to_string(),
+                },
             })
         }
     }

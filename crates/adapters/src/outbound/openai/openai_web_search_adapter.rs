@@ -12,11 +12,11 @@ use serde_json::{Value, json};
 const MAX_CITATIONS: usize = 10;
 const MAX_SUMMARY_CHARS: usize = 4_000;
 const MAX_QUERY_CHARS: usize = 500;
+const DEFAULT_OPENAI_WEB_SEARCH_MODEL: &str = "gpt-5.4";
+const DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS: u64 = 20_000;
 
 pub struct OpenAiWebSearchAdapterConfig {
     pub api_key: String,
-    pub model: String,
-    pub timeout_ms: u64,
 }
 
 pub struct OpenAiWebSearchAdapter {
@@ -29,14 +29,14 @@ pub struct OpenAiWebSearchAdapter {
 impl OpenAiWebSearchAdapter {
     pub fn new(config: OpenAiWebSearchAdapterConfig) -> Self {
         let client = Client::builder()
-            .timeout(Duration::from_millis(config.timeout_ms))
+            .timeout(Duration::from_millis(DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS))
             .build()
             .expect("build reqwest client for web search");
 
         Self {
             client,
             api_key: config.api_key,
-            model: config.model,
+            model: DEFAULT_OPENAI_WEB_SEARCH_MODEL.to_string(),
             base_url: "https://api.openai.com".to_string(),
         }
     }
@@ -340,8 +340,6 @@ mod tests {
     fn builds_request_body_with_web_search_tool() {
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
             api_key: "test-key".to_string(),
-            model: "gpt-5".to_string(),
-            timeout_ms: 20_000,
         });
 
         let input = WebSearchInput {
@@ -460,8 +458,6 @@ mod tests {
 
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
             api_key: "test-key".to_string(),
-            model: "gpt-5".to_string(),
-            timeout_ms: 5_000,
         })
         .with_base_url(server.uri());
 
@@ -488,8 +484,6 @@ mod tests {
 
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
             api_key: "test-key".to_string(),
-            model: "gpt-5".to_string(),
-            timeout_ms: 5_000,
         })
         .with_base_url(server.uri());
 
@@ -515,8 +509,6 @@ mod tests {
 
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
             api_key: "test-key".to_string(),
-            model: "gpt-5".to_string(),
-            timeout_ms: 5_000,
         })
         .with_base_url(server.uri());
 
@@ -535,8 +527,6 @@ mod tests {
     async fn rejects_empty_query() {
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
             api_key: "test-key".to_string(),
-            model: "gpt-5".to_string(),
-            timeout_ms: 5_000,
         });
 
         let err = adapter
@@ -554,8 +544,6 @@ mod tests {
     async fn rejects_query_exceeding_max_length() {
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
             api_key: "test-key".to_string(),
-            model: "gpt-5".to_string(),
-            timeout_ms: 5_000,
         });
 
         let long_query = "a".repeat(501);

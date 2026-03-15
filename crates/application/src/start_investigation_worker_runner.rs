@@ -561,6 +561,10 @@ mod tests {
             Ok(reili_core::investigation::CoordinatorRunReport {
                 result_text: "coordinator result".to_string(),
                 usage: USAGE_SNAPSHOT,
+                execution: reili_core::investigation::LlmExecutionMetadata {
+                    provider: "openai".to_string(),
+                    model: "gpt-test".to_string(),
+                },
             })
         }
     }

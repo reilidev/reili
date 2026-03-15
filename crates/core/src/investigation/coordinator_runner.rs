@@ -7,9 +7,16 @@ use crate::error::AgentRunFailedError;
 use super::{AlertContext, InvestigationContext, InvestigationProgressEventPort, LlmUsageSnapshot};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmExecutionMetadata {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoordinatorRunReport {
     pub result_text: String,
     pub usage: LlmUsageSnapshot,
+    pub execution: LlmExecutionMetadata,
 }
 
 pub struct RunCoordinatorInput {
