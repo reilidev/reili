@@ -16,6 +16,4 @@ pub use progress_event::{
     COORDINATOR_PROGRESS_OWNER_ID, InvestigationProgressEvent, InvestigationProgressEventInput,
     InvestigationProgressEventPort,
 };
-pub use telemetry::{
-    BuildInvestigationLlmTelemetryInput, InvestigationLlmTelemetry, LlmUsageSnapshot,
-};
+pub use telemetry::LlmUsageSnapshot;

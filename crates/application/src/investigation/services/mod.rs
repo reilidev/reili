@@ -1,9 +1,8 @@
-pub mod build_llm_telemetry;
 pub mod coordinator_progress_event_handler;
 pub mod investigation_progress_stream_session;
+pub mod llm_usage_snapshot;
 mod progress_stream_state;
 
-pub use build_llm_telemetry::{build_investigation_llm_telemetry, create_empty_llm_usage_snapshot};
 pub use coordinator_progress_event_handler::{
     CoordinatorProgressEventHandler, CoordinatorProgressEventHandlerInput,
 };
@@ -14,3 +13,4 @@ pub use investigation_progress_stream_session::{
     InvestigationProgressStreamSessionFactory, InvestigationProgressTaskUpdateInput,
     create_investigation_progress_stream_session_factory,
 };
+pub use llm_usage_snapshot::create_empty_llm_usage_snapshot;

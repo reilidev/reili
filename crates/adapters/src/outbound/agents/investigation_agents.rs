@@ -17,7 +17,8 @@ use super::tools::{
     SearchWebTool,
 };
 use super::{
-    llm_provider_settings::LlmProviderSettings, progress_event_hook::ProgressEventHook,
+    llm_provider_settings::LlmProviderSettings, llm_usage_collector::LlmUsageCollector,
+    progress_event_hook::ProgressEventHook,
     progress_reporting_sub_agent_tool::ProgressReportingSubAgentTool,
 };
 
@@ -41,6 +42,7 @@ where
     pub runtime: InvestigationRuntime,
     pub on_progress_event: Arc<dyn InvestigationProgressEventPort>,
     pub language: String,
+    pub usage_collector: LlmUsageCollector,
 }
 
 #[must_use]
@@ -57,6 +59,7 @@ where
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: LOGS_PROGRESS_OWNER_ID.to_string(),
+        usage_collector: input.usage_collector.clone(),
     });
     let metrics_agent = build_metrics_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
@@ -66,6 +69,7 @@ where
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: METRICS_PROGRESS_OWNER_ID.to_string(),
+        usage_collector: input.usage_collector.clone(),
     });
     let events_agent = build_events_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
@@ -75,6 +79,7 @@ where
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: EVENTS_PROGRESS_OWNER_ID.to_string(),
+        usage_collector: input.usage_collector.clone(),
     });
     let github_agent = build_github_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
@@ -84,6 +89,7 @@ where
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: GITHUB_PROGRESS_OWNER_ID.to_string(),
+        usage_collector: input.usage_collector.clone(),
     });
 
     input
@@ -161,6 +167,7 @@ where
     language: String,
     on_progress_event: Arc<dyn InvestigationProgressEventPort>,
     owner_id: String,
+    usage_collector: LlmUsageCollector,
 }
 
 fn build_logs_agent<C>(input: BuildSpecialistAgentInput<C>) -> SpecialistAgent<C>
@@ -179,6 +186,7 @@ where
         .hook(ProgressEventHook::new(
             input.owner_id.clone(),
             Arc::clone(&input.on_progress_event),
+            input.usage_collector,
         ))
         .tool(ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::clone(&input.on_progress_event),
@@ -205,6 +213,7 @@ where
         .hook(ProgressEventHook::new(
             input.owner_id.clone(),
             Arc::clone(&input.on_progress_event),
+            input.usage_collector,
         ))
         .tool(ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::clone(&input.on_progress_event),
@@ -231,6 +240,7 @@ where
         .hook(ProgressEventHook::new(
             input.owner_id.clone(),
             Arc::clone(&input.on_progress_event),
+            input.usage_collector,
         ))
         .tool(ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::clone(&input.on_progress_event),
@@ -260,6 +270,7 @@ where
         .hook(ProgressEventHook::new(
             input.owner_id.clone(),
             Arc::clone(&input.on_progress_event),
+            input.usage_collector,
         ))
         .tool(ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::clone(&input.on_progress_event),

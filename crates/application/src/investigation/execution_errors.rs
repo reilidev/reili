@@ -63,10 +63,9 @@ pub fn resolve_investigation_failure_error(
 #[cfg(test)]
 mod tests {
     use reili_core::error::{AgentRunFailedError, PortError};
-    use reili_core::investigation::{BuildInvestigationLlmTelemetryInput, LlmUsageSnapshot};
+    use reili_core::investigation::LlmUsageSnapshot;
 
     use super::{ExecuteInvestigationJobError, resolve_investigation_failure_error};
-    use crate::investigation::services::build_investigation_llm_telemetry;
 
     #[test]
     fn resolves_usage_for_coordinator_failure() {
@@ -83,15 +82,8 @@ mod tests {
 
     #[test]
     fn resolves_usage_for_wrapped_execution_failure() {
-        let llm_telemetry =
-            build_investigation_llm_telemetry(BuildInvestigationLlmTelemetryInput {
-                usage: snapshot(3),
-            });
         let error = ExecuteInvestigationJobError::InvestigationExecutionFailed(
-            reili_core::error::InvestigationExecutionFailedError::new(
-                "reply failed",
-                llm_telemetry,
-            ),
+            reili_core::error::InvestigationExecutionFailedError::new("reply failed", snapshot(3)),
         );
 
         let resolved = resolve_investigation_failure_error(&error);

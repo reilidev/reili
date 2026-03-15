@@ -5,6 +5,9 @@ use reili_core::investigation::{
 };
 use rig::agent::{HookAction, PromptHook};
 use rig::completion::CompletionModel;
+use rig::message::Message;
+
+use super::llm_usage_collector::LlmUsageCollector;
 
 const REPORT_PROGRESS_TOOL_NAME: &str = "report_progress";
 
@@ -12,16 +15,19 @@ const REPORT_PROGRESS_TOOL_NAME: &str = "report_progress";
 pub struct ProgressEventHook {
     owner_id: String,
     on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+    usage_collector: LlmUsageCollector,
 }
 
 impl ProgressEventHook {
     pub fn new(
         owner_id: String,
         on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+        usage_collector: LlmUsageCollector,
     ) -> Self {
         Self {
             owner_id,
             on_progress_event,
+            usage_collector,
         }
     }
 
@@ -76,12 +82,47 @@ impl ProgressEventHook {
             );
         }
     }
+
+    fn track_completion_call(&self) {
+        self.usage_collector.record_request();
+    }
+
+    fn track_completion_response(&self, usage: rig::completion::Usage) {
+        self.usage_collector.record_usage(&usage);
+    }
 }
 
 impl<M> PromptHook<M> for ProgressEventHook
 where
     M: CompletionModel,
 {
+    fn on_completion_call(
+        &self,
+        _prompt: &Message,
+        _history: &[Message],
+    ) -> impl std::future::Future<Output = HookAction> + Send {
+        let hook = self.clone();
+
+        async move {
+            hook.track_completion_call();
+            HookAction::cont()
+        }
+    }
+
+    fn on_completion_response(
+        &self,
+        _prompt: &Message,
+        response: &rig::completion::CompletionResponse<M::Response>,
+    ) -> impl std::future::Future<Output = HookAction> + Send {
+        let hook = self.clone();
+        let usage = response.usage;
+
+        async move {
+            hook.track_completion_response(usage);
+            HookAction::cont()
+        }
+    }
+
     fn on_tool_call(
         &self,
         tool_name: &str,
@@ -129,6 +170,7 @@ mod tests {
     };
 
     use super::ProgressEventHook;
+    use crate::outbound::agents::llm_usage_collector::LlmUsageCollector;
 
     struct MockProgressEventPort {
         calls: Arc<Mutex<Vec<InvestigationProgressEventInput>>>,
@@ -150,6 +192,7 @@ mod tests {
             Arc::new(MockProgressEventPort {
                 calls: Arc::clone(&calls),
             }),
+            LlmUsageCollector::new(),
         );
 
         hook.publish_tool_started("search_datadog_logs", "task-1")
@@ -175,6 +218,7 @@ mod tests {
             Arc::new(MockProgressEventPort {
                 calls: Arc::clone(&calls),
             }),
+            LlmUsageCollector::new(),
         );
 
         hook.publish_tool_completed("query_datadog_metrics", "task-2")
@@ -200,6 +244,7 @@ mod tests {
             Arc::new(MockProgressEventPort {
                 calls: Arc::clone(&calls),
             }),
+            LlmUsageCollector::new(),
         );
 
         hook.publish_tool_started("report_progress", "task-3").await;
@@ -207,5 +252,28 @@ mod tests {
             .await;
 
         assert!(calls.lock().expect("lock calls").is_empty());
+    }
+
+    #[test]
+    fn tracks_requests_and_usage() {
+        let collector = LlmUsageCollector::new();
+        let hook = ProgressEventHook::new(
+            "investigate_logs".to_string(),
+            Arc::new(MockProgressEventPort {
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }),
+            collector.clone(),
+        );
+
+        hook.track_completion_call();
+        hook.track_completion_response(rig::completion::Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+            total_tokens: 30,
+            cached_input_tokens: 0,
+        });
+
+        assert_eq!(collector.snapshot().requests, 1);
+        assert_eq!(collector.snapshot().total_tokens, 30);
     }
 }

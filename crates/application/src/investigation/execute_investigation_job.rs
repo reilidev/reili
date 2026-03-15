@@ -5,12 +5,9 @@ use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use reili_core::error::PortError;
 use reili_core::investigation::{
-    BuildInvestigationLlmTelemetryInput, InvestigationJobPayload, InvestigationLlmTelemetry,
-};
-use reili_core::investigation::{
-    InvestigationContext, InvestigationCoordinatorRunnerPort, InvestigationProgressEventInput,
-    InvestigationProgressEventPort, InvestigationResources, InvestigationRuntime,
-    LlmExecutionMetadata, RunCoordinatorInput,
+    InvestigationContext, InvestigationCoordinatorRunnerPort, InvestigationJobPayload,
+    InvestigationProgressEventInput, InvestigationProgressEventPort, InvestigationResources,
+    InvestigationRuntime, LlmExecutionMetadata, LlmUsageSnapshot, RunCoordinatorInput,
 };
 use reili_core::messaging::slack::{
     SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
@@ -24,7 +21,7 @@ use super::services::{
     CoordinatorProgressEventHandler, CoordinatorProgressEventHandlerInput,
     CreateInvestigationProgressStreamSessionFactoryInput,
     CreateInvestigationProgressStreamSessionInput, InvestigationProgressStreamSession,
-    InvestigationProgressStreamSessionFactory, build_investigation_llm_telemetry,
+    InvestigationProgressStreamSessionFactory,
     create_investigation_progress_stream_session_factory,
 };
 use super::slack_thread_context_loader::{
@@ -129,14 +126,14 @@ pub async fn execute_investigation_job(
                 input.payload.message.channel.clone(),
                 thread_ts,
                 success.report_text,
-                success.llm_telemetry.clone(),
+                success.llm_usage.clone(),
             )
             .await?;
 
             let duration_ms = started_at.elapsed().as_millis();
             let mut meta = merge_log_meta(
                 &base_log_meta,
-                &build_llm_token_log_meta(&success.llm_telemetry),
+                &build_llm_token_log_meta(&success.llm_usage),
             );
             meta = merge_log_meta(&meta, &build_llm_execution_log_meta(&success.llm_execution));
             meta.insert(
@@ -157,14 +154,12 @@ pub async fn execute_investigation_job(
             }
 
             let failure_error = resolve_investigation_failure_error(&error);
-            let llm_telemetry =
-                build_investigation_llm_telemetry(BuildInvestigationLlmTelemetryInput {
-                    usage: failure_error.usage,
-                });
 
             let duration_ms = started_at.elapsed().as_millis();
-            let mut meta =
-                merge_log_meta(&base_log_meta, &build_llm_token_log_meta(&llm_telemetry));
+            let mut meta = merge_log_meta(
+                &base_log_meta,
+                &build_llm_token_log_meta(&failure_error.usage),
+            );
             meta.insert(
                 "worker_job_duration_ms".to_string(),
                 Value::String(duration_ms.to_string()),
@@ -185,7 +180,7 @@ pub async fn execute_investigation_job(
 
 struct InvestigationExecutionSuccess {
     report_text: String,
-    llm_telemetry: InvestigationLlmTelemetry,
+    llm_usage: LlmUsageSnapshot,
     llm_execution: LlmExecutionMetadata,
 }
 
@@ -238,9 +233,6 @@ async fn run_investigation(
         .await
         .map_err(ExecuteInvestigationJobError::from)?;
 
-    let llm_telemetry = build_investigation_llm_telemetry(BuildInvestigationLlmTelemetryInput {
-        usage: coordinator_report.usage,
-    });
     let report_text = if coordinator_report.result_text.is_empty() {
         FALLBACK_REPORT_TEXT.to_string()
     } else {
@@ -249,7 +241,7 @@ async fn run_investigation(
 
     Ok(InvestigationExecutionSuccess {
         report_text,
-        llm_telemetry,
+        llm_usage: coordinator_report.usage,
         llm_execution: coordinator_report.execution,
     })
 }
@@ -266,7 +258,7 @@ async fn post_slack_reply_stage(
     channel: String,
     thread_ts: String,
     report_text: String,
-    llm_telemetry: InvestigationLlmTelemetry,
+    llm_usage: LlmUsageSnapshot,
 ) -> Result<(), ExecuteInvestigationJobError> {
     slack_reply_port
         .post_thread_reply(SlackThreadReplyInput {
@@ -277,30 +269,17 @@ async fn post_slack_reply_stage(
         .await
         .map_err(|error| {
             ExecuteInvestigationJobError::InvestigationExecutionFailed(
-                reili_core::error::InvestigationExecutionFailedError::new(
-                    error.message,
-                    llm_telemetry,
-                ),
+                reili_core::error::InvestigationExecutionFailedError::new(error.message, llm_usage),
             )
         })
 }
 
-fn build_llm_token_log_meta(telemetry: &InvestigationLlmTelemetry) -> InvestigationLogMeta {
+fn build_llm_token_log_meta(usage: &LlmUsageSnapshot) -> InvestigationLogMeta {
     string_log_meta([
-        (
-            "llm_tokens_input_total",
-            telemetry.total.input_tokens.to_string(),
-        ),
-        (
-            "llm_tokens_output_total",
-            telemetry.total.output_tokens.to_string(),
-        ),
-        ("llm_tokens_total", telemetry.total.total_tokens.to_string()),
-        ("llm_requests_total", telemetry.total.requests.to_string()),
-        (
-            "llm_tokens_total_coordinator",
-            telemetry.coordinator.total_tokens.to_string(),
-        ),
+        ("llm_tokens_input_total", usage.input_tokens.to_string()),
+        ("llm_tokens_output_total", usage.output_tokens.to_string()),
+        ("llm_tokens_total", usage.total_tokens.to_string()),
+        ("llm_requests_total", usage.requests.to_string()),
     ])
 }
 
@@ -872,5 +851,21 @@ mod tests {
         let captured = coordinator_runner.captured();
         assert_eq!(captured.len(), 1);
         assert!(captured[0].alert_context.thread_transcript.is_empty());
+    }
+
+    #[test]
+    fn token_log_meta_omits_coordinator_total_tokens() {
+        let meta = super::build_llm_token_log_meta(&LlmUsageSnapshot {
+            requests: 2,
+            input_tokens: 40,
+            output_tokens: 60,
+            total_tokens: 100,
+        });
+
+        assert_eq!(
+            meta.get("llm_tokens_total"),
+            Some(&serde_json::Value::String("100".to_string()))
+        );
+        assert!(!meta.contains_key("llm_tokens_total_coordinator"));
     }
 }

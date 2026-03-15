@@ -4,17 +4,17 @@ use reili_core::error::AgentRunFailedError;
 use reili_core::investigation::{
     COORDINATOR_PROGRESS_OWNER_ID, CoordinatorRunReport, InvestigationProgressEvent,
     InvestigationProgressEventInput, InvestigationProgressEventPort, LlmExecutionMetadata,
-    RunCoordinatorInput,
+    LlmUsageSnapshot, RunCoordinatorInput,
 };
-use rig::completion::{Prompt, Usage};
+use rig::completion::Prompt;
 use rig::prelude::CompletionClient;
 
 use super::investigation_agents::{
     BuildCoordinatorAgentInput, build_coordinator_agent, build_coordinator_prompt,
 };
 use super::llm_provider_settings::LlmProviderSettings;
-use super::llm_usage_mapper::{MapRigUsageToSnapshotInput, map_rig_usage_to_llm_usage_snapshot};
-use super::request_count_hook::RequestCountHook;
+use super::llm_usage_collector::LlmUsageCollector;
+use super::llm_usage_tracking_hook::LlmUsageTrackingHook;
 
 pub struct RunLlmCoordinatorInput<C>
 where
@@ -35,7 +35,8 @@ where
     C: CompletionClient + Clone,
     C::CompletionModel: 'static,
 {
-    let request_count_hook = RequestCountHook::new();
+    let usage_collector = LlmUsageCollector::new();
+    let usage_tracking_hook = LlmUsageTrackingHook::new(usage_collector.clone());
     let coordinator_prompt = build_coordinator_prompt(&input.run.alert_context);
     let coordinator_agent = build_coordinator_agent(BuildCoordinatorAgentInput {
         client: input.client,
@@ -46,37 +47,32 @@ where
         runtime: input.run.context.runtime,
         on_progress_event: Arc::clone(&input.run.on_progress_event),
         language: input.language,
+        usage_collector: usage_collector.clone(),
     });
 
     let prompt_response = coordinator_agent
         .prompt(coordinator_prompt)
         .max_turns(input.settings.coordinator_max_turns)
         .with_tool_concurrency(input.settings.tool_concurrency)
-        .with_hook(request_count_hook.clone())
+        .with_hook(usage_tracking_hook)
         .extended_details()
         .await
         .map_err(|error| {
             create_failed_error(CreateCoordinatorRunnerFailedErrorInput {
-                usage: None,
-                requests: request_count_hook.request_count(),
+                usage: usage_collector.snapshot(),
                 cause_message: error.to_string(),
             })
         })?;
-    let usage = Some(prompt_response.usage);
 
     publish_message_output_created_event(PublishMessageOutputCreatedEventInput {
         on_progress_event: Arc::clone(&input.run.on_progress_event),
-        usage,
-        requests: request_count_hook.request_count(),
+        usage: usage_collector.snapshot(),
     })
     .await?;
 
     Ok(CoordinatorRunReport {
         result_text: prompt_response.output,
-        usage: map_rig_usage_to_llm_usage_snapshot(MapRigUsageToSnapshotInput {
-            usage,
-            requests: request_count_hook.request_count(),
-        }),
+        usage: usage_collector.snapshot(),
         execution: LlmExecutionMetadata {
             provider: input.settings.provider,
             model: input.settings.coordinator_model,
@@ -86,8 +82,7 @@ where
 
 struct PublishMessageOutputCreatedEventInput {
     on_progress_event: Arc<dyn InvestigationProgressEventPort>,
-    usage: Option<Usage>,
-    requests: u32,
+    usage: LlmUsageSnapshot,
 }
 
 async fn publish_message_output_created_event(
@@ -103,7 +98,6 @@ async fn publish_message_output_created_event(
         .map_err(|error| {
             create_failed_error(CreateCoordinatorRunnerFailedErrorInput {
                 usage: input.usage,
-                requests: input.requests,
                 cause_message: format!("Failed to publish progress event: {error}"),
             })
         })?;
@@ -112,16 +106,10 @@ async fn publish_message_output_created_event(
 }
 
 struct CreateCoordinatorRunnerFailedErrorInput {
-    usage: Option<Usage>,
-    requests: u32,
+    usage: LlmUsageSnapshot,
     cause_message: String,
 }
 
 fn create_failed_error(input: CreateCoordinatorRunnerFailedErrorInput) -> AgentRunFailedError {
-    let usage = map_rig_usage_to_llm_usage_snapshot(MapRigUsageToSnapshotInput {
-        usage: input.usage,
-        requests: input.requests,
-    });
-
-    AgentRunFailedError::new(usage, input.cause_message)
+    AgentRunFailedError::new(input.usage, input.cause_message)
 }

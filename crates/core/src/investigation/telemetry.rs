@@ -9,22 +9,9 @@ pub struct LlmUsageSnapshot {
     pub total_tokens: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InvestigationLlmTelemetry {
-    pub coordinator: LlmUsageSnapshot,
-    pub total: LlmUsageSnapshot,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BuildInvestigationLlmTelemetryInput {
-    pub usage: LlmUsageSnapshot,
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{BuildInvestigationLlmTelemetryInput, InvestigationLlmTelemetry, LlmUsageSnapshot};
+    use super::LlmUsageSnapshot;
 
     fn snapshot(value: u64) -> LlmUsageSnapshot {
         LlmUsageSnapshot {
@@ -36,24 +23,12 @@ mod tests {
     }
 
     #[test]
-    fn serializes_and_deserializes_llm_types() {
-        let telemetry = InvestigationLlmTelemetry {
-            coordinator: snapshot(10),
-            total: snapshot(10),
-        };
-        let build_input = BuildInvestigationLlmTelemetryInput {
-            usage: snapshot(10),
-        };
+    fn serializes_and_deserializes_llm_usage_snapshot() {
+        let value = snapshot(10);
 
-        let telemetry_json = serde_json::to_string(&telemetry).expect("serialize telemetry");
-        let input_json = serde_json::to_string(&build_input).expect("serialize build input");
+        let json = serde_json::to_string(&value).expect("serialize snapshot");
+        let restored: LlmUsageSnapshot = serde_json::from_str(&json).expect("deserialize snapshot");
 
-        let restored_telemetry: InvestigationLlmTelemetry =
-            serde_json::from_str(&telemetry_json).expect("deserialize telemetry");
-        let restored_input: BuildInvestigationLlmTelemetryInput =
-            serde_json::from_str(&input_json).expect("deserialize build input");
-
-        assert_eq!(restored_telemetry, telemetry);
-        assert_eq!(restored_input, build_input);
+        assert_eq!(restored, value);
     }
 }

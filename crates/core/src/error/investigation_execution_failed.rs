@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::investigation::{InvestigationLlmTelemetry, LlmUsageSnapshot};
+use crate::investigation::LlmUsageSnapshot;
 
 pub const INVESTIGATION_EXECUTION_FAILED_CODE: &str = "INVESTIGATION_EXECUTION_FAILED";
 
@@ -16,10 +16,10 @@ impl InvestigationExecutionFailedError {
         INVESTIGATION_EXECUTION_FAILED_CODE
     }
 
-    pub fn new(cause_message: impl Into<String>, llm_telemetry: InvestigationLlmTelemetry) -> Self {
+    pub fn new(cause_message: impl Into<String>, usage: LlmUsageSnapshot) -> Self {
         Self {
             cause_message: cause_message.into(),
-            usage: llm_telemetry.coordinator,
+            usage,
         }
     }
 }
