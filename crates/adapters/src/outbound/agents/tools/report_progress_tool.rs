@@ -147,7 +147,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let tool = ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::new(MockProgressEventPort::successful(Arc::clone(&calls))),
-            owner_id: "coordinator".to_string(),
+            owner_id: "investigation_lead".to_string(),
         });
 
         let output = tool
@@ -162,7 +162,7 @@ mod tests {
         assert_eq!(
             calls.lock().expect("lock calls").as_slice(),
             &[InvestigationProgressEventInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 event: InvestigationProgressEvent::ReasoningSummaryCreated {
                     title: "Collect logs".to_string(),
                     summary: "Investigate recent errors".to_string(),
@@ -176,7 +176,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let tool = ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::new(MockProgressEventPort::failing(Arc::clone(&calls))),
-            owner_id: "coordinator".to_string(),
+            owner_id: "investigation_lead".to_string(),
         });
 
         let output = tool

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::outbound::agents::{
-    BedrockInvestigationCoordinatorRunner, BedrockInvestigationCoordinatorRunnerInput,
-    OpenAiInvestigationCoordinatorRunner, OpenAiInvestigationCoordinatorRunnerInput,
+    BedrockInvestigationLeadRunner, BedrockInvestigationLeadRunnerInput,
+    OpenAiInvestigationLeadRunner, OpenAiInvestigationLeadRunnerInput,
 };
 use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
 use reili_adapters::outbound::datadog::DatadogEventSearchAdapter;
@@ -27,7 +27,7 @@ use reili_application::{
 };
 use reili_core::error::PortError;
 use reili_core::investigation::InvestigationJob;
-use reili_core::investigation::{InvestigationCoordinatorRunnerPort, InvestigationResources};
+use reili_core::investigation::{InvestigationLeadRunnerPort, InvestigationResources};
 use reili_core::knowledge::WebSearchPort;
 use reili_core::messaging::slack::SlackMessageHandlerPort;
 use reili_core::messaging::slack::{
@@ -71,7 +71,7 @@ pub enum RuntimeBootstrapError {
 
 struct ProviderPorts {
     web_search_port: Arc<dyn WebSearchPort>,
-    coordinator_runner: Arc<dyn InvestigationCoordinatorRunnerPort>,
+    investigation_lead_runner: Arc<dyn InvestigationLeadRunnerPort>,
 }
 
 struct CreateProviderPortsInput<'a> {
@@ -153,7 +153,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         github_pull_request_port,
         web_search_port: provider_ports.web_search_port,
     };
-    let coordinator_runner = provider_ports.coordinator_runner;
+    let investigation_lead_runner = provider_ports.investigation_lead_runner;
     let slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
@@ -169,7 +169,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
                 slack_progress_stream_port,
                 slack_thread_history_port,
                 investigation_resources,
-                coordinator_runner,
+                investigation_lead_runner,
                 logger: Arc::clone(&logger),
             },
             worker_concurrency: config.worker_concurrency,
@@ -197,10 +197,10 @@ async fn create_provider_ports(
             web_search_port: Arc::new(OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
                 api_key: config.api_key.clone(),
             })),
-            coordinator_runner: Arc::new(OpenAiInvestigationCoordinatorRunner::new(
-                OpenAiInvestigationCoordinatorRunnerInput {
+            investigation_lead_runner: Arc::new(OpenAiInvestigationLeadRunner::new(
+                OpenAiInvestigationLeadRunnerInput {
                     api_key: config.api_key.clone(),
-                    coordinator_model: config.coordinator_model.clone(),
+                    investigation_lead_model: config.investigation_lead_model.clone(),
                     datadog_site: input.datadog_site,
                     github_scope_org: input.github_scope_org,
                     language: input.language,
@@ -213,8 +213,8 @@ async fn create_provider_ports(
                     model_id: config.model_id.clone(),
                 },
             )),
-            coordinator_runner: Arc::new(BedrockInvestigationCoordinatorRunner::new(
-                BedrockInvestigationCoordinatorRunnerInput {
+            investigation_lead_runner: Arc::new(BedrockInvestigationLeadRunner::new(
+                BedrockInvestigationLeadRunnerInput {
                     region: config.region.clone(),
                     model_id: config.model_id.clone(),
                     datadog_site: input.datadog_site,

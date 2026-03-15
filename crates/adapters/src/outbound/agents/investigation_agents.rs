@@ -3,7 +3,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use reili_core::investigation::AlertContext;
 use reili_core::investigation::{
-    COORDINATOR_PROGRESS_OWNER_ID, InvestigationProgressEventPort, InvestigationResources,
+    INVESTIGATION_LEAD_PROGRESS_OWNER_ID, InvestigationProgressEventPort, InvestigationResources,
     InvestigationRuntime,
 };
 use rig::agent::Agent;
@@ -30,7 +30,7 @@ const GITHUB_PROGRESS_OWNER_ID: &str = "investigate_github";
 type CompletionAgent<C> = Agent<<C as CompletionClient>::CompletionModel>;
 type SpecialistAgent<C> = Agent<<C as CompletionClient>::CompletionModel, ProgressEventHook>;
 
-pub struct BuildCoordinatorAgentInput<C>
+pub struct BuildInvestigationLeadAgentInput<C>
 where
     C: CompletionClient,
 {
@@ -46,7 +46,9 @@ where
 }
 
 #[must_use]
-pub fn build_coordinator_agent<C>(input: BuildCoordinatorAgentInput<C>) -> CompletionAgent<C>
+pub fn build_investigation_lead_agent<C>(
+    input: BuildInvestigationLeadAgentInput<C>,
+) -> CompletionAgent<C>
 where
     C: CompletionClient + Clone,
     C::CompletionModel: 'static,
@@ -94,17 +96,17 @@ where
 
     input
         .client
-        .agent(input.settings.coordinator_model.clone())
-        .name("Coordinator")
-        .preamble(&build_coordinator_instructions(
-            BuildCoordinatorInstructionsInput {
+        .agent(input.settings.investigation_lead_model.clone())
+        .name("InvestigationLead")
+        .preamble(&build_investigation_lead_instructions(
+            BuildInvestigationLeadInstructionsInput {
                 datadog_site: input.datadog_site,
                 github_scope_org: input.github_scope_org,
                 runtime: input.runtime,
                 language: input.language,
             },
         ))
-        .default_max_turns(input.settings.coordinator_max_turns)
+        .default_max_turns(input.settings.investigation_lead_max_turns)
         .additional_params(input.settings.additional_params.clone())
         .tool(AggregateDatadogLogsByFacetTool::new(Arc::clone(
             &input.resources,
@@ -114,7 +116,7 @@ where
         )))
         .tool(ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::clone(&input.on_progress_event),
-            owner_id: COORDINATOR_PROGRESS_OWNER_ID.to_string(),
+            owner_id: INVESTIGATION_LEAD_PROGRESS_OWNER_ID.to_string(),
         }))
         .tool(ProgressReportingSubAgentTool::new(
             logs_agent,
@@ -141,7 +143,7 @@ where
 }
 
 #[must_use]
-pub fn build_coordinator_prompt(alert_context: &AlertContext) -> String {
+pub fn build_investigation_lead_prompt(alert_context: &AlertContext) -> String {
     let investigation_prompt = "Investigate the following user input and respond with the most appropriate investigation or direct answer.
 The input may be an alert, request, question, link, or partial context.";
     let trigger_message_section = format!(
@@ -304,14 +306,14 @@ where
         .build()
 }
 
-struct BuildCoordinatorInstructionsInput {
+struct BuildInvestigationLeadInstructionsInput {
     datadog_site: String,
     github_scope_org: String,
     runtime: InvestigationRuntime,
     language: String,
 }
 
-fn build_coordinator_instructions(input: BuildCoordinatorInstructionsInput) -> String {
+fn build_investigation_lead_instructions(input: BuildInvestigationLeadInstructionsInput) -> String {
     let datadog_site = if input.datadog_site.is_empty() {
         "datadoghq.com".to_string()
     } else {
@@ -435,9 +437,10 @@ mod tests {
         CreateOpenAiProviderSettingsInput, create_openai_provider_settings,
     };
     use super::{
-        BuildCoordinatorInstructionsInput, BuildGithubInstructionsInput,
-        build_coordinator_instructions, build_coordinator_prompt, build_events_instructions,
-        build_github_instructions, build_logs_instructions, build_metrics_instructions,
+        BuildGithubInstructionsInput, BuildInvestigationLeadInstructionsInput,
+        build_events_instructions, build_github_instructions,
+        build_investigation_lead_instructions, build_investigation_lead_prompt,
+        build_logs_instructions, build_metrics_instructions,
     };
 
     fn sample_alert_context() -> AlertContext {
@@ -449,8 +452,8 @@ mod tests {
     }
 
     #[test]
-    fn builds_coordinator_prompt_with_thread_context() {
-        let prompt = build_coordinator_prompt(&sample_alert_context());
+    fn builds_investigation_lead_prompt_with_thread_context() {
+        let prompt = build_investigation_lead_prompt(&sample_alert_context());
         assert!(prompt.contains("Trigger Message: Please investigate this alert"));
         assert!(prompt.contains("Thread Context:\nthread context"));
     }
@@ -458,7 +461,7 @@ mod tests {
     #[test]
     fn provider_settings_enable_parallel_tool_calls() {
         let settings = create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
-            coordinator_model: "gpt-5.3-codex".to_string(),
+            investigation_lead_model: "gpt-5.3-codex".to_string(),
         });
         let params = settings.additional_params;
 
@@ -473,18 +476,19 @@ mod tests {
     }
 
     #[test]
-    fn coordinator_instructions_include_report_progress_rules() {
-        let instructions = build_coordinator_instructions(BuildCoordinatorInstructionsInput {
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            runtime: InvestigationRuntime {
-                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                retry_count: 0,
-            },
-            language: "Japanese".to_string(),
-        });
+    fn investigation_lead_instructions_include_report_progress_rules() {
+        let instructions =
+            build_investigation_lead_instructions(BuildInvestigationLeadInstructionsInput {
+                datadog_site: "datadoghq.com".to_string(),
+                github_scope_org: "acme".to_string(),
+                runtime: InvestigationRuntime {
+                    started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+                    channel: "C123".to_string(),
+                    thread_ts: "123.456".to_string(),
+                    retry_count: 0,
+                },
+                language: "Japanese".to_string(),
+            });
 
         assert!(instructions.contains("call report_progress"));
         assert!(instructions.contains("title and summary fields"));
@@ -514,18 +518,19 @@ mod tests {
     }
 
     #[test]
-    fn coordinator_instructions_include_web_search_rules() {
-        let instructions = build_coordinator_instructions(BuildCoordinatorInstructionsInput {
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            runtime: InvestigationRuntime {
-                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                retry_count: 0,
-            },
-            language: "Japanese".to_string(),
-        });
+    fn investigation_lead_instructions_include_web_search_rules() {
+        let instructions =
+            build_investigation_lead_instructions(BuildInvestigationLeadInstructionsInput {
+                datadog_site: "datadoghq.com".to_string(),
+                github_scope_org: "acme".to_string(),
+                runtime: InvestigationRuntime {
+                    started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+                    channel: "C123".to_string(),
+                    thread_ts: "123.456".to_string(),
+                    retry_count: 0,
+                },
+                language: "Japanese".to_string(),
+            });
 
         assert!(instructions.contains("search_web"));
         assert!(instructions.contains("external dependencies"));

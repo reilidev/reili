@@ -975,7 +975,7 @@ mod tests {
         session.start().await;
         session
             .post_reasoning(InvestigationProgressReasoningInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 title: "Collect evidence".to_string(),
                 summary: "Inspect logs".to_string(),
             })
@@ -1040,7 +1040,7 @@ mod tests {
         session.start().await;
         session
             .post_reasoning(InvestigationProgressReasoningInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 title: "Collect evidence".to_string(),
                 summary: String::new(),
             })
@@ -1092,14 +1092,14 @@ mod tests {
         session.start().await;
         session
             .post_reasoning(InvestigationProgressReasoningInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 title: "Collect evidence".to_string(),
                 summary: "a".repeat(2650),
             })
             .await;
         session
             .post_tool_started(InvestigationProgressTaskUpdateInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 task_id: "task-1".to_string(),
                 title: "b".repeat(200),
             })
@@ -1171,7 +1171,7 @@ mod tests {
         session.start().await;
         session
             .post_reasoning(InvestigationProgressReasoningInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 title: "Collect evidence".to_string(),
                 summary: "Inspect logs".to_string(),
             })
@@ -1230,14 +1230,14 @@ mod tests {
         session.start().await;
         session
             .post_reasoning(InvestigationProgressReasoningInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 title: "Collect evidence".to_string(),
                 summary: "Inspect logs".to_string(),
             })
             .await;
         session
             .post_message_output_created(InvestigationProgressMessageOutputCreatedInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
             })
             .await;
         session.stop_as_succeeded().await;

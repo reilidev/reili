@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::PortError;
 
-pub const COORDINATOR_PROGRESS_OWNER_ID: &str = "coordinator";
+pub const INVESTIGATION_LEAD_PROGRESS_OWNER_ID: &str = "investigation_lead";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -33,7 +33,7 @@ mod tests {
     #[test]
     fn serializes_and_deserializes_progress_event() {
         let value = InvestigationProgressEventInput {
-            owner_id: "coordinator".to_string(),
+            owner_id: "investigation_lead".to_string(),
             event: InvestigationProgressEvent::ToolCallStarted {
                 task_id: "task-1".to_string(),
                 title: "Query logs".to_string(),

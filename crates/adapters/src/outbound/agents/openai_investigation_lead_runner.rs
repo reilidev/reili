@@ -1,24 +1,26 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
 use reili_core::investigation::{
-    CoordinatorRunReport, InvestigationCoordinatorRunnerPort, RunCoordinatorInput,
+    InvestigationLeadRunReport, InvestigationLeadRunnerPort, RunInvestigationLeadInput,
 };
 use rig::{client::ProviderClient, providers::openai};
 
-use super::llm_coordinator_runner::{RunLlmCoordinatorInput, run_llm_coordinator};
+use super::llm_investigation_lead_runner::{
+    RunLlmInvestigationLeadInput, run_llm_investigation_lead,
+};
 use super::llm_provider_settings::{
     CreateOpenAiProviderSettingsInput, LlmProviderSettings, create_openai_provider_settings,
 };
 
-pub struct OpenAiInvestigationCoordinatorRunnerInput {
+pub struct OpenAiInvestigationLeadRunnerInput {
     pub api_key: String,
-    pub coordinator_model: String,
+    pub investigation_lead_model: String,
     pub datadog_site: String,
     pub github_scope_org: String,
     pub language: String,
 }
 
-pub struct OpenAiInvestigationCoordinatorRunner {
+pub struct OpenAiInvestigationLeadRunner {
     api_key: String,
     provider_settings: LlmProviderSettings,
     datadog_site: String,
@@ -26,12 +28,12 @@ pub struct OpenAiInvestigationCoordinatorRunner {
     language: String,
 }
 
-impl OpenAiInvestigationCoordinatorRunner {
-    pub fn new(input: OpenAiInvestigationCoordinatorRunnerInput) -> Self {
+impl OpenAiInvestigationLeadRunner {
+    pub fn new(input: OpenAiInvestigationLeadRunnerInput) -> Self {
         Self {
             api_key: input.api_key,
             provider_settings: create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
-                coordinator_model: input.coordinator_model,
+                investigation_lead_model: input.investigation_lead_model,
             }),
             datadog_site: input.datadog_site,
             github_scope_org: input.github_scope_org,
@@ -41,12 +43,12 @@ impl OpenAiInvestigationCoordinatorRunner {
 }
 
 #[async_trait]
-impl InvestigationCoordinatorRunnerPort for OpenAiInvestigationCoordinatorRunner {
+impl InvestigationLeadRunnerPort for OpenAiInvestigationLeadRunner {
     async fn run(
         &self,
-        input: RunCoordinatorInput,
-    ) -> Result<CoordinatorRunReport, AgentRunFailedError> {
-        run_llm_coordinator(RunLlmCoordinatorInput {
+        input: RunInvestigationLeadInput,
+    ) -> Result<InvestigationLeadRunReport, AgentRunFailedError> {
+        run_llm_investigation_lead(RunLlmInvestigationLeadInput {
             client: openai::Client::from_val(self.api_key.clone().into()),
             settings: self.provider_settings.clone(),
             datadog_site: self.datadog_site.clone(),

@@ -1,16 +1,18 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
 use reili_core::investigation::{
-    CoordinatorRunReport, InvestigationCoordinatorRunnerPort, RunCoordinatorInput,
+    InvestigationLeadRunReport, InvestigationLeadRunnerPort, RunInvestigationLeadInput,
 };
 use rig_bedrock::client::ClientBuilder;
 
-use super::llm_coordinator_runner::{RunLlmCoordinatorInput, run_llm_coordinator};
+use super::llm_investigation_lead_runner::{
+    RunLlmInvestigationLeadInput, run_llm_investigation_lead,
+};
 use super::llm_provider_settings::{
     CreateBedrockProviderSettingsInput, LlmProviderSettings, create_bedrock_provider_settings,
 };
 
-pub struct BedrockInvestigationCoordinatorRunnerInput {
+pub struct BedrockInvestigationLeadRunnerInput {
     pub region: String,
     pub model_id: String,
     pub datadog_site: String,
@@ -18,7 +20,7 @@ pub struct BedrockInvestigationCoordinatorRunnerInput {
     pub language: String,
 }
 
-pub struct BedrockInvestigationCoordinatorRunner {
+pub struct BedrockInvestigationLeadRunner {
     region: String,
     provider_settings: LlmProviderSettings,
     datadog_site: String,
@@ -26,8 +28,8 @@ pub struct BedrockInvestigationCoordinatorRunner {
     language: String,
 }
 
-impl BedrockInvestigationCoordinatorRunner {
-    pub fn new(input: BedrockInvestigationCoordinatorRunnerInput) -> Self {
+impl BedrockInvestigationLeadRunner {
+    pub fn new(input: BedrockInvestigationLeadRunnerInput) -> Self {
         Self {
             region: input.region,
             provider_settings: create_bedrock_provider_settings(
@@ -43,14 +45,14 @@ impl BedrockInvestigationCoordinatorRunner {
 }
 
 #[async_trait]
-impl InvestigationCoordinatorRunnerPort for BedrockInvestigationCoordinatorRunner {
+impl InvestigationLeadRunnerPort for BedrockInvestigationLeadRunner {
     async fn run(
         &self,
-        input: RunCoordinatorInput,
-    ) -> Result<CoordinatorRunReport, AgentRunFailedError> {
+        input: RunInvestigationLeadInput,
+    ) -> Result<InvestigationLeadRunReport, AgentRunFailedError> {
         let client = ClientBuilder::default().region(&self.region).build().await;
 
-        run_llm_coordinator(RunLlmCoordinatorInput {
+        run_llm_investigation_lead(RunLlmInvestigationLeadInput {
             client,
             settings: self.provider_settings.clone(),
             datadog_site: self.datadog_site.clone(),

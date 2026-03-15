@@ -13,22 +13,22 @@ pub struct LlmExecutionMetadata {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoordinatorRunReport {
+pub struct InvestigationLeadRunReport {
     pub result_text: String,
     pub usage: LlmUsageSnapshot,
     pub execution: LlmExecutionMetadata,
 }
 
-pub struct RunCoordinatorInput {
+pub struct RunInvestigationLeadInput {
     pub alert_context: AlertContext,
     pub context: InvestigationContext,
     pub on_progress_event: Arc<dyn InvestigationProgressEventPort>,
 }
 
 #[async_trait]
-pub trait InvestigationCoordinatorRunnerPort: Send + Sync {
+pub trait InvestigationLeadRunnerPort: Send + Sync {
     async fn run(
         &self,
-        input: RunCoordinatorInput,
-    ) -> Result<CoordinatorRunReport, AgentRunFailedError>;
+        input: RunInvestigationLeadInput,
+    ) -> Result<InvestigationLeadRunReport, AgentRunFailedError>;
 }

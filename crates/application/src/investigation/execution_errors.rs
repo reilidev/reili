@@ -68,15 +68,15 @@ mod tests {
     use super::{ExecuteInvestigationJobError, resolve_investigation_failure_error};
 
     #[test]
-    fn resolves_usage_for_coordinator_failure() {
+    fn resolves_usage_for_investigation_lead_failure() {
         let error = ExecuteInvestigationJobError::AgentRunFailed(AgentRunFailedError::new(
             snapshot(2),
-            "coordinator failed",
+            "investigation_lead failed",
         ));
 
         let resolved = resolve_investigation_failure_error(&error);
 
-        assert_eq!(resolved.error_message, "coordinator failed");
+        assert_eq!(resolved.error_message, "investigation_lead failed");
         assert_eq!(resolved.usage, snapshot(2));
     }
 

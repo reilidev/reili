@@ -8,11 +8,11 @@ use super::investigation_progress_stream_session::{
     InvestigationProgressStreamSession, InvestigationProgressTaskUpdateInput,
 };
 
-pub struct CoordinatorProgressEventHandlerInput {
+pub struct InvestigationLeadProgressEventHandlerInput {
     pub progress_session: Arc<Mutex<Box<dyn InvestigationProgressStreamSession>>>,
 }
 
-pub struct CoordinatorProgressEventHandler {
+pub struct InvestigationLeadProgressEventHandler {
     progress_session: Arc<Mutex<Box<dyn InvestigationProgressStreamSession>>>,
 }
 
@@ -25,7 +25,9 @@ mod tests {
     use reili_core::investigation::{InvestigationProgressEvent, InvestigationProgressEventInput};
     use tokio::sync::Mutex as TokioMutex;
 
-    use super::{CoordinatorProgressEventHandler, CoordinatorProgressEventHandlerInput};
+    use super::{
+        InvestigationLeadProgressEventHandler, InvestigationLeadProgressEventHandlerInput,
+    };
     use crate::investigation::services::investigation_progress_stream_session::{
         InvestigationProgressMessageOutputCreatedInput, InvestigationProgressReasoningInput,
         InvestigationProgressStreamSession, InvestigationProgressTaskUpdateInput,
@@ -82,13 +84,15 @@ mod tests {
             events: Arc::clone(&events),
         })
             as Box<dyn InvestigationProgressStreamSession>));
-        let handler = CoordinatorProgressEventHandler::new(CoordinatorProgressEventHandlerInput {
-            progress_session: Arc::clone(&session),
-        });
+        let handler = InvestigationLeadProgressEventHandler::new(
+            InvestigationLeadProgressEventHandlerInput {
+                progress_session: Arc::clone(&session),
+            },
+        );
 
         handler
             .handle(InvestigationProgressEventInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 event: InvestigationProgressEvent::ReasoningSummaryCreated {
                     title: "Collect evidence".to_string(),
                     summary: "Inspect logs".to_string(),
@@ -97,7 +101,7 @@ mod tests {
             .await;
         handler
             .handle(InvestigationProgressEventInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 event: InvestigationProgressEvent::ToolCallStarted {
                     task_id: "task-1".to_string(),
                     title: "logs".to_string(),
@@ -106,7 +110,7 @@ mod tests {
             .await;
         handler
             .handle(InvestigationProgressEventInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 event: InvestigationProgressEvent::ToolCallCompleted {
                     task_id: "task-1".to_string(),
                     title: "logs".to_string(),
@@ -115,7 +119,7 @@ mod tests {
             .await;
         handler
             .handle(InvestigationProgressEventInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 event: InvestigationProgressEvent::MessageOutputCreated,
             })
             .await;
@@ -123,10 +127,10 @@ mod tests {
         assert_eq!(
             events.lock().expect("lock events").clone(),
             vec![
-                "reasoning:coordinator:Collect evidence:Inspect logs".to_string(),
-                "tool_started:coordinator:task-1".to_string(),
-                "tool_completed:coordinator:task-1".to_string(),
-                "message_output:coordinator".to_string(),
+                "reasoning:investigation_lead:Collect evidence:Inspect logs".to_string(),
+                "tool_started:investigation_lead:task-1".to_string(),
+                "tool_completed:investigation_lead:task-1".to_string(),
+                "message_output:investigation_lead".to_string(),
             ]
         );
     }
@@ -138,13 +142,15 @@ mod tests {
             events: Arc::clone(&events),
         })
             as Box<dyn InvestigationProgressStreamSession>));
-        let handler = CoordinatorProgressEventHandler::new(CoordinatorProgressEventHandlerInput {
-            progress_session: Arc::clone(&session),
-        });
+        let handler = InvestigationLeadProgressEventHandler::new(
+            InvestigationLeadProgressEventHandlerInput {
+                progress_session: Arc::clone(&session),
+            },
+        );
 
         handler
             .handle(InvestigationProgressEventInput {
-                owner_id: "coordinator".to_string(),
+                owner_id: "investigation_lead".to_string(),
                 event: InvestigationProgressEvent::ReasoningSummaryCreated {
                     title: "  ".to_string(),
                     summary: "Inspect logs".to_string(),
@@ -156,8 +162,8 @@ mod tests {
     }
 }
 
-impl CoordinatorProgressEventHandler {
-    pub fn new(input: CoordinatorProgressEventHandlerInput) -> Self {
+impl InvestigationLeadProgressEventHandler {
+    pub fn new(input: InvestigationLeadProgressEventHandlerInput) -> Self {
         Self {
             progress_session: input.progress_session,
         }

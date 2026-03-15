@@ -1,19 +1,19 @@
-mod bedrock_investigation_coordinator_runner;
+mod bedrock_investigation_lead_runner;
 mod investigation_agents;
-mod llm_coordinator_runner;
+mod llm_investigation_lead_runner;
 mod llm_provider_settings;
 mod llm_usage_collector;
 mod llm_usage_tracking_hook;
-mod openai_investigation_coordinator_runner;
+mod openai_investigation_lead_runner;
 mod progress_event_hook;
 mod progress_reporting_sub_agent_tool;
 pub mod tools;
 
-pub use bedrock_investigation_coordinator_runner::{
-    BedrockInvestigationCoordinatorRunner, BedrockInvestigationCoordinatorRunnerInput,
+pub use bedrock_investigation_lead_runner::{
+    BedrockInvestigationLeadRunner, BedrockInvestigationLeadRunnerInput,
 };
-pub use openai_investigation_coordinator_runner::{
-    OpenAiInvestigationCoordinatorRunner, OpenAiInvestigationCoordinatorRunnerInput,
+pub use openai_investigation_lead_runner::{
+    OpenAiInvestigationLeadRunner, OpenAiInvestigationLeadRunnerInput,
 };
 pub use tools::{
     AggregateDatadogLogsByFacetTool, GetPullRequestDiffTool, GetPullRequestTool,

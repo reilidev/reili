@@ -2,10 +2,10 @@ use thiserror::Error;
 
 use crate::investigation::LlmUsageSnapshot;
 
-pub const COORDINATOR_RUN_FAILED_CODE: &str = "COORDINATOR_RUN_FAILED";
+pub const INVESTIGATION_LEAD_RUN_FAILED_CODE: &str = "INVESTIGATION_LEAD_RUN_FAILED";
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("Coordinator run failed: {cause_message}")]
+#[error("InvestigationLead run failed: {cause_message}")]
 pub struct AgentRunFailedError {
     pub usage: LlmUsageSnapshot,
     pub cause_message: String,
@@ -13,7 +13,7 @@ pub struct AgentRunFailedError {
 
 impl AgentRunFailedError {
     pub fn code(&self) -> &'static str {
-        COORDINATOR_RUN_FAILED_CODE
+        INVESTIGATION_LEAD_RUN_FAILED_CODE
     }
 
     pub fn new(usage: LlmUsageSnapshot, cause_message: impl Into<String>) -> Self {

@@ -363,10 +363,10 @@ mod tests {
     };
     use crate::investigation::InvestigationLogMeta;
     use async_trait::async_trait;
-    use reili_core::investigation::{
-        InvestigationCoordinatorRunnerPort, InvestigationResources, RunCoordinatorInput,
-    };
     use reili_core::investigation::{InvestigationJobPayload, LlmUsageSnapshot};
+    use reili_core::investigation::{
+        InvestigationLeadRunnerPort, InvestigationResources, RunInvestigationLeadInput,
+    };
     use reili_core::knowledge::{WebSearchInput, WebSearchPort, WebSearchResult};
     use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
     use reili_core::messaging::slack::{
@@ -547,19 +547,19 @@ mod tests {
         }
     }
 
-    struct MockCoordinatorRunner;
+    struct MockInvestigationLeadRunner;
 
     #[async_trait]
-    impl InvestigationCoordinatorRunnerPort for MockCoordinatorRunner {
+    impl InvestigationLeadRunnerPort for MockInvestigationLeadRunner {
         async fn run(
             &self,
-            _input: RunCoordinatorInput,
+            _input: RunInvestigationLeadInput,
         ) -> Result<
-            reili_core::investigation::CoordinatorRunReport,
+            reili_core::investigation::InvestigationLeadRunReport,
             reili_core::error::AgentRunFailedError,
         > {
-            Ok(reili_core::investigation::CoordinatorRunReport {
-                result_text: "coordinator result".to_string(),
+            Ok(reili_core::investigation::InvestigationLeadRunReport {
+                result_text: "investigation_lead result".to_string(),
                 usage: USAGE_SNAPSHOT,
                 execution: reili_core::investigation::LlmExecutionMetadata {
                     provider: "openai".to_string(),
@@ -749,7 +749,7 @@ mod tests {
                         as Arc<dyn GithubPullRequestPort>,
                     web_search_port: resources_port as Arc<dyn WebSearchPort>,
                 },
-                coordinator_runner: Arc::new(MockCoordinatorRunner),
+                investigation_lead_runner: Arc::new(MockInvestigationLeadRunner),
                 logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
             },
             worker_concurrency: 1,

@@ -45,7 +45,7 @@ impl LlmProviderConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenAiLlmConfig {
     pub api_key: String,
-    pub coordinator_model: String,
+    pub investigation_lead_model: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,7 +162,7 @@ fn read_llm_config(env: &dyn EnvironmentReader) -> Result<LlmConfig, EnvConfigEr
 fn read_openai_llm_config(env: &dyn EnvironmentReader) -> Result<OpenAiLlmConfig, EnvConfigError> {
     Ok(OpenAiLlmConfig {
         api_key: read_required_env(env, "LLM_OPENAI_API_KEY")?,
-        coordinator_model: read_required_env(env, "LLM_OPENAI_COORDINATOR_MODEL")?,
+        investigation_lead_model: read_required_env(env, "LLM_OPENAI_INVESTIGATION_LEAD_MODEL")?,
     })
 }
 
@@ -275,7 +275,7 @@ mod tests {
                     "openai-api-key".to_string(),
                 ),
                 (
-                    "LLM_OPENAI_COORDINATOR_MODEL".to_string(),
+                    "LLM_OPENAI_INVESTIGATION_LEAD_MODEL".to_string(),
                     "gpt-5.3-codex".to_string(),
                 ),
                 ("GITHUB_APP_ID".to_string(), "12345".to_string()),
@@ -350,7 +350,7 @@ mod tests {
         match config.llm.provider {
             LlmProviderConfig::OpenAi(provider) => {
                 assert_eq!(provider.api_key, "openai-api-key");
-                assert_eq!(provider.coordinator_model, "gpt-5.3-codex");
+                assert_eq!(provider.investigation_lead_model, "gpt-5.3-codex");
             }
             LlmProviderConfig::Bedrock(_) => panic!("expected openai provider"),
         }

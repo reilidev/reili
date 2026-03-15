@@ -5,9 +5,9 @@ use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use reili_core::error::PortError;
 use reili_core::investigation::{
-    InvestigationContext, InvestigationCoordinatorRunnerPort, InvestigationJobPayload,
+    InvestigationContext, InvestigationJobPayload, InvestigationLeadRunnerPort,
     InvestigationProgressEventInput, InvestigationProgressEventPort, InvestigationResources,
-    InvestigationRuntime, LlmExecutionMetadata, LlmUsageSnapshot, RunCoordinatorInput,
+    InvestigationRuntime, LlmExecutionMetadata, LlmUsageSnapshot, RunInvestigationLeadInput,
 };
 use reili_core::messaging::slack::{
     SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
@@ -18,9 +18,9 @@ use tokio::sync::{Mutex, mpsc};
 use super::execution_errors::{ExecuteInvestigationJobError, resolve_investigation_failure_error};
 use super::logger::{InvestigationLogMeta, InvestigationLogger, string_log_meta};
 use super::services::{
-    CoordinatorProgressEventHandler, CoordinatorProgressEventHandlerInput,
     CreateInvestigationProgressStreamSessionFactoryInput,
-    CreateInvestigationProgressStreamSessionInput, InvestigationProgressStreamSession,
+    CreateInvestigationProgressStreamSessionInput, InvestigationLeadProgressEventHandler,
+    InvestigationLeadProgressEventHandlerInput, InvestigationProgressStreamSession,
     InvestigationProgressStreamSessionFactory,
     create_investigation_progress_stream_session_factory,
 };
@@ -38,7 +38,7 @@ pub struct InvestigationExecutionDeps {
     pub slack_progress_stream_port: Arc<dyn SlackProgressStreamPort>,
     pub slack_thread_history_port: Arc<dyn SlackThreadHistoryPort>,
     pub investigation_resources: InvestigationResources,
-    pub coordinator_runner: Arc<dyn InvestigationCoordinatorRunnerPort>,
+    pub investigation_lead_runner: Arc<dyn InvestigationLeadRunnerPort>,
     pub logger: Arc<dyn InvestigationLogger>,
 }
 
@@ -81,7 +81,7 @@ pub async fn execute_investigation_job(
         )));
 
     let progress_event_handler =
-        CoordinatorProgressEventHandler::new(CoordinatorProgressEventHandlerInput {
+        InvestigationLeadProgressEventHandler::new(InvestigationLeadProgressEventHandlerInput {
             progress_session: Arc::clone(&progress_session),
         });
     let (progress_event_sender, progress_event_receiver) =
@@ -222,10 +222,10 @@ async fn run_investigation(
         session.start().await;
     }
 
-    let coordinator_report = input
+    let investigation_lead_report = input
         .deps
-        .coordinator_runner
-        .run(RunCoordinatorInput {
+        .investigation_lead_runner
+        .run(RunInvestigationLeadInput {
             alert_context: alert_context.clone(),
             context,
             on_progress_event: Arc::clone(&on_progress_event),
@@ -233,16 +233,16 @@ async fn run_investigation(
         .await
         .map_err(ExecuteInvestigationJobError::from)?;
 
-    let report_text = if coordinator_report.result_text.is_empty() {
+    let report_text = if investigation_lead_report.result_text.is_empty() {
         FALLBACK_REPORT_TEXT.to_string()
     } else {
-        coordinator_report.result_text
+        investigation_lead_report.result_text
     };
 
     Ok(InvestigationExecutionSuccess {
         report_text,
-        llm_usage: coordinator_report.usage,
-        llm_execution: coordinator_report.execution,
+        llm_usage: investigation_lead_report.usage,
+        llm_execution: investigation_lead_report.execution,
     })
 }
 
@@ -350,7 +350,7 @@ impl InvestigationProgressEventPort for ChannelProgressEventPort {
 
 async fn run_progress_event_loop(
     mut receiver: mpsc::UnboundedReceiver<InvestigationProgressEventInput>,
-    handler: CoordinatorProgressEventHandler,
+    handler: InvestigationLeadProgressEventHandler,
 ) {
     while let Some(event) = receiver.recv().await {
         handler.handle(event).await;
@@ -366,8 +366,8 @@ mod tests {
     use reili_core::error::{AgentRunFailedError, PortError};
     use reili_core::investigation::{AlertContext, InvestigationJobPayload, LlmUsageSnapshot};
     use reili_core::investigation::{
-        InvestigationCoordinatorRunnerPort, InvestigationResources, InvestigationRuntime,
-        RunCoordinatorInput,
+        InvestigationLeadRunnerPort, InvestigationResources, InvestigationRuntime,
+        RunInvestigationLeadInput,
     };
     use reili_core::knowledge::{WebSearchInput, WebSearchPort, WebSearchResult};
     use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
@@ -479,43 +479,43 @@ mod tests {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
-    struct CapturedCoordinatorRunInput {
+    struct CapturedInvestigationLeadRunInput {
         alert_context: AlertContext,
         runtime: InvestigationRuntime,
     }
 
-    struct MockCoordinatorRunner {
-        captured: Mutex<Vec<CapturedCoordinatorRunInput>>,
+    struct MockInvestigationLeadRunner {
+        captured: Mutex<Vec<CapturedInvestigationLeadRunInput>>,
     }
 
-    impl MockCoordinatorRunner {
+    impl MockInvestigationLeadRunner {
         fn new() -> Self {
             Self {
                 captured: Mutex::new(Vec::new()),
             }
         }
 
-        fn captured(&self) -> Vec<CapturedCoordinatorRunInput> {
+        fn captured(&self) -> Vec<CapturedInvestigationLeadRunInput> {
             self.captured.lock().expect("lock captured runs").clone()
         }
     }
 
     #[async_trait]
-    impl InvestigationCoordinatorRunnerPort for MockCoordinatorRunner {
+    impl InvestigationLeadRunnerPort for MockInvestigationLeadRunner {
         async fn run(
             &self,
-            input: RunCoordinatorInput,
-        ) -> Result<reili_core::investigation::CoordinatorRunReport, AgentRunFailedError> {
-            self.captured
-                .lock()
-                .expect("lock captured runs")
-                .push(CapturedCoordinatorRunInput {
+            input: RunInvestigationLeadInput,
+        ) -> Result<reili_core::investigation::InvestigationLeadRunReport, AgentRunFailedError>
+        {
+            self.captured.lock().expect("lock captured runs").push(
+                CapturedInvestigationLeadRunInput {
                     alert_context: input.alert_context,
                     runtime: input.context.runtime,
-                });
+                },
+            );
 
-            Ok(reili_core::investigation::CoordinatorRunReport {
-                result_text: "coordinator result".to_string(),
+            Ok(reili_core::investigation::InvestigationLeadRunReport {
+                result_text: "investigation_lead result".to_string(),
                 usage: USAGE_SNAPSHOT,
                 execution: reili_core::investigation::LlmExecutionMetadata {
                     provider: "openai".to_string(),
@@ -706,7 +706,7 @@ mod tests {
         deps: InvestigationExecutionDeps,
         slack_reply_port: Arc<MockSlackReplyPort>,
         slack_thread_history_port: Arc<MockSlackThreadHistoryPort>,
-        coordinator_runner: Arc<MockCoordinatorRunner>,
+        investigation_lead_runner: Arc<MockInvestigationLeadRunner>,
     }
 
     fn create_execution_fixtures(
@@ -714,7 +714,7 @@ mod tests {
     ) -> ExecutionFixtures {
         let slack_reply_port = Arc::new(MockSlackReplyPort::default());
         let slack_progress_stream_port = Arc::new(MockSlackProgressStreamPort);
-        let coordinator_runner = Arc::new(MockCoordinatorRunner::new());
+        let investigation_lead_runner = Arc::new(MockInvestigationLeadRunner::new());
         let logger = Arc::new(MockLogger::default());
 
         let deps = InvestigationExecutionDeps {
@@ -724,8 +724,8 @@ mod tests {
             slack_thread_history_port: Arc::clone(&slack_thread_history_port)
                 as Arc<dyn SlackThreadHistoryPort>,
             investigation_resources: create_resources(),
-            coordinator_runner: Arc::clone(&coordinator_runner)
-                as Arc<dyn InvestigationCoordinatorRunnerPort>,
+            investigation_lead_runner: Arc::clone(&investigation_lead_runner)
+                as Arc<dyn InvestigationLeadRunnerPort>,
             logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
         };
 
@@ -733,7 +733,7 @@ mod tests {
             deps,
             slack_reply_port,
             slack_thread_history_port,
-            coordinator_runner,
+            investigation_lead_runner,
         }
     }
 
@@ -751,7 +751,7 @@ mod tests {
             deps,
             slack_reply_port,
             slack_thread_history_port,
-            coordinator_runner,
+            investigation_lead_runner,
         } = fixtures;
 
         let result = execute_investigation_job(ExecuteInvestigationJobInput {
@@ -775,7 +775,7 @@ mod tests {
             }]
         );
 
-        let captured = coordinator_runner.captured();
+        let captured = investigation_lead_runner.captured();
         assert_eq!(captured.len(), 1);
         assert_eq!(
             captured[0].alert_context.trigger_message_text,
@@ -794,7 +794,7 @@ mod tests {
             vec![SlackThreadReplyInput {
                 channel: "C001".to_string(),
                 thread_ts: "1710000000.000001".to_string(),
-                text: "coordinator result".to_string(),
+                text: "investigation_lead result".to_string(),
             }]
         );
     }
@@ -806,7 +806,7 @@ mod tests {
         let ExecutionFixtures {
             deps,
             slack_thread_history_port,
-            coordinator_runner,
+            investigation_lead_runner,
             ..
         } = fixtures;
 
@@ -821,7 +821,7 @@ mod tests {
         assert!(result.is_ok());
         assert!(slack_thread_history_port.calls().is_empty());
 
-        let captured = coordinator_runner.captured();
+        let captured = investigation_lead_runner.captured();
         assert_eq!(captured.len(), 1);
         assert!(captured[0].alert_context.thread_transcript.is_empty());
     }
@@ -834,7 +834,7 @@ mod tests {
         let ExecutionFixtures {
             deps,
             slack_thread_history_port: _,
-            coordinator_runner,
+            investigation_lead_runner,
             ..
         } = fixtures;
 
@@ -848,13 +848,13 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let captured = coordinator_runner.captured();
+        let captured = investigation_lead_runner.captured();
         assert_eq!(captured.len(), 1);
         assert!(captured[0].alert_context.thread_transcript.is_empty());
     }
 
     #[test]
-    fn token_log_meta_omits_coordinator_total_tokens() {
+    fn token_log_meta_omits_investigation_lead_total_tokens() {
         let meta = super::build_llm_token_log_meta(&LlmUsageSnapshot {
             requests: 2,
             input_tokens: 40,
@@ -866,6 +866,6 @@ mod tests {
             meta.get("llm_tokens_total"),
             Some(&serde_json::Value::String("100".to_string()))
         );
-        assert!(!meta.contains_key("llm_tokens_total_coordinator"));
+        assert!(!meta.contains_key("llm_tokens_total_investigation_lead"));
     }
 }
