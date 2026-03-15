@@ -12,8 +12,8 @@ use rig::prelude::CompletionClient;
 use super::investigation_agents::{
     BuildCoordinatorAgentInput, build_coordinator_agent, build_coordinator_prompt,
 };
+use super::llm_provider_settings::LlmProviderSettings;
 use super::llm_usage_mapper::{MapRigUsageToSnapshotInput, map_rig_usage_to_llm_usage_snapshot};
-use super::provider_settings::RigProviderSettings;
 use super::request_count_hook::RequestCountHook;
 
 pub struct RunLlmCoordinatorInput<C>
@@ -21,7 +21,7 @@ where
     C: CompletionClient,
 {
     pub client: C,
-    pub settings: RigProviderSettings,
+    pub settings: LlmProviderSettings,
     pub datadog_site: String,
     pub github_scope_org: String,
     pub language: String,
@@ -62,7 +62,7 @@ where
                 cause_message: error.to_string(),
             })
         })?;
-    let usage = Some(prompt_response.total_usage);
+    let usage = Some(prompt_response.usage);
 
     publish_message_output_created_event(PublishMessageOutputCreatedEventInput {
         on_progress_event: Arc::clone(&input.run.on_progress_event),

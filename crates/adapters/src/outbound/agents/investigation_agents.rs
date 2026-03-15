@@ -17,9 +17,8 @@ use super::tools::{
     SearchWebTool,
 };
 use super::{
-    progress_event_hook::ProgressEventHook,
+    llm_provider_settings::LlmProviderSettings, progress_event_hook::ProgressEventHook,
     progress_reporting_sub_agent_tool::ProgressReportingSubAgentTool,
-    provider_settings::RigProviderSettings,
 };
 
 const LOGS_PROGRESS_OWNER_ID: &str = "investigate_logs";
@@ -35,7 +34,7 @@ where
     C: CompletionClient,
 {
     pub client: C,
-    pub settings: RigProviderSettings,
+    pub settings: LlmProviderSettings,
     pub resources: Arc<InvestigationResources>,
     pub datadog_site: String,
     pub github_scope_org: String,
@@ -156,7 +155,7 @@ where
     C: CompletionClient,
 {
     client: C,
-    settings: RigProviderSettings,
+    settings: LlmProviderSettings,
     resources: Arc<InvestigationResources>,
     github_scope_org: String,
     language: String,
@@ -421,7 +420,7 @@ mod tests {
     use reili_core::investigation::InvestigationRuntime;
     use serde_json::json;
 
-    use super::super::provider_settings::{
+    use super::super::llm_provider_settings::{
         CreateOpenAiProviderSettingsInput, create_openai_provider_settings,
     };
     use super::{

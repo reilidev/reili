@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod bedrock;
 pub mod datadog;
 pub mod github;
 pub mod openai;

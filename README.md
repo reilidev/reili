@@ -66,6 +66,8 @@ Common optional variables:
 - `DATADOG_SITE` (default: `datadoghq.com`)
 - `LANGUAGE` (default: `English`)
 
+When `LLM_PROVIDER=bedrock`, AWS credentials are loaded from the standard AWS SDK environment or profile chain.
+
 ### 4. Configure Slack App
 
 - Set Event Subscriptions Request URL to `https://<your-host>/slack/events`

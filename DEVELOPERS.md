@@ -40,6 +40,8 @@ Optional:
 - `DATADOG_SITE` (default: `datadoghq.com`)
 - `LANGUAGE` (default: `English`)
 
+When `LLM_PROVIDER=bedrock`, AWS credentials are loaded from the standard AWS SDK environment or profile chain.
+
 ## Local Run
 
 Run the unified runtime in one terminal.

@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::outbound::agents::{
+    BedrockInvestigationCoordinatorRunner, BedrockInvestigationCoordinatorRunnerInput,
     OpenAiInvestigationCoordinatorRunner, OpenAiInvestigationCoordinatorRunnerInput,
 };
+use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
 use reili_adapters::outbound::datadog::DatadogEventSearchAdapter;
 use reili_adapters::outbound::datadog::{
     DatadogApiRetryConfig, DatadogHttpClient, DatadogHttpClientConfig, DatadogLogAggregateAdapter,
@@ -65,8 +67,6 @@ pub enum RuntimeBootstrapError {
     Port(#[from] PortError),
     #[error("Slack auth.test response did not contain user_id")]
     MissingSlackBotUserId,
-    #[error("LLM provider is not implemented yet: {provider}")]
-    UnsupportedLlmProvider { provider: String },
 }
 
 struct ProviderPorts {
@@ -139,7 +139,8 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         datadog_site: config.datadog_site.clone(),
         github_scope_org: config.github.scope_org.clone(),
         language: config.language.clone(),
-    })?;
+    })
+    .await?;
 
     let investigation_resources = InvestigationResources {
         log_aggregate_port,
@@ -188,7 +189,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     })
 }
 
-fn create_provider_ports(
+async fn create_provider_ports(
     input: CreateProviderPortsInput<'_>,
 ) -> Result<ProviderPorts, RuntimeBootstrapError> {
     match input.llm_provider {
@@ -206,12 +207,21 @@ fn create_provider_ports(
                 },
             )),
         }),
-        LlmProviderConfig::Bedrock(config) => Err(RuntimeBootstrapError::UnsupportedLlmProvider {
-            provider: format!(
-                "{} ({})",
-                input.llm_provider.provider_name(),
-                config.model_id
-            ),
+        LlmProviderConfig::Bedrock(config) => Ok(ProviderPorts {
+            web_search_port: Arc::new(BedrockWebSearchAdapter::new(
+                BedrockWebSearchAdapterConfig {
+                    model_id: config.model_id.clone(),
+                },
+            )),
+            coordinator_runner: Arc::new(BedrockInvestigationCoordinatorRunner::new(
+                BedrockInvestigationCoordinatorRunnerInput {
+                    region: config.region.clone(),
+                    model_id: config.model_id.clone(),
+                    datadog_site: input.datadog_site,
+                    github_scope_org: input.github_scope_org,
+                    language: input.language,
+                },
+            )),
         }),
     }
 }
