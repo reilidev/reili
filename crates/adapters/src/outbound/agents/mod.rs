@@ -1,4 +1,5 @@
 mod bedrock_investigation_lead_runner;
+mod datadog_mcp_tools;
 mod investigation_agents;
 mod llm_investigation_lead_runner;
 mod llm_provider_settings;
@@ -12,6 +13,7 @@ pub mod tools;
 pub use bedrock_investigation_lead_runner::{
     BedrockInvestigationLeadRunner, BedrockInvestigationLeadRunnerInput,
 };
+pub use datadog_mcp_tools::DatadogMcpToolConfig;
 pub use openai_investigation_lead_runner::{
     OpenAiInvestigationLeadRunner, OpenAiInvestigationLeadRunnerInput,
 };

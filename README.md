@@ -53,7 +53,6 @@ Required:
 - `DATADOG_APP_KEY`
 - `LLM_PROVIDER`
 - `LLM_OPENAI_API_KEY` when `LLM_PROVIDER=openai`
-- `LLM_OPENAI_INVESTIGATION_LEAD_MODEL` when `LLM_PROVIDER=openai`
 - `LLM_BEDROCK_REGION` when `LLM_PROVIDER=bedrock`
 - `LLM_BEDROCK_MODEL_ID` when `LLM_PROVIDER=bedrock`
 - `GITHUB_APP_ID`
@@ -119,8 +118,10 @@ Its effective capabilities are the integrations and tools wired in this runtime.
 The investigation agent can call only the following tool families:
 
 - Slack progress reporting: `report_progress`
-- Datadog reads: `search_datadog_logs`, `aggregate_datadog_logs_by_facet`,
-  `list_datadog_metrics_catalog`, `query_datadog_metrics`, `search_datadog_events`
+- Datadog MCP reads: `search_datadog_services`, `search_datadog_logs`,
+  `analyze_datadog_logs`, `search_datadog_metrics`, `get_datadog_metric`,
+  `get_datadog_metric_context`, `search_datadog_events`, `search_datadog_monitors`,
+  `search_datadog_incidents`
 - GitHub reads: `search_github_code`, `search_github_repos`,
   `search_github_issues_and_pull_requests`, `get_repository_content`, `get_pull_request`,
   `get_pull_request_diff`
@@ -180,25 +181,20 @@ Reili uses Datadog as a read-only evidence source during investigations.
 
 Required Datadog credentials:
 
-- `DATADOG_API_KEY`: sent as `DD-API-KEY`
-- `DATADOG_APP_KEY`: sent as `DD-APPLICATION-KEY`
-- `DATADOG_SITE`: controls the API hostname such as `api.datadoghq.com`
+- `DATADOG_API_KEY`: sent as `DD_API_KEY`
+- `DATADOG_APP_KEY`: sent as `DD_APPLICATION_KEY`
+- `DATADOG_SITE`: controls the Datadog hostname such as `datadoghq.com`
 
 Datadog capabilities currently used by the runtime:
 
-- Search logs in a time range
-- Aggregate logs by facet to understand service or error concentration
-- Query metric timeseries
-- List metric names from the metric catalog
-- Search events to correlate deploys or config changes with incidents
+- Connect to the remote Datadog MCP Server over Streamable HTTP
+- Search services, logs, metrics, monitors, incidents, and events through Datadog-provided MCP
+  tools
+- Fetch metric detail and context from Datadog MCP for investigation pivots
 
-Datadog API endpoints currently used by the runtime:
+Datadog MCP endpoint currently used by the runtime:
 
-- `POST /api/v2/logs/events/search`
-- `POST /api/v2/logs/analytics/aggregate`
-- `POST /api/v2/query/timeseries`
-- `GET /api/v1/metrics`
-- `GET /api/v2/events`
+- `https://mcp.<DATADOG_SITE>/api/unstable/mcp-server/mcp?toolsets=core`
 
 Recommended Datadog access policy:
 
@@ -206,8 +202,8 @@ Recommended Datadog access policy:
 - Issue the API key and application key for that service account rather than reusing human
   operator credentials
 - Prefer restricted application keys when your Datadog plan supports them
-- Allow read access only to the products Reili actually uses: logs, metrics, metric metadata, and
-  events
+- Allow read access only to the Datadog products Reili actually uses through the `core` MCP
+  toolset
 
 Datadog boundary:
 

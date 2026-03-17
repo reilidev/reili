@@ -171,6 +171,7 @@ async fn process_claimed_job(input: ProcessClaimedJobInput) {
                         job: input.job,
                         started_at,
                         error_message: error.message,
+                        failure_disposition: FailureDisposition::Retryable,
                     })
                     .await;
                 }
@@ -183,10 +184,21 @@ async fn process_claimed_job(input: ProcessClaimedJobInput) {
                 job: input.job,
                 started_at,
                 error_message: error.to_string(),
+                failure_disposition: if error.is_permanent() {
+                    FailureDisposition::Permanent
+                } else {
+                    FailureDisposition::Retryable
+                },
             })
             .await;
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailureDisposition {
+    Retryable,
+    Permanent,
 }
 
 struct HandleFailedClaimedJobInput {
@@ -195,16 +207,21 @@ struct HandleFailedClaimedJobInput {
     job: InvestigationJob,
     started_at: Instant,
     error_message: String,
+    failure_disposition: FailureDisposition,
 }
 
 async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
+    let effective_max_retry = match input.failure_disposition {
+        FailureDisposition::Permanent => input.job.retry_count,
+        FailureDisposition::Retryable => input.deps.job_max_retry,
+    };
     let fail_result = input
         .deps
         .job_queue
         .fail(FailJobInput {
             job_id: input.job.job_id.clone(),
             reason: input.error_message.clone(),
-            max_retry: input.deps.job_max_retry,
+            max_retry: effective_max_retry,
             backoff_ms: input.deps.job_backoff_ms,
         })
         .await;
@@ -279,6 +296,10 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
                 ),
                 job: fail_result.job.clone(),
                 error_message: input.error_message.clone(),
+                exhausted_retries: matches!(
+                    input.failure_disposition,
+                    FailureDisposition::Retryable
+                ),
             })
             .await
     {
@@ -328,6 +349,7 @@ struct PostDeadLetterFailureMessageInput {
     slack_reply_port: Arc<dyn SlackThreadReplyPort>,
     job: InvestigationJob,
     error_message: String,
+    exhausted_retries: bool,
 }
 
 async fn post_dead_letter_failure_message(
@@ -338,10 +360,14 @@ async fn post_dead_letter_failure_message(
         .post_thread_reply(SlackThreadReplyInput {
             channel: input.job.payload.message.channel.clone(),
             thread_ts: input.job.payload.message.thread_ts_or_ts().to_string(),
-            text: format!(
-                "Investigation failed after retries: {}",
-                input.error_message
-            ),
+            text: if input.exhausted_retries {
+                format!(
+                    "Investigation failed after retries: {}",
+                    input.error_message
+                )
+            } else {
+                format!("Investigation failed: {}", input.error_message)
+            },
         })
         .await
 }
@@ -850,6 +876,7 @@ mod tests {
             }),
             started_at: std::time::Instant::now(),
             error_message: "processing failed".to_string(),
+            failure_disposition: super::FailureDisposition::Retryable,
         })
         .await;
 
@@ -892,6 +919,7 @@ mod tests {
             }),
             started_at: std::time::Instant::now(),
             error_message: "fatal failure".to_string(),
+            failure_disposition: super::FailureDisposition::Retryable,
         })
         .await;
 
@@ -902,5 +930,44 @@ mod tests {
             "Investigation failed after retries: fatal failure"
         );
         assert_eq!(posted_replies[0].thread_ts, "1710000000.000001");
+    }
+
+    #[tokio::test]
+    async fn handle_failed_claimed_job_dead_letters_permanent_failure_immediately() {
+        let context = create_context();
+        context.job_queue.with_fail_results(vec![Ok(JobFailResult {
+            status: JobFailStatus::DeadLetter,
+            job: create_job(CreateJobInput {
+                job_id: "job-1".to_string(),
+                retry_count: 0,
+                thread_ts: Some("1710000000.000001".to_string()),
+            }),
+        })]);
+        context.job_queue.with_depth_results(vec![Ok(0)]);
+
+        handle_failed_claimed_job(super::HandleFailedClaimedJobInput {
+            deps: Arc::clone(&context.deps),
+            worker_index: 0,
+            job: create_job(CreateJobInput {
+                job_id: "job-1".to_string(),
+                retry_count: 0,
+                thread_ts: Some("1710000000.000001".to_string()),
+            }),
+            started_at: std::time::Instant::now(),
+            error_message: "mcp connect failed".to_string(),
+            failure_disposition: super::FailureDisposition::Permanent,
+        })
+        .await;
+
+        let fail_inputs = context.job_queue.fail_inputs();
+        assert_eq!(fail_inputs.len(), 1);
+        assert_eq!(fail_inputs[0].max_retry, 0);
+
+        let posted_replies = context.slack_reply_port.posted_replies();
+        assert_eq!(posted_replies.len(), 1);
+        assert_eq!(
+            posted_replies[0].text,
+            "Investigation failed: mcp connect failed"
+        );
     }
 }

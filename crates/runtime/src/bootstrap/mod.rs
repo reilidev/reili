@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::outbound::agents::{
-    BedrockInvestigationLeadRunner, BedrockInvestigationLeadRunnerInput,
+    BedrockInvestigationLeadRunner, BedrockInvestigationLeadRunnerInput, DatadogMcpToolConfig,
     OpenAiInvestigationLeadRunner, OpenAiInvestigationLeadRunnerInput,
 };
 use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
@@ -76,6 +76,8 @@ struct ProviderPorts {
 
 struct CreateProviderPortsInput<'a> {
     llm_provider: &'a LlmProviderConfig,
+    datadog_api_key: String,
+    datadog_app_key: String,
     datadog_site: String,
     github_scope_org: String,
     language: String,
@@ -136,6 +138,8 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let github_pull_request_port: Arc<dyn GithubPullRequestPort> = github_adapter;
     let provider_ports = create_provider_ports(CreateProviderPortsInput {
         llm_provider: &config.llm.provider,
+        datadog_api_key: config.datadog_api_key.clone(),
+        datadog_app_key: config.datadog_app_key.clone(),
         datadog_site: config.datadog_site.clone(),
         github_scope_org: config.github.scope_org.clone(),
         language: config.language.clone(),
@@ -201,7 +205,11 @@ async fn create_provider_ports(
                 OpenAiInvestigationLeadRunnerInput {
                     api_key: config.api_key.clone(),
                     investigation_lead_model: config.investigation_lead_model.clone(),
-                    datadog_site: input.datadog_site,
+                    datadog_mcp: DatadogMcpToolConfig {
+                        api_key: input.datadog_api_key,
+                        app_key: input.datadog_app_key,
+                        site: input.datadog_site,
+                    },
                     github_scope_org: input.github_scope_org,
                     language: input.language,
                 },
@@ -217,7 +225,11 @@ async fn create_provider_ports(
                 BedrockInvestigationLeadRunnerInput {
                     region: config.region.clone(),
                     model_id: config.model_id.clone(),
-                    datadog_site: input.datadog_site,
+                    datadog_mcp: DatadogMcpToolConfig {
+                        api_key: input.datadog_api_key,
+                        app_key: input.datadog_app_key,
+                        site: input.datadog_site,
+                    },
                     github_scope_org: input.github_scope_org,
                     language: input.language,
                 },

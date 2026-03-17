@@ -9,12 +9,11 @@ use reili_core::investigation::{
 use rig::agent::Agent;
 use rig::prelude::CompletionClient;
 
+use super::datadog_mcp_tools::DatadogMcpToolset;
 use super::tools::{
-    AggregateDatadogLogsByFacetTool, GetPullRequestDiffTool, GetPullRequestTool,
-    GetRepositoryContentTool, ListDatadogMetricsCatalogTool, QueryDatadogMetricsTool,
-    ReportProgressTool, ReportProgressToolInput, SearchDatadogEventsTool, SearchDatadogLogsTool,
-    SearchGithubCodeTool, SearchGithubIssuesAndPullRequestsTool, SearchGithubReposTool,
-    SearchWebTool,
+    GetPullRequestDiffTool, GetPullRequestTool, GetRepositoryContentTool, ReportProgressTool,
+    ReportProgressToolInput, SearchGithubCodeTool, SearchGithubIssuesAndPullRequestsTool,
+    SearchGithubReposTool, SearchWebTool,
 };
 use super::{
     llm_provider_settings::LlmProviderSettings, llm_usage_collector::LlmUsageCollector,
@@ -38,6 +37,7 @@ where
     pub settings: LlmProviderSettings,
     pub resources: Arc<InvestigationResources>,
     pub datadog_site: String,
+    pub datadog_mcp_toolset: DatadogMcpToolset,
     pub github_scope_org: String,
     pub runtime: InvestigationRuntime,
     pub on_progress_event: Arc<dyn InvestigationProgressEventPort>,
@@ -57,6 +57,7 @@ where
         client: input.client.clone(),
         settings: input.settings.clone(),
         resources: Arc::clone(&input.resources),
+        datadog_mcp_toolset: input.datadog_mcp_toolset.clone(),
         github_scope_org: String::new(),
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
@@ -67,6 +68,7 @@ where
         client: input.client.clone(),
         settings: input.settings.clone(),
         resources: Arc::clone(&input.resources),
+        datadog_mcp_toolset: input.datadog_mcp_toolset.clone(),
         github_scope_org: String::new(),
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
@@ -77,6 +79,7 @@ where
         client: input.client.clone(),
         settings: input.settings.clone(),
         resources: Arc::clone(&input.resources),
+        datadog_mcp_toolset: input.datadog_mcp_toolset.clone(),
         github_scope_org: String::new(),
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
@@ -87,6 +90,7 @@ where
         client: input.client.clone(),
         settings: input.settings.clone(),
         resources: Arc::clone(&input.resources),
+        datadog_mcp_toolset: input.datadog_mcp_toolset.clone(),
         github_scope_org: input.github_scope_org.clone(),
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
@@ -108,12 +112,7 @@ where
         ))
         .default_max_turns(input.settings.investigation_lead_max_turns)
         .additional_params(input.settings.additional_params.clone())
-        .tool(AggregateDatadogLogsByFacetTool::new(Arc::clone(
-            &input.resources,
-        )))
-        .tool(ListDatadogMetricsCatalogTool::new(Arc::clone(
-            &input.resources,
-        )))
+        .tools(input.datadog_mcp_toolset.lead_tools())
         .tool(ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::clone(&input.on_progress_event),
             owner_id: INVESTIGATION_LEAD_PROGRESS_OWNER_ID.to_string(),
@@ -165,6 +164,7 @@ where
     client: C,
     settings: LlmProviderSettings,
     resources: Arc<InvestigationResources>,
+    datadog_mcp_toolset: DatadogMcpToolset,
     github_scope_org: String,
     language: String,
     on_progress_event: Arc<dyn InvestigationProgressEventPort>,
@@ -194,7 +194,7 @@ where
             on_progress_event: Arc::clone(&input.on_progress_event),
             owner_id: input.owner_id,
         }))
-        .tool(SearchDatadogLogsTool::new(Arc::clone(&input.resources)))
+        .tools(input.datadog_mcp_toolset.logs_tools())
         .tool(SearchWebTool::new(input.resources))
         .build()
 }
@@ -221,7 +221,7 @@ where
             on_progress_event: Arc::clone(&input.on_progress_event),
             owner_id: input.owner_id,
         }))
-        .tool(QueryDatadogMetricsTool::new(Arc::clone(&input.resources)))
+        .tools(input.datadog_mcp_toolset.metrics_tools())
         .tool(SearchWebTool::new(input.resources))
         .build()
 }
@@ -248,7 +248,7 @@ where
             on_progress_event: Arc::clone(&input.on_progress_event),
             owner_id: input.owner_id,
         }))
-        .tool(SearchDatadogEventsTool::new(Arc::clone(&input.resources)))
+        .tools(input.datadog_mcp_toolset.events_tools())
         .tool(SearchWebTool::new(input.resources))
         .build()
 }
@@ -342,7 +342,7 @@ You orchestrate investigation end-to-end.
 - Your response is posted to Slack as-is. Do not rely on any downstream rewriting.
 - Write the final response as a concise, scannable Slack message using Slack markdown.
 - For investigation mode, establish system map from GitHub before deep Datadog querying.
-- Use aggregate_datadog_logs_by_facet and list_datadog_metrics_catalog early to understand service scope.
+- Use Datadog MCP tools such as search_datadog_services, search_datadog_metrics, get_datadog_metric_context, and search_datadog_monitors early to understand service scope.
 - Delegate detailed work to investigate_logs / investigate_metrics / investigate_events / investigate_github as needed.
 - Run independent tool calls in parallel where possible.
 
@@ -372,7 +372,7 @@ fn build_logs_instructions(language: &str) -> String {
 Before entering a new investigation step, call report_progress.
 report_progress payload must be short: use title and summary fields.
 Do not post consecutive report_progress calls with identical content.
-Use search_datadog_logs and summarize errors, anomalies, and patterns.
+Use search_datadog_logs and analyze_datadog_logs to summarize errors, anomalies, and patterns.
 Run independent tool calls in parallel when possible.
 If you receive client_error payloads, adjust query and retry when useful.
 Use {language} for all responses."
@@ -385,7 +385,7 @@ fn build_metrics_instructions(language: &str) -> String {
 Before entering a new investigation step, call report_progress.
 report_progress payload must be short: use title and summary fields.
 Do not post consecutive report_progress calls with identical content.
-Use query_datadog_metrics and summarize trends, spikes, and anomalies.
+Use search_datadog_metrics, get_datadog_metric, and get_datadog_metric_context to summarize trends, spikes, and anomalies.
 Run independent tool calls in parallel when possible.
 If you receive client_error payloads, adjust query and retry when useful.
 Use {language} for all responses."
@@ -493,6 +493,9 @@ mod tests {
         assert!(instructions.contains("call report_progress"));
         assert!(instructions.contains("title and summary fields"));
         assert!(instructions.contains("Do not post consecutive report_progress"));
+        assert!(instructions.contains("search_datadog_services"));
+        assert!(instructions.contains("search_datadog_metrics"));
+        assert!(instructions.contains("get_datadog_metric_context"));
     }
 
     #[test]
@@ -515,6 +518,11 @@ mod tests {
             assert!(instructions.contains("title and summary fields"));
             assert!(instructions.contains("Do not post consecutive report_progress"));
         }
+
+        assert!(build_logs_instructions("Japanese").contains("analyze_datadog_logs"));
+        assert!(build_metrics_instructions("Japanese").contains("get_datadog_metric"));
+        assert!(build_metrics_instructions("Japanese").contains("get_datadog_metric_context"));
+        assert!(build_events_instructions("Japanese").contains("search_datadog_events"));
     }
 
     #[test]

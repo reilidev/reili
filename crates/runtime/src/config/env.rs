@@ -6,6 +6,7 @@ const DEFAULT_DATADOG_SITE: &str = "datadoghq.com";
 const DEFAULT_LANGUAGE: &str = "English";
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
 const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
+const DEFAULT_OPENAI_INVESTIGATION_LEAD_MODEL: &str = "gpt-5.3-codex";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackAuthConfig {
     pub slack_bot_token: String,
@@ -162,7 +163,7 @@ fn read_llm_config(env: &dyn EnvironmentReader) -> Result<LlmConfig, EnvConfigEr
 fn read_openai_llm_config(env: &dyn EnvironmentReader) -> Result<OpenAiLlmConfig, EnvConfigError> {
     Ok(OpenAiLlmConfig {
         api_key: read_required_env(env, "LLM_OPENAI_API_KEY")?,
-        investigation_lead_model: read_required_env(env, "LLM_OPENAI_INVESTIGATION_LEAD_MODEL")?,
+        investigation_lead_model: DEFAULT_OPENAI_INVESTIGATION_LEAD_MODEL.to_string(),
     })
 }
 
@@ -251,8 +252,8 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_WORKER_CONCURRENCY,
-        EnvironmentReader, LlmProviderConfig, load_app_config_with_env,
+        DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_OPENAI_INVESTIGATION_LEAD_MODEL,
+        DEFAULT_WORKER_CONCURRENCY, EnvironmentReader, LlmProviderConfig, load_app_config_with_env,
     };
 
     struct MapEnvironment {
@@ -273,10 +274,6 @@ mod tests {
                 (
                     "LLM_OPENAI_API_KEY".to_string(),
                     "openai-api-key".to_string(),
-                ),
-                (
-                    "LLM_OPENAI_INVESTIGATION_LEAD_MODEL".to_string(),
-                    "gpt-5.3-codex".to_string(),
                 ),
                 ("GITHUB_APP_ID".to_string(), "12345".to_string()),
                 (
@@ -343,14 +340,20 @@ mod tests {
 
     #[test]
     fn loads_openai_llm_config() {
-        let env = MapEnvironment::from_overrides(&[]);
+        let env = MapEnvironment::from_overrides(&[(
+            "LLM_OPENAI_INVESTIGATION_LEAD_MODEL",
+            "custom-model",
+        )]);
 
         let config = load_app_config_with_env(&env).expect("load app config");
 
         match config.llm.provider {
             LlmProviderConfig::OpenAi(provider) => {
                 assert_eq!(provider.api_key, "openai-api-key");
-                assert_eq!(provider.investigation_lead_model, "gpt-5.3-codex");
+                assert_eq!(
+                    provider.investigation_lead_model,
+                    DEFAULT_OPENAI_INVESTIGATION_LEAD_MODEL
+                );
             }
             LlmProviderConfig::Bedrock(_) => panic!("expected openai provider"),
         }

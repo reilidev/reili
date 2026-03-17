@@ -14,6 +14,15 @@ pub enum ExecuteInvestigationJobError {
     InvestigationExecutionFailed(InvestigationExecutionFailedError),
 }
 
+impl ExecuteInvestigationJobError {
+    pub fn is_permanent(&self) -> bool {
+        match self {
+            Self::AgentRunFailed(value) => value.is_permanent,
+            Self::Port(_) | Self::InvestigationExecutionFailed(_) => false,
+        }
+    }
+}
+
 impl From<PortError> for ExecuteInvestigationJobError {
     fn from(value: PortError) -> Self {
         Self::Port(value)
@@ -100,6 +109,15 @@ mod tests {
 
         assert_eq!(port_resolved.error_message, "slack failed");
         assert_eq!(port_resolved.usage, snapshot(0));
+    }
+
+    #[test]
+    fn marks_permanent_agent_failures_as_permanent() {
+        let error = ExecuteInvestigationJobError::AgentRunFailed(
+            AgentRunFailedError::new_permanent(snapshot(1), "mcp failed"),
+        );
+
+        assert!(error.is_permanent());
     }
 
     fn snapshot(requests: u32) -> LlmUsageSnapshot {

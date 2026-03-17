@@ -9,6 +9,7 @@ use reili_core::investigation::{
 use rig::completion::Prompt;
 use rig::prelude::CompletionClient;
 
+use super::datadog_mcp_tools::{DatadogMcpToolConfig, connect_datadog_mcp_toolset};
 use super::investigation_agents::{
     BuildInvestigationLeadAgentInput, build_investigation_lead_agent,
     build_investigation_lead_prompt,
@@ -23,7 +24,7 @@ where
 {
     pub client: C,
     pub settings: LlmProviderSettings,
-    pub datadog_site: String,
+    pub datadog_mcp: DatadogMcpToolConfig,
     pub github_scope_org: String,
     pub language: String,
     pub run: RunInvestigationLeadInput,
@@ -38,13 +39,22 @@ where
 {
     let usage_collector = LlmUsageCollector::new();
     let usage_tracking_hook = LlmUsageTrackingHook::new(usage_collector.clone());
+    let datadog_mcp_toolset = connect_datadog_mcp_toolset(&input.datadog_mcp)
+        .await
+        .map_err(|error| {
+            create_failed_error(CreateInvestigationLeadRunnerFailedErrorInput {
+                usage: usage_collector.snapshot(),
+                cause_message: error.message,
+            })
+        })?;
     let investigation_lead_prompt = build_investigation_lead_prompt(&input.run.alert_context);
     let investigation_lead_agent =
         build_investigation_lead_agent(BuildInvestigationLeadAgentInput {
             client: input.client,
             settings: input.settings.clone(),
             resources: Arc::new(input.run.context.resources),
-            datadog_site: input.datadog_site,
+            datadog_site: input.datadog_mcp.site.clone(),
+            datadog_mcp_toolset,
             github_scope_org: input.github_scope_org,
             runtime: input.run.context.runtime,
             on_progress_event: Arc::clone(&input.run.on_progress_event),
@@ -115,5 +125,12 @@ struct CreateInvestigationLeadRunnerFailedErrorInput {
 fn create_failed_error(
     input: CreateInvestigationLeadRunnerFailedErrorInput,
 ) -> AgentRunFailedError {
+    if input
+        .cause_message
+        .contains("Failed to connect to Datadog MCP server")
+    {
+        return AgentRunFailedError::new_permanent(input.usage, input.cause_message);
+    }
+
     AgentRunFailedError::new(input.usage, input.cause_message)
 }
