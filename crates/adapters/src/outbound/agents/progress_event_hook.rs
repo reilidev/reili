@@ -188,7 +188,7 @@ mod tests {
     async fn publishes_tool_started_event() {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let hook = ProgressEventHook::new(
-            "investigate_logs".to_string(),
+            "investigate_datadog".to_string(),
             Arc::new(MockProgressEventPort {
                 calls: Arc::clone(&calls),
             }),
@@ -201,7 +201,7 @@ mod tests {
         assert_eq!(
             calls.lock().expect("lock calls").as_slice(),
             &[InvestigationProgressEventInput {
-                owner_id: "investigate_logs".to_string(),
+                owner_id: "investigate_datadog".to_string(),
                 event: InvestigationProgressEvent::ToolCallStarted {
                     task_id: "task-1".to_string(),
                     title: "search_datadog_logs".to_string(),
@@ -214,7 +214,7 @@ mod tests {
     async fn publishes_tool_completed_event() {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let hook = ProgressEventHook::new(
-            "investigate_metrics".to_string(),
+            "investigate_datadog".to_string(),
             Arc::new(MockProgressEventPort {
                 calls: Arc::clone(&calls),
             }),
@@ -227,7 +227,7 @@ mod tests {
         assert_eq!(
             calls.lock().expect("lock calls").as_slice(),
             &[InvestigationProgressEventInput {
-                owner_id: "investigate_metrics".to_string(),
+                owner_id: "investigate_datadog".to_string(),
                 event: InvestigationProgressEvent::ToolCallCompleted {
                     task_id: "task-2".to_string(),
                     title: "query_datadog_metrics".to_string(),
@@ -258,7 +258,7 @@ mod tests {
     fn tracks_requests_and_usage() {
         let collector = LlmUsageCollector::new();
         let hook = ProgressEventHook::new(
-            "investigate_logs".to_string(),
+            "investigate_datadog".to_string(),
             Arc::new(MockProgressEventPort {
                 calls: Arc::new(Mutex::new(Vec::new())),
             }),

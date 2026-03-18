@@ -145,11 +145,11 @@ mod tests {
         let client = rig::providers::openai::Client::from_val("test-key".into());
         let agent = client
             .agent("gpt-5.3-codex")
-            .name("investigate_logs")
+            .name("investigate_datadog")
             .build();
         let tool = ProgressReportingSubAgentTool::new(
             agent,
-            "investigate_logs".to_string(),
+            "investigate_datadog".to_string(),
             Arc::new(MockProgressEventPort {
                 calls: Arc::clone(&calls),
             }),
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(
             calls.lock().expect("lock calls").as_slice(),
             &[InvestigationProgressEventInput {
-                owner_id: "investigate_logs".to_string(),
+                owner_id: "investigate_datadog".to_string(),
                 event: InvestigationProgressEvent::MessageOutputCreated,
             }]
         );

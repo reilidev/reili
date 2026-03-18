@@ -1,7 +1,7 @@
 <div align="center">
   <h1>Reili</h1>
   <img src="./reili.svg" alt="Reili logo" width="240" />
-  <p><strong>A Slack-native AI agent for read-only DevOps investigations</strong></p>
+  <p><strong>A Slack-native AI agent for DevOps investigations</strong></p>
   <p>
     Investigate alerts quickly across Datadog, GitHub, and Slack threads.
     <br />
@@ -16,7 +16,7 @@
 - Investigates Datadog Logs, Metrics, and Events
 - Explores GitHub repositories, PRs, Issues, and code
 
-It focuses on read-oriented DevOps work: triage, investigation.
+It focuses on triage, investigation, and communicating findings.
 
 ## Core Features
 
@@ -109,9 +109,9 @@ What happens:
 
 ## Permissions and Tool Transparency
 
-Reili is intentionally scoped as a read-heavy investigation agent. In production it does not get
-shell access, cluster access, deployment credentials, or write-capable GitHub/Datadog tools.
-Its effective capabilities are the integrations and tools wired in this runtime.
+Reili is intentionally scoped around investigation and decision support. In production it does not
+get shell access, cluster access, or deployment credentials. Its effective capabilities are the
+integrations and tools wired in this runtime.
 
 ### Agent Tool Inventory
 
@@ -127,8 +127,8 @@ The investigation agent can call only the following tool families:
   `get_pull_request_diff`
 - External web lookup: `search_web`
 
-No tool is registered for GitHub writes, Slack admin actions, Datadog mutations, remediation, or
-deployments.
+In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog
+mutations, remediation, or deployments.
 
 ### Slack Permissions and API Usage
 
@@ -177,7 +177,7 @@ Slack boundary:
 
 ### Datadog Permissions and API Usage
 
-Reili uses Datadog as a read-only evidence source during investigations.
+Reili uses Datadog as an evidence source during investigations.
 
 Required Datadog credentials:
 
@@ -202,8 +202,7 @@ Recommended Datadog access policy:
 - Issue the API key and application key for that service account rather than reusing human
   operator credentials
 - Prefer restricted application keys when your Datadog plan supports them
-- Allow read access only to the Datadog products Reili actually uses through the `core` MCP
-  toolset
+- Allow only the minimum Datadog product access Reili needs through the `core` MCP toolset
 
 Datadog boundary:
 
@@ -216,14 +215,15 @@ Datadog boundary:
 
 ### GitHub App Permissions and Scope
 
-Reili uses a GitHub App installation token and keeps GitHub access read-only.
+Reili uses a GitHub App installation token. The current runtime only exercises investigation
+capabilities against GitHub.
 
-Recommended GitHub App permissions:
+Recommended GitHub App permissions for the current runtime:
 
-- Repository metadata: read-only
-- Contents: read-only
-- Pull requests: read-only
-- Issues: read-only
+- Repository metadata: read
+- Contents: read
+- Pull requests: read
+- Issues: read
 
 GitHub capabilities currently used by the runtime:
 
@@ -232,9 +232,9 @@ GitHub capabilities currently used by the runtime:
 - Read pull request metadata
 - Read pull request diffs
 
-GitHub boundary:
+GitHub boundary in the current runtime:
 
-- No GitHub write permissions are required
+- No GitHub write permissions are required today
 - No commenting, merging, labeling, reviewing, or workflow dispatch is performed
 - All GitHub search queries must stay inside `GITHUB_SEARCH_SCOPE_ORG`
 - Repository content and pull request reads are rejected when the owner is outside

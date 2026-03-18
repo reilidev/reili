@@ -21,9 +21,7 @@ use super::{
     progress_reporting_sub_agent_tool::ProgressReportingSubAgentTool,
 };
 
-const LOGS_PROGRESS_OWNER_ID: &str = "investigate_logs";
-const METRICS_PROGRESS_OWNER_ID: &str = "investigate_metrics";
-const EVENTS_PROGRESS_OWNER_ID: &str = "investigate_events";
+const DATADOG_PROGRESS_OWNER_ID: &str = "investigate_datadog";
 const GITHUB_PROGRESS_OWNER_ID: &str = "investigate_github";
 
 type CompletionAgent<C> = Agent<<C as CompletionClient>::CompletionModel>;
@@ -53,7 +51,7 @@ where
     C: CompletionClient + Clone,
     C::CompletionModel: 'static,
 {
-    let logs_agent = build_logs_agent(BuildSpecialistAgentInput {
+    let datadog_agent = build_datadog_agent(BuildSpecialistAgentInput {
         client: input.client.clone(),
         settings: input.settings.clone(),
         resources: Arc::clone(&input.resources),
@@ -61,29 +59,7 @@ where
         github_scope_org: String::new(),
         language: input.language.clone(),
         on_progress_event: Arc::clone(&input.on_progress_event),
-        owner_id: LOGS_PROGRESS_OWNER_ID.to_string(),
-        usage_collector: input.usage_collector.clone(),
-    });
-    let metrics_agent = build_metrics_agent(BuildSpecialistAgentInput {
-        client: input.client.clone(),
-        settings: input.settings.clone(),
-        resources: Arc::clone(&input.resources),
-        datadog_mcp_toolset: input.datadog_mcp_toolset.clone(),
-        github_scope_org: String::new(),
-        language: input.language.clone(),
-        on_progress_event: Arc::clone(&input.on_progress_event),
-        owner_id: METRICS_PROGRESS_OWNER_ID.to_string(),
-        usage_collector: input.usage_collector.clone(),
-    });
-    let events_agent = build_events_agent(BuildSpecialistAgentInput {
-        client: input.client.clone(),
-        settings: input.settings.clone(),
-        resources: Arc::clone(&input.resources),
-        datadog_mcp_toolset: input.datadog_mcp_toolset.clone(),
-        github_scope_org: String::new(),
-        language: input.language.clone(),
-        on_progress_event: Arc::clone(&input.on_progress_event),
-        owner_id: EVENTS_PROGRESS_OWNER_ID.to_string(),
+        owner_id: DATADOG_PROGRESS_OWNER_ID.to_string(),
         usage_collector: input.usage_collector.clone(),
     });
     let github_agent = build_github_agent(BuildSpecialistAgentInput {
@@ -118,18 +94,8 @@ where
             owner_id: INVESTIGATION_LEAD_PROGRESS_OWNER_ID.to_string(),
         }))
         .tool(ProgressReportingSubAgentTool::new(
-            logs_agent,
-            LOGS_PROGRESS_OWNER_ID.to_string(),
-            Arc::clone(&input.on_progress_event),
-        ))
-        .tool(ProgressReportingSubAgentTool::new(
-            metrics_agent,
-            METRICS_PROGRESS_OWNER_ID.to_string(),
-            Arc::clone(&input.on_progress_event),
-        ))
-        .tool(ProgressReportingSubAgentTool::new(
-            events_agent,
-            EVENTS_PROGRESS_OWNER_ID.to_string(),
+            datadog_agent,
+            DATADOG_PROGRESS_OWNER_ID.to_string(),
             Arc::clone(&input.on_progress_event),
         ))
         .tool(SearchWebTool::new(Arc::clone(&input.resources)))
@@ -172,7 +138,7 @@ where
     usage_collector: LlmUsageCollector,
 }
 
-fn build_logs_agent<C>(input: BuildSpecialistAgentInput<C>) -> SpecialistAgent<C>
+fn build_datadog_agent<C>(input: BuildSpecialistAgentInput<C>) -> SpecialistAgent<C>
 where
     C: CompletionClient,
     C::CompletionModel: 'static,
@@ -180,9 +146,9 @@ where
     input
         .client
         .agent(input.settings.specialist_model.clone())
-        .name("investigate_logs")
-        .description("Delegates Datadog log investigation tasks.")
-        .preamble(&build_logs_instructions(&input.language))
+        .name("investigate_datadog")
+        .description("Delegates Datadog logs, metrics, and events investigation tasks.")
+        .preamble(&build_datadog_instructions(&input.language))
         .default_max_turns(input.settings.specialist_max_turns)
         .additional_params(input.settings.additional_params.clone())
         .hook(ProgressEventHook::new(
@@ -194,61 +160,7 @@ where
             on_progress_event: Arc::clone(&input.on_progress_event),
             owner_id: input.owner_id,
         }))
-        .tools(input.datadog_mcp_toolset.logs_tools())
-        .tool(SearchWebTool::new(input.resources))
-        .build()
-}
-
-fn build_metrics_agent<C>(input: BuildSpecialistAgentInput<C>) -> SpecialistAgent<C>
-where
-    C: CompletionClient,
-    C::CompletionModel: 'static,
-{
-    input
-        .client
-        .agent(input.settings.specialist_model.clone())
-        .name("investigate_metrics")
-        .description("Delegates Datadog metrics investigation tasks.")
-        .preamble(&build_metrics_instructions(&input.language))
-        .default_max_turns(input.settings.specialist_max_turns)
-        .additional_params(input.settings.additional_params.clone())
-        .hook(ProgressEventHook::new(
-            input.owner_id.clone(),
-            Arc::clone(&input.on_progress_event),
-            input.usage_collector,
-        ))
-        .tool(ReportProgressTool::new(ReportProgressToolInput {
-            on_progress_event: Arc::clone(&input.on_progress_event),
-            owner_id: input.owner_id,
-        }))
-        .tools(input.datadog_mcp_toolset.metrics_tools())
-        .tool(SearchWebTool::new(input.resources))
-        .build()
-}
-
-fn build_events_agent<C>(input: BuildSpecialistAgentInput<C>) -> SpecialistAgent<C>
-where
-    C: CompletionClient,
-    C::CompletionModel: 'static,
-{
-    input
-        .client
-        .agent(input.settings.specialist_model.clone())
-        .name("investigate_events")
-        .description("Delegates Datadog event investigation tasks.")
-        .preamble(&build_events_instructions(&input.language))
-        .default_max_turns(input.settings.specialist_max_turns)
-        .additional_params(input.settings.additional_params.clone())
-        .hook(ProgressEventHook::new(
-            input.owner_id.clone(),
-            Arc::clone(&input.on_progress_event),
-            input.usage_collector,
-        ))
-        .tool(ReportProgressTool::new(ReportProgressToolInput {
-            on_progress_event: Arc::clone(&input.on_progress_event),
-            owner_id: input.owner_id,
-        }))
-        .tools(input.datadog_mcp_toolset.events_tools())
+        .tools(input.datadog_mcp_toolset.specialist_tools())
         .tool(SearchWebTool::new(input.resources))
         .build()
 }
@@ -343,7 +255,7 @@ You orchestrate investigation end-to-end.
 - Write the final response as a concise, scannable Slack message using Slack markdown.
 - For investigation mode, establish system map from GitHub before deep Datadog querying.
 - Use Datadog MCP tools such as search_datadog_services, search_datadog_metrics, get_datadog_metric_context, and search_datadog_monitors early to understand service scope.
-- Delegate detailed work to investigate_logs / investigate_metrics / investigate_events / investigate_github as needed.
+- Delegate detailed Datadog work to investigate_datadog and GitHub work to investigate_github as needed.
 - Run independent tool calls in parallel where possible.
 
 Web search:
@@ -366,39 +278,19 @@ Final answer requirements:
     )
 }
 
-fn build_logs_instructions(language: &str) -> String {
+fn build_datadog_instructions(language: &str) -> String {
     format!(
-        "You are a log analysis specialist.
+        "You are a Datadog investigation specialist covering logs, metrics, and events.
 Before entering a new investigation step, call report_progress.
 report_progress payload must be short: use title and summary fields.
 Do not post consecutive report_progress calls with identical content.
+Use explicit progress titles such as Inspect logs, Check metric spike, or Correlate events.
+Start by narrowing the service, timeframe, and current hypothesis.
+Use only the Datadog tools needed for the hypothesis you are testing.
 Use search_datadog_logs and analyze_datadog_logs to summarize errors, anomalies, and patterns.
-Run independent tool calls in parallel when possible.
-If you receive client_error payloads, adjust query and retry when useful.
-Use {language} for all responses."
-    )
-}
-
-fn build_metrics_instructions(language: &str) -> String {
-    format!(
-        "You are a metrics analysis specialist.
-Before entering a new investigation step, call report_progress.
-report_progress payload must be short: use title and summary fields.
-Do not post consecutive report_progress calls with identical content.
-Use search_datadog_metrics, get_datadog_metric, and get_datadog_metric_context to summarize trends, spikes, and anomalies.
-Run independent tool calls in parallel when possible.
-If you receive client_error payloads, adjust query and retry when useful.
-Use {language} for all responses."
-    )
-}
-
-fn build_events_instructions(language: &str) -> String {
-    format!(
-        "You are an events analysis specialist.
-Before entering a new investigation step, call report_progress.
-report_progress payload must be short: use title and summary fields.
-Do not post consecutive report_progress calls with identical content.
-Use search_datadog_events and correlate deployments/config changes with incidents.
+Use search_datadog_metrics, get_datadog_metric, and get_datadog_metric_context to inspect trends, spikes, and related dimensions.
+Use search_datadog_events to correlate deployments, incidents, and configuration changes.
+Combine logs, metrics, and events when it materially improves confidence.
 Run independent tool calls in parallel when possible.
 If you receive client_error payloads, adjust query and retry when useful.
 Use {language} for all responses."
@@ -438,9 +330,8 @@ mod tests {
     };
     use super::{
         BuildGithubInstructionsInput, BuildInvestigationLeadInstructionsInput,
-        build_events_instructions, build_github_instructions,
+        build_datadog_instructions, build_github_instructions,
         build_investigation_lead_instructions, build_investigation_lead_prompt,
-        build_logs_instructions, build_metrics_instructions,
     };
 
     fn sample_alert_context() -> AlertContext {
@@ -496,33 +387,31 @@ mod tests {
         assert!(instructions.contains("search_datadog_services"));
         assert!(instructions.contains("search_datadog_metrics"));
         assert!(instructions.contains("get_datadog_metric_context"));
+        assert!(instructions.contains("investigate_datadog"));
+        assert!(
+            !instructions.contains("investigate_logs / investigate_metrics / investigate_events")
+        );
     }
 
     #[test]
     fn specialist_instructions_include_report_progress_rules() {
-        let logs_instructions = build_logs_instructions("Japanese");
-        let metrics_instructions = build_metrics_instructions("Japanese");
-        let events_instructions = build_events_instructions("Japanese");
+        let datadog_instructions = build_datadog_instructions("Japanese");
         let github_instructions = build_github_instructions(BuildGithubInstructionsInput {
             language: "Japanese".to_string(),
             github_scope_org: "acme".to_string(),
         });
 
-        for instructions in [
-            logs_instructions,
-            metrics_instructions,
-            events_instructions,
-            github_instructions,
-        ] {
+        for instructions in [datadog_instructions, github_instructions] {
             assert!(instructions.contains("call report_progress"));
             assert!(instructions.contains("title and summary fields"));
             assert!(instructions.contains("Do not post consecutive report_progress"));
         }
 
-        assert!(build_logs_instructions("Japanese").contains("analyze_datadog_logs"));
-        assert!(build_metrics_instructions("Japanese").contains("get_datadog_metric"));
-        assert!(build_metrics_instructions("Japanese").contains("get_datadog_metric_context"));
-        assert!(build_events_instructions("Japanese").contains("search_datadog_events"));
+        assert!(build_datadog_instructions("Japanese").contains("analyze_datadog_logs"));
+        assert!(build_datadog_instructions("Japanese").contains("get_datadog_metric"));
+        assert!(build_datadog_instructions("Japanese").contains("get_datadog_metric_context"));
+        assert!(build_datadog_instructions("Japanese").contains("search_datadog_events"));
+        assert!(build_datadog_instructions("Japanese").contains("Inspect logs"));
     }
 
     #[test]

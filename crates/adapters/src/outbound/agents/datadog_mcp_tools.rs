@@ -25,19 +25,19 @@ const DATADOG_MCP_TOOLSET: &str = "core";
 const DATADOG_API_KEY_HEADER: &str = "DD_API_KEY";
 const DATADOG_APPLICATION_KEY_HEADER: &str = "DD_APPLICATION_KEY";
 
-const DATADOG_LOGS_AGENT_TOOLS: &[&str] = &["search_datadog_logs", "analyze_datadog_logs"];
-const DATADOG_METRICS_AGENT_TOOLS: &[&str] = &[
+const DATADOG_SPECIALIST_AGENT_TOOLS: &[&str] = &[
+    "search_datadog_logs",
+    "analyze_datadog_logs",
     "search_datadog_metrics",
     "get_datadog_metric",
     "get_datadog_metric_context",
+    "search_datadog_events",
 ];
-const DATADOG_EVENTS_AGENT_TOOLS: &[&str] = &["search_datadog_events"];
 const DATADOG_LEAD_AGENT_TOOLS: &[&str] = &[
     "search_datadog_services",
     "search_datadog_metrics",
     "get_datadog_metric_context",
     "search_datadog_monitors",
-    "search_datadog_incidents",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,22 +68,12 @@ impl DatadogMcpToolset {
     }
 
     #[must_use]
-    pub fn logs_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        build_tool_adapters(&self.tools, DATADOG_LOGS_AGENT_TOOLS, self.client.clone())
-    }
-
-    #[must_use]
-    pub fn metrics_tools(&self) -> Vec<Box<dyn ToolDyn>> {
+    pub fn specialist_tools(&self) -> Vec<Box<dyn ToolDyn>> {
         build_tool_adapters(
             &self.tools,
-            DATADOG_METRICS_AGENT_TOOLS,
+            DATADOG_SPECIALIST_AGENT_TOOLS,
             self.client.clone(),
         )
-    }
-
-    #[must_use]
-    pub fn events_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        build_tool_adapters(&self.tools, DATADOG_EVENTS_AGENT_TOOLS, self.client.clone())
     }
 }
 
@@ -402,10 +392,8 @@ struct DatadogMcpInitializeDiagnostic {
 
 fn validate_required_tools(tools: &[Tool]) -> Result<(), PortError> {
     let available_names: HashSet<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
-    let required_names: HashSet<&str> = DATADOG_LOGS_AGENT_TOOLS
+    let required_names: HashSet<&str> = DATADOG_SPECIALIST_AGENT_TOOLS
         .iter()
-        .chain(DATADOG_METRICS_AGENT_TOOLS.iter())
-        .chain(DATADOG_EVENTS_AGENT_TOOLS.iter())
         .chain(DATADOG_LEAD_AGENT_TOOLS.iter())
         .copied()
         .collect();
@@ -648,9 +636,9 @@ mod tests {
     use rmcp::transport::streamable_http_client::StreamableHttpPostResponse;
 
     use super::{
-        DatadogMcpToolConfig, build_datadog_mcp_headers, datadog_mcp_url, datadog_site_domain,
-        filter_tools, format_datadog_mcp_tool_error, format_datadog_mcp_tool_success,
-        read_server_result, validate_required_tools,
+        DATADOG_SPECIALIST_AGENT_TOOLS, DatadogMcpToolConfig, build_datadog_mcp_headers,
+        datadog_mcp_url, datadog_site_domain, filter_tools, format_datadog_mcp_tool_error,
+        format_datadog_mcp_tool_success, read_server_result, validate_required_tools,
     };
 
     fn tool(name: &str) -> Tool {
@@ -715,6 +703,38 @@ mod tests {
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].name.as_ref(), "search_datadog_logs");
         assert_eq!(filtered[1].name.as_ref(), "search_datadog_events");
+    }
+
+    #[test]
+    fn filters_specialist_tools_to_logs_metrics_and_events_union() {
+        let tools = vec![
+            tool("search_datadog_services"),
+            tool("search_datadog_logs"),
+            tool("analyze_datadog_logs"),
+            tool("search_datadog_metrics"),
+            tool("get_datadog_metric"),
+            tool("get_datadog_metric_context"),
+            tool("search_datadog_events"),
+            tool("search_datadog_incidents"),
+        ];
+
+        let filtered = filter_tools(&tools, DATADOG_SPECIALIST_AGENT_TOOLS);
+        let names = filtered
+            .iter()
+            .map(|tool| tool.name.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                "search_datadog_logs",
+                "analyze_datadog_logs",
+                "search_datadog_metrics",
+                "get_datadog_metric",
+                "get_datadog_metric_context",
+                "search_datadog_events",
+            ]
+        );
     }
 
     #[test]
