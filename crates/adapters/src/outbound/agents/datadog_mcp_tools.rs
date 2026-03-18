@@ -3,7 +3,6 @@ use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use futures::StreamExt;
 use reili_core::error::PortError;
 use reqwest::header::{HeaderMap as ReqwestHeaderMap, HeaderName, HeaderValue};
 use rig::completion::ToolDefinition;
@@ -65,17 +64,17 @@ pub struct DatadogMcpToolset {
 impl DatadogMcpToolset {
     #[must_use]
     pub fn lead_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        build_rig_tools(&self.tools, DATADOG_LEAD_AGENT_TOOLS, self.client.clone())
+        build_tool_adapters(&self.tools, DATADOG_LEAD_AGENT_TOOLS, self.client.clone())
     }
 
     #[must_use]
     pub fn logs_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        build_rig_tools(&self.tools, DATADOG_LOGS_AGENT_TOOLS, self.client.clone())
+        build_tool_adapters(&self.tools, DATADOG_LOGS_AGENT_TOOLS, self.client.clone())
     }
 
     #[must_use]
     pub fn metrics_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        build_rig_tools(
+        build_tool_adapters(
             &self.tools,
             DATADOG_METRICS_AGENT_TOOLS,
             self.client.clone(),
@@ -84,7 +83,7 @@ impl DatadogMcpToolset {
 
     #[must_use]
     pub fn events_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        build_rig_tools(&self.tools, DATADOG_EVENTS_AGENT_TOOLS, self.client.clone())
+        build_tool_adapters(&self.tools, DATADOG_EVENTS_AGENT_TOOLS, self.client.clone())
     }
 }
 
@@ -357,7 +356,7 @@ async fn diagnose_datadog_mcp_initialize(
     Ok(DatadogMcpInitializeDiagnostic {
         status,
         content_type,
-        body_preview: truncate_for_error_message(&body, 400),
+        body,
     })
 }
 
@@ -368,7 +367,7 @@ fn create_datadog_mcp_connect_error(
     match diagnostic {
         Ok(diagnostic) => PortError::new(format!(
             "Failed to connect to Datadog MCP server: {base_error}. Diagnostic initialize response: status={} content_type={} body={}",
-            diagnostic.status, diagnostic.content_type, diagnostic.body_preview
+            diagnostic.status, diagnostic.content_type, diagnostic.body
         )),
         Err(diagnostic_error) => PortError::new(format!(
             "Failed to connect to Datadog MCP server: {base_error}. Diagnostic request also failed: {}",
@@ -394,20 +393,11 @@ fn build_datadog_mcp_headers(config: &DatadogMcpToolConfig) -> Result<ReqwestHea
     Ok(default_headers)
 }
 
-fn truncate_for_error_message(text: &str, max_chars: usize) -> String {
-    let mut truncated = text.chars().take(max_chars).collect::<String>();
-    if text.chars().count() > max_chars {
-        truncated.push_str("...");
-    }
-
-    truncated
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DatadogMcpInitializeDiagnostic {
     status: u16,
     content_type: String,
-    body_preview: String,
+    body: String,
 }
 
 fn validate_required_tools(tools: &[Tool]) -> Result<(), PortError> {
@@ -447,7 +437,7 @@ fn filter_tools(tools: &[Tool], names: &[&str]) -> Vec<Tool> {
         .collect()
 }
 
-fn build_rig_tools(
+fn build_tool_adapters(
     tools: &[Tool],
     names: &[&str],
     client: DatadogMcpHttpClient,
@@ -455,7 +445,7 @@ fn build_rig_tools(
     filter_tools(tools, names)
         .into_iter()
         .map(|tool| {
-            Box::new(DatadogMcpRigTool {
+            Box::new(DatadogMcpToolAdapter {
                 definition: tool,
                 client: client.clone(),
             }) as Box<dyn ToolDyn>
@@ -464,12 +454,12 @@ fn build_rig_tools(
 }
 
 #[derive(Clone)]
-struct DatadogMcpRigTool {
+struct DatadogMcpToolAdapter {
     definition: Tool,
     client: DatadogMcpHttpClient,
 }
 
-impl ToolDyn for DatadogMcpRigTool {
+impl ToolDyn for DatadogMcpToolAdapter {
     fn name(&self) -> String {
         self.definition.name.to_string()
     }
@@ -543,42 +533,10 @@ async fn read_server_result(
         StreamableHttpPostResponse::Json(message, session_id) => {
             Ok((extract_server_result(message)?, session_id.map(Into::into)))
         }
-        StreamableHttpPostResponse::Sse(mut stream, session_id) => {
-            while let Some(event) = stream.next().await {
-                let event = event.map_err(|error| {
-                    PortError::new(format!("Failed to read Datadog MCP SSE event: {error}"))
-                })?;
-                let payload = event.data.unwrap_or_default();
-                if payload.trim().is_empty() {
-                    continue;
-                }
-
-                let message: ServerJsonRpcMessage =
-                    serde_json::from_str(&payload).map_err(|error| {
-                        PortError::new(format!(
-                            "Failed to deserialize Datadog MCP SSE payload as JSON-RPC: {error}"
-                        ))
-                    })?;
-                match message.into_result() {
-                    Some((Ok(result), _)) => return Ok((result, session_id.map(Into::into))),
-                    Some((Err(error), _)) => {
-                        return Err(PortError::new(format!(
-                            "Datadog MCP JSON-RPC error: code={:?} message={} data={}",
-                            error.code,
-                            error.message,
-                            error
-                                .data
-                                .map_or_else(|| "null".to_string(), |value| value.to_string())
-                        )));
-                    }
-                    None => continue,
-                }
-            }
-
-            Err(PortError::new(
-                "Datadog MCP returned an SSE stream without a JSON-RPC response",
-            ))
-        }
+        StreamableHttpPostResponse::Sse(_, session_id) => Err(PortError::new(format!(
+            "Datadog MCP returned an unexpected SSE response for session {}",
+            session_id.as_deref().unwrap_or("<none>")
+        ))),
     }
 }
 
@@ -684,13 +642,15 @@ fn datadog_site_domain(site: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt;
     use reqwest::header::HeaderValue;
-    use rmcp::model::Tool;
+    use rmcp::model::{NumberOrString, ServerJsonRpcMessage, ServerResult, Tool};
+    use rmcp::transport::streamable_http_client::StreamableHttpPostResponse;
 
     use super::{
         DatadogMcpToolConfig, build_datadog_mcp_headers, datadog_mcp_url, datadog_site_domain,
         filter_tools, format_datadog_mcp_tool_error, format_datadog_mcp_tool_success,
-        truncate_for_error_message, validate_required_tools,
+        read_server_result, validate_required_tools,
     };
 
     fn tool(name: &str) -> Tool {
@@ -755,12 +715,6 @@ mod tests {
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].name.as_ref(), "search_datadog_logs");
         assert_eq!(filtered[1].name.as_ref(), "search_datadog_events");
-    }
-
-    #[test]
-    fn truncates_error_message_preview() {
-        assert_eq!(truncate_for_error_message("abcdef", 4), "abcd...");
-        assert_eq!(truncate_for_error_message("abc", 4), "abc");
     }
 
     #[test]
@@ -832,6 +786,39 @@ mod tests {
         assert_eq!(
             format_datadog_mcp_tool_error("search_datadog_metrics", &result),
             "Datadog MCP tool search_datadog_metrics returned an error: content=resource failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn reads_server_result_from_json_response() {
+        let response = StreamableHttpPostResponse::Json(
+            ServerJsonRpcMessage::response(
+                ServerResult::InitializeResult(Default::default()),
+                NumberOrString::Number(1.into()),
+            ),
+            Some("session-123".to_string()),
+        );
+
+        let (result, session_id) = read_server_result(response).await.expect("read result");
+
+        assert!(matches!(result, ServerResult::InitializeResult(_)));
+        assert_eq!(session_id.as_deref(), Some("session-123"));
+    }
+
+    #[tokio::test]
+    async fn rejects_sse_server_result_response() {
+        let response = StreamableHttpPostResponse::Sse(
+            futures::stream::empty().boxed(),
+            Some("session-123".to_string()),
+        );
+
+        let error = read_server_result(response)
+            .await
+            .expect_err("sse should fail");
+
+        assert_eq!(
+            error.message,
+            "Datadog MCP returned an unexpected SSE response for session session-123"
         );
     }
 }
