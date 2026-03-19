@@ -1,8 +1,12 @@
 [package]
 name = "reili_runtime"
-version = "0.1.0"
+version = { workspace = true }
 edition = "2024"
 license = "Apache-2.0"
+
+[[bin]]
+name = "reili"
+path = "src/main.rs"
 
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }

@@ -1,0 +1,76 @@
+name: Build Release Bundle
+
+on:
+  workflow_call:
+    inputs:
+      arch:
+        required: true
+        type: string
+      runner:
+        required: true
+        type: string
+      target:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+
+env:
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  CARGO_HTTP_TIMEOUT: 60
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_TERM_COLOR: always
+  BIN_NAME: reili
+
+jobs:
+  build-release-bundle:
+    permissions:
+      contents: read
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # release tag v1; upstream does not publish v1.x.y tags
+        with:
+          toolchain: stable
+          targets: ${{ inputs.target }}
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: crates -> target
+
+      - name: Install musl build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends musl-tools
+
+      - name: Build release binary
+        working-directory: crates
+        run: |
+          cargo build --locked --release --target "${{ inputs.target }}" --bin "${BIN_NAME}"
+          strip "target/${{ inputs.target }}/release/${BIN_NAME}"
+
+      - name: Package release artifact
+        run: |
+          package_name="reili-${{ inputs.version }}-${{ inputs.target }}"
+          package_root="dist/${package_name}"
+
+          mkdir -p "${package_root}"
+          install -m 755 "crates/target/${{ inputs.target }}/release/${BIN_NAME}" "${package_root}/${BIN_NAME}"
+
+          for extra_file in README.md LICENSE.md; do
+            if [ -f "${extra_file}" ]; then
+              cp "${extra_file}" "${package_root}/"
+            fi
+          done
+
+          tar -C dist -czf "dist/${package_name}.tar.gz" "${package_name}"
+          sha256sum "dist/${package_name}.tar.gz" > "dist/${package_name}.sha256"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-bundle-${{ inputs.arch }}
+          path: |
+            dist/reili-${{ inputs.version }}-${{ inputs.target }}.tar.gz
+            dist/reili-${{ inputs.version }}-${{ inputs.target }}.sha256
+          if-no-files-found: error

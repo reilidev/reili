@@ -1,0 +1,10 @@
+.env
+.git
+.github
+.idea
+target
+node_modules
+dist/*
+!dist/docker/
+!dist/docker/**
+.tmp

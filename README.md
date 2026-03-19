@@ -14,13 +14,15 @@
 `Reili` starts from Slack messages and investigation requests, then:
 
 - Investigates Datadog Logs, Metrics, and Events
-- Explores GitHub repositories, PRs, Issues, and code
+- Explores GitHub repositories, PRs, Issues, and code while connecting that context with Datadog to understand system structure and trace issues
 
 It focuses on triage, investigation, and communicating findings.
 
 ## Core Features
 
 - Slack-native intake via `app_mention` events
+- Investigation result reporting in Slack threads
+- Evidence collection from GitHub and Datadog
 
 ### Runtime Characteristics
 
@@ -31,10 +33,9 @@ It focuses on triage, investigation, and communicating findings.
 
 ### 1. Prerequisites
 
-- Rust stable toolchain
 - Slack App (Bot Token / Signing Secret)
 - Datadog API Key + APP Key
-- OpenAI API Key
+- OpenAI API Key or AWS credentials with permission to use Amazon Bedrock (for example an AWS CLI profile or IRSA role)
 - GitHub App (App ID / Private Key / Installation ID)
 
 ### 2. Install
@@ -77,20 +78,36 @@ When `LLM_PROVIDER=bedrock`, AWS credentials are loaded from the standard AWS SD
 - Do not enable extra message event subscriptions or DM/private-conversation scopes unless you
   intentionally want to expand the support boundary beyond the current product policy
 
-### 5. Run
+### 5. Run locally
 
 Single-process runtime:
 
 ```bash
-cd rust
+cd crates
 bash -lc 'set -a; source ../.env; set +a; cargo run -p reili_runtime'
 ```
 
 If you use `cargo-watch`:
 
 ```bash
-cd rust
+cd crates
 bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p reili_runtime"'
+```
+
+### 6. Run with Docker
+
+Build a local image:
+
+```bash
+docker build --build-arg APP_VERSION=local -t reili:local .
+docker run --env-file .env -p 3000:3000 reili:local
+```
+
+To consume the published GitHub Container Registry image after release, set the image name in
+`compose.example.yaml` and start it with Docker Compose:
+
+```bash
+docker compose -f compose.example.yaml up -d
 ```
 
 ## Usage
@@ -117,7 +134,7 @@ integrations and tools wired in this runtime.
 
 The investigation agent can call only the following tool families:
 
-- Slack progress reporting: `report_progress`
+- Slack progress reporting: `report_progress` (primarily used to post progress messages back to Slack)
 - Datadog MCP reads: `search_datadog_services`, `search_datadog_logs`,
   `analyze_datadog_logs`, `search_datadog_metrics`, `get_datadog_metric`,
   `get_datadog_metric_context`, `search_datadog_events`, `search_datadog_monitors`,
@@ -250,6 +267,12 @@ status or public incident reports.
 ## Development
 
 For local development setup, architecture rules, and contributor workflows, see [DEVELOPERS.md](./DEVELOPERS.md).
+
+## Release
+
+- Pull requests and pushes to `main` run `cargo fmt`, `cargo clippy`, `cargo test`, and a Docker build validation in GitHub Actions.
+- Pushing a tag such as `v0.1.0` triggers the release workflow, which creates a GitHub Release, uploads a Linux binary archive, and publishes a multi-architecture container image to `ghcr.io/<owner>/<repo>`.
+- The container exposes `/healthz` for runtime health checks and listens on `PORT` (default `3000`).
 
 ## Non-Goals
 

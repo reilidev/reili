@@ -1,0 +1,214 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: reili
+
+jobs:
+  release-pr:
+    if: github.ref_type == 'branch' && github.ref_name == 'main'
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs['crates/runtime--release_created'] }}
+      tag_name: ${{ steps.release.outputs['crates/runtime--tag_name'] }}
+      version: ${{ steps.release.outputs['crates/runtime--version'] }}
+      major: ${{ steps.release.outputs['crates/runtime--major'] }}
+      minor: ${{ steps.release.outputs['crates/runtime--minor'] }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  prepare-release:
+    needs: release-pr
+    # Allow tag-triggered releases to proceed even though release-pr is skipped on non-main refs.
+    if: always() && (github.ref_type == 'tag' || needs.release-pr.outputs.release_created == 'true')
+    permissions: {}
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.metadata.outputs.tag_name }}
+      version: ${{ steps.metadata.outputs.version }}
+      major: ${{ steps.metadata.outputs.major }}
+      minor: ${{ steps.metadata.outputs.minor }}
+      release_origin: ${{ steps.metadata.outputs.release_origin }}
+    steps:
+      - id: metadata
+        name: Resolve release metadata
+        env:
+          EVENT_REF_NAME: ${{ github.ref_name }}
+          EVENT_REF_TYPE: ${{ github.ref_type }}
+          RP_MAJOR: ${{ needs.release-pr.outputs.major }}
+          RP_MINOR: ${{ needs.release-pr.outputs.minor }}
+          RP_TAG_NAME: ${{ needs.release-pr.outputs.tag_name }}
+          RP_VERSION: ${{ needs.release-pr.outputs.version }}
+        run: |
+          if [ "${EVENT_REF_TYPE}" = "tag" ]; then
+            tag_name="${EVENT_REF_NAME}"
+            version="${tag_name#v}"
+            major="${version%%.*}"
+            rest="${version#*.}"
+            minor="${rest%%.*}"
+            release_origin="tag-push"
+          else
+            tag_name="${RP_TAG_NAME}"
+            version="${RP_VERSION}"
+            major="${RP_MAJOR}"
+            minor="${RP_MINOR}"
+            release_origin="release-please"
+          fi
+
+          {
+            echo "tag_name=${tag_name}"
+            echo "version=${version}"
+            echo "major=${major}"
+            echo "minor=${minor}"
+            echo "release_origin=${release_origin}"
+          } >> "${GITHUB_OUTPUT}"
+
+  build-binaries:
+    needs: prepare-release
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    uses: ./.github/workflows/_build-release-bundle.yml
+    with:
+      arch: ${{ matrix.arch }}
+      runner: ${{ matrix.runner }}
+      target: ${{ matrix.target }}
+      version: ${{ needs.prepare-release.outputs.tag_name }}
+
+  github-release:
+    needs:
+      - build-binaries
+      - prepare-release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-bundle-*
+          merge-multiple: true
+          path: dist
+
+      - uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
+        if: needs.prepare-release.outputs.release_origin == 'tag-push'
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.tag_name }}
+          generate_release_notes: true
+          overwrite_files: true
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+      - name: Upload assets to release-please release
+        if: needs.prepare-release.outputs.release_origin == 'release-please'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ needs.prepare-release.outputs.tag_name }}" \
+            dist/*.tar.gz \
+            dist/*.sha256 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+
+  container-image:
+    needs:
+      - github-release
+      - prepare-release
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/release
+
+          gh release download "${{ needs.prepare-release.outputs.tag_name }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "reili-${{ needs.prepare-release.outputs.tag_name }}-*.tar.gz" \
+            --dir dist/release
+
+      - name: Prepare Docker build context
+        run: |
+          mkdir -p dist/docker/amd64 dist/docker/arm64
+
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            case "${target}" in
+              x86_64-unknown-linux-musl) arch=amd64 ;;
+              aarch64-unknown-linux-musl) arch=arm64 ;;
+            esac
+
+            package="reili-${{ needs.prepare-release.outputs.tag_name }}-${target}"
+
+            tar -xzf "dist/release/${package}.tar.gz" -C dist/release
+            install -m 755 \
+              "dist/release/${package}/${BIN_NAME}" \
+              "dist/docker/${arch}/${BIN_NAME}"
+          done
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ needs.prepare-release.outputs.version }}
+            type=raw,value=${{ needs.prepare-release.outputs.major }}.${{ needs.prepare-release.outputs.minor }}
+            type=raw,value=latest,enable=${{ !contains(needs.prepare-release.outputs.version, '-') }}
+            type=sha
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            APP_VERSION=${{ needs.prepare-release.outputs.tag_name }}
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
