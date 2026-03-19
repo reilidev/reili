@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use reili_adapters::inbound::slack::{
     ParsedSlackEvent, parse_slack_event, verify_slack_signature_middleware,
@@ -58,6 +58,7 @@ pub async fn run_app() -> Result<(), AppRunError> {
             deps.slack_signature_verifier,
             verify_slack_signature_middleware,
         ))
+        .route("/healthz", get(handle_healthz))
         .with_state(http_state);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", config.port))
@@ -109,6 +110,10 @@ async fn handle_slack_events(State(state): State<Arc<AppHttpState>>, body: Bytes
     }
 }
 
+async fn handle_healthz() -> StatusCode {
+    StatusCode::OK
+}
+
 async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
@@ -129,5 +134,17 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+
+    use super::handle_healthz;
+
+    #[tokio::test]
+    async fn healthz_returns_ok() {
+        assert_eq!(handle_healthz().await, StatusCode::OK);
     }
 }
