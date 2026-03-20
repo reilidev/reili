@@ -46,15 +46,15 @@ When `LLM_PROVIDER=bedrock`, AWS credentials are loaded from the standard AWS SD
 Run the unified runtime in one terminal.
 
 ```bash
-cd rust
-bash -lc 'set -a; source ../.env; set +a; cargo run -p sre_runtime'
+cd crates
+bash -lc 'set -a; source ../.env; set +a; cargo run -p reili_runtime'
 ```
 
 If you use `cargo-watch`:
 
 ```bash
-cd rust
-bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p sre_runtime"'
+cd crates
+bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p reili_runtime"'
 ```
 
 ## Validation Commands
@@ -62,7 +62,7 @@ bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p sre_runtime"'
 Run these before opening a PR:
 
 ```bash
-cd rust
+cd crates
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
@@ -72,11 +72,11 @@ cargo test --workspace
 
 Project layers:
 
-- `rust/crates/runtime`: bootstrap and runtime entrypoints
-- `rust/crates/application`: use case orchestration
-- `rust/crates/core/src/ports`: boundary contracts
-- `rust/crates/adapters`: concrete integrations
-- `rust/crates/core`: cross-cutting types and utilities
+- `crates/runtime`: bootstrap and runtime entrypoints
+- `crates/application`: use case orchestration
+- `crates/core/src/ports`: boundary contracts
+- `crates/adapters`: concrete integrations
+- `crates/core`: cross-cutting types and utilities
 
 Dependency direction:
 
@@ -99,6 +99,6 @@ Dependency direction:
 
 ## Useful Commands
 
-- `cargo run -p sre_runtime`: start the app
-- `cargo watch -x "run -p sre_runtime"`: start with reload if `cargo-watch` is installed
+- `cargo run -p reili_runtime`: start the app
+- `cargo watch -x "run -p reili_runtime"`: start with reload if `cargo-watch` is installed
 - `cargo test --workspace`: run Rust tests
