@@ -2093,7 +2093,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "reili_adapters"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2118,7 +2118,7 @@ dependencies = [
 
 [[package]]
 name = "reili_application"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2131,7 +2131,7 @@ dependencies = [
 
 [[package]]
 name = "reili_core"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "async-trait",
  "serde",
@@ -2141,7 +2141,7 @@ dependencies = [
 
 [[package]]
 name = "reili_runtime"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "axum",
  "reili_adapters",
