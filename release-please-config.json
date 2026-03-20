@@ -3,9 +3,9 @@
   "release-type": "rust",
   "include-component-in-tag": false,
   "packages": {
-    "crates/runtime": {
+    "crates": {
       "component": "reili",
-      "changelog-path": "../../CHANGELOG.md"
+      "changelog-path": "../CHANGELOG.md"
     }
   }
 }
