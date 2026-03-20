@@ -2,7 +2,10 @@ name: Development
 
 on:
   pull_request:
-  push:
+    types:
+      - opened
+      - synchronize
+      - reopened
     branches:
       - main
     paths:
