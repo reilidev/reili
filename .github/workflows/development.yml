@@ -1,4 +1,4 @@
-name: CI
+name: Development
 
 on:
   pull_request:
@@ -69,7 +69,7 @@ jobs:
       arch: amd64
       runner: ubuntu-latest
       target: x86_64-unknown-linux-musl
-      version: ci
+      version: development
 
   container-image:
     if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
@@ -88,7 +88,7 @@ jobs:
       - name: Prepare Docker build context
         run: |
           target="x86_64-unknown-linux-musl"
-          package_name="reili-ci-${target}"
+          package_name="reili-development-${target}"
 
           mkdir -p dist/docker/amd64
           tar -xzf "dist/release/${package_name}.tar.gz" -C dist/release
@@ -106,15 +106,15 @@ jobs:
           load: true
           platforms: linux/amd64
           build-args: |
-            APP_VERSION=ci
-          tags: reili:ci
+            APP_VERSION=development
+          tags: reili:development
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Smoke test container entrypoint
         run: |
           set +e
-          output="$(docker run --rm reili:ci 2>&1)"
+          output="$(docker run --rm reili:development 2>&1)"
           status=$?
           set -e
 
