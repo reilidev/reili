@@ -1,6 +1,6 @@
 <div align="center">
   <h1>Reili</h1>
-  <img src="./reili.svg" alt="Reili logo" width="240" />
+  <img src="./reili.png" alt="Reili logo" width="240" />
   <p><strong>A Slack-native AI agent for DevOps investigations</strong></p>
   <p>
     Investigate alerts quickly across Datadog, GitHub, and Slack threads.
