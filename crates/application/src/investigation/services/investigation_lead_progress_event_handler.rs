@@ -3,9 +3,10 @@ use std::sync::Arc;
 use reili_core::investigation::{InvestigationProgressEvent, InvestigationProgressEventInput};
 use tokio::sync::Mutex;
 
-use super::investigation_progress_stream_session::{
-    InvestigationProgressMessageOutputCreatedInput, InvestigationProgressReasoningInput,
-    InvestigationProgressStreamSession, InvestigationProgressTaskUpdateInput,
+use super::investigation_progress_stream_session::InvestigationProgressStreamSession;
+use super::progress_update_commands::{
+    RecordMessageOutputCreated, RecordProgressSummary, RecordToolCallCompleted,
+    RecordToolCallStarted,
 };
 
 pub struct InvestigationLeadProgressEventHandlerInput {
@@ -28,9 +29,9 @@ mod tests {
     use super::{
         InvestigationLeadProgressEventHandler, InvestigationLeadProgressEventHandlerInput,
     };
-    use crate::investigation::services::investigation_progress_stream_session::{
-        InvestigationProgressMessageOutputCreatedInput, InvestigationProgressReasoningInput,
-        InvestigationProgressStreamSession, InvestigationProgressTaskUpdateInput,
+    use crate::investigation::services::{
+        InvestigationProgressStreamSession, RecordMessageOutputCreated, RecordProgressSummary,
+        RecordToolCallCompleted, RecordToolCallStarted,
     };
 
     struct SessionMock {
@@ -41,31 +42,28 @@ mod tests {
     impl InvestigationProgressStreamSession for SessionMock {
         async fn start(&mut self) {}
 
-        async fn post_reasoning(&mut self, input: InvestigationProgressReasoningInput) {
+        async fn post_progress_summary(&mut self, input: RecordProgressSummary) {
             self.events.lock().expect("lock events").push(format!(
-                "reasoning:{}:{}:{}",
+                "progress_summary:{}:{}:{}",
                 input.owner_id, input.title, input.summary
             ));
         }
 
-        async fn post_tool_started(&mut self, input: InvestigationProgressTaskUpdateInput) {
+        async fn post_tool_started(&mut self, input: RecordToolCallStarted) {
             self.events
                 .lock()
                 .expect("lock events")
                 .push(format!("tool_started:{}:{}", input.owner_id, input.task_id));
         }
 
-        async fn post_tool_completed(&mut self, input: InvestigationProgressTaskUpdateInput) {
+        async fn post_tool_completed(&mut self, input: RecordToolCallCompleted) {
             self.events.lock().expect("lock events").push(format!(
                 "tool_completed:{}:{}",
                 input.owner_id, input.task_id
             ));
         }
 
-        async fn post_message_output_created(
-            &mut self,
-            input: InvestigationProgressMessageOutputCreatedInput,
-        ) {
+        async fn post_message_output_created(&mut self, input: RecordMessageOutputCreated) {
             self.events
                 .lock()
                 .expect("lock events")
@@ -93,7 +91,7 @@ mod tests {
         handler
             .handle(InvestigationProgressEventInput {
                 owner_id: "investigation_lead".to_string(),
-                event: InvestigationProgressEvent::ReasoningSummaryCreated {
+                event: InvestigationProgressEvent::ProgressSummaryCreated {
                     title: "Collect evidence".to_string(),
                     summary: "Inspect logs".to_string(),
                 },
@@ -127,7 +125,7 @@ mod tests {
         assert_eq!(
             events.lock().expect("lock events").clone(),
             vec![
-                "reasoning:investigation_lead:Collect evidence:Inspect logs".to_string(),
+                "progress_summary:investigation_lead:Collect evidence:Inspect logs".to_string(),
                 "tool_started:investigation_lead:task-1".to_string(),
                 "tool_completed:investigation_lead:task-1".to_string(),
                 "message_output:investigation_lead".to_string(),
@@ -136,7 +134,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ignores_empty_reasoning_summary() {
+    async fn ignores_empty_progress_summary() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let session = Arc::new(TokioMutex::new(Box::new(SessionMock {
             events: Arc::clone(&events),
@@ -151,7 +149,7 @@ mod tests {
         handler
             .handle(InvestigationProgressEventInput {
                 owner_id: "investigation_lead".to_string(),
-                event: InvestigationProgressEvent::ReasoningSummaryCreated {
+                event: InvestigationProgressEvent::ProgressSummaryCreated {
                     title: "  ".to_string(),
                     summary: "Inspect logs".to_string(),
                 },
@@ -171,8 +169,8 @@ impl InvestigationLeadProgressEventHandler {
 
     pub async fn handle(&self, input: InvestigationProgressEventInput) {
         match input.event {
-            InvestigationProgressEvent::ReasoningSummaryCreated { title, summary } => {
-                self.post_reasoning(InvestigationProgressReasoningInput {
+            InvestigationProgressEvent::ProgressSummaryCreated { title, summary } => {
+                self.post_progress_summary(RecordProgressSummary {
                     owner_id: input.owner_id,
                     title,
                     summary,
@@ -180,7 +178,7 @@ impl InvestigationLeadProgressEventHandler {
                 .await;
             }
             InvestigationProgressEvent::ToolCallStarted { task_id, title } => {
-                self.post_tool_started(InvestigationProgressTaskUpdateInput {
+                self.post_tool_started(RecordToolCallStarted {
                     owner_id: input.owner_id,
                     task_id,
                     title,
@@ -188,7 +186,7 @@ impl InvestigationLeadProgressEventHandler {
                 .await;
             }
             InvestigationProgressEvent::ToolCallCompleted { task_id, title } => {
-                self.post_tool_completed(InvestigationProgressTaskUpdateInput {
+                self.post_tool_completed(RecordToolCallCompleted {
                     owner_id: input.owner_id,
                     task_id,
                     title,
@@ -196,7 +194,7 @@ impl InvestigationLeadProgressEventHandler {
                 .await;
             }
             InvestigationProgressEvent::MessageOutputCreated => {
-                self.post_message_output_created(InvestigationProgressMessageOutputCreatedInput {
+                self.post_message_output_created(RecordMessageOutputCreated {
                     owner_id: input.owner_id,
                 })
                 .await;
@@ -204,29 +202,26 @@ impl InvestigationLeadProgressEventHandler {
         }
     }
 
-    async fn post_reasoning(&self, input: InvestigationProgressReasoningInput) {
+    async fn post_progress_summary(&self, input: RecordProgressSummary) {
         if input.title.trim().is_empty() {
             return;
         }
 
         let mut progress_session = self.progress_session.lock().await;
-        progress_session.post_reasoning(input).await;
+        progress_session.post_progress_summary(input).await;
     }
 
-    async fn post_tool_started(&self, input: InvestigationProgressTaskUpdateInput) {
+    async fn post_tool_started(&self, input: RecordToolCallStarted) {
         let mut progress_session = self.progress_session.lock().await;
         progress_session.post_tool_started(input).await;
     }
 
-    async fn post_tool_completed(&self, input: InvestigationProgressTaskUpdateInput) {
+    async fn post_tool_completed(&self, input: RecordToolCallCompleted) {
         let mut progress_session = self.progress_session.lock().await;
         progress_session.post_tool_completed(input).await;
     }
 
-    async fn post_message_output_created(
-        &self,
-        input: InvestigationProgressMessageOutputCreatedInput,
-    ) {
+    async fn post_message_output_created(&self, input: RecordMessageOutputCreated) {
         let mut progress_session = self.progress_session.lock().await;
         progress_session.post_message_output_created(input).await;
     }

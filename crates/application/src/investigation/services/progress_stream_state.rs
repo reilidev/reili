@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ProgressStepStatus {
@@ -9,11 +9,38 @@ pub(super) enum ProgressStepStatus {
 pub(super) type ToolCallStatus = ProgressStepStatus;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum ProgressStepLifecycle {
+    Active,
+    Completed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProgressStep {
     pub progress_step_id: String,
     pub owner_id: String,
     pub title: String,
+    sequence_number: u64,
+    lifecycle: ProgressStepLifecycle,
     pub tool_call_status_by_task_id: HashMap<String, ToolCallStatus>,
+}
+
+impl ProgressStep {
+    fn is_completed(&self) -> bool {
+        self.lifecycle == ProgressStepLifecycle::Completed
+    }
+
+    fn mark_completed(&mut self) -> bool {
+        if self.is_completed() {
+            return false;
+        }
+
+        self.lifecycle = ProgressStepLifecycle::Completed;
+        true
+    }
+
+    fn reopen(&mut self) {
+        self.lifecycle = ProgressStepLifecycle::Active;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,8 +54,6 @@ pub(super) struct ProgressStreamState {
     active_progress_step_id_by_owner_id: HashMap<String, String>,
     progress_step_by_id: HashMap<String, ProgressStep>,
     progress_step_id_by_task_key: HashMap<String, String>,
-    completed_progress_step_ids_by_owner_id: HashMap<String, HashSet<String>>,
-    latest_completed_progress_step_id_by_owner_id: HashMap<String, String>,
     next_progress_step_number: u64,
 }
 
@@ -38,11 +63,13 @@ impl ProgressStreamState {
     }
 
     pub(super) fn create_progress_step(&mut self, owner_id: &str, title: &str) -> String {
-        let progress_step_id = self.create_progress_step_id();
+        let (progress_step_id, sequence_number) = self.create_progress_step_identifier();
         let progress_step = ProgressStep {
             progress_step_id: progress_step_id.clone(),
             owner_id: owner_id.to_string(),
             title: title.to_string(),
+            sequence_number,
+            lifecycle: ProgressStepLifecycle::Active,
             tool_call_status_by_task_id: HashMap::new(),
         };
         self.progress_step_by_id
@@ -145,9 +172,12 @@ impl ProgressStreamState {
         );
     }
 
-    pub(super) fn mark_progress_step_incomplete(&mut self, owner_id: &str, progress_step_id: &str) {
-        self.resolve_completed_progress_step_ids_by_owner_id(owner_id)
-            .remove(progress_step_id);
+    pub(super) fn mark_progress_step_incomplete(&mut self, progress_step_id: &str) {
+        let Some(progress_step) = self.progress_step_by_id.get_mut(progress_step_id) else {
+            return;
+        };
+
+        progress_step.reopen();
     }
 
     pub(super) fn complete_active_progress_step_if_idle(
@@ -181,16 +211,11 @@ impl ProgressStreamState {
         &mut self,
         progress_step_id: &str,
     ) -> Option<ProgressStep> {
-        let progress_step = self.progress_step_by_id.get(progress_step_id).cloned()?;
-        let completed_progress_step_ids =
-            self.resolve_completed_progress_step_ids_by_owner_id(&progress_step.owner_id);
-        if completed_progress_step_ids.contains(progress_step_id) {
+        let progress_step = self.progress_step_by_id.get_mut(progress_step_id)?;
+        if !progress_step.mark_completed() {
             return None;
         }
-        completed_progress_step_ids.insert(progress_step_id.to_string());
-        self.latest_completed_progress_step_id_by_owner_id
-            .insert(progress_step.owner_id.clone(), progress_step_id.to_string());
-        Some(progress_step)
+        Some(progress_step.clone())
     }
 
     pub(super) fn progress_step(&self, progress_step_id: &str) -> Option<ProgressStep> {
@@ -205,44 +230,30 @@ impl ProgressStreamState {
             .collect()
     }
 
-    fn create_progress_step_id(&mut self) -> String {
+    fn create_progress_step_identifier(&mut self) -> (String, u64) {
         self.next_progress_step_number = self.next_progress_step_number.saturating_add(1);
-        let mut progress_step_id = format!("progress-step-{}", self.next_progress_step_number);
+        let mut progress_step_number = self.next_progress_step_number;
+        let mut progress_step_id = format!("progress-step-{progress_step_number}");
         while self.progress_step_by_id.contains_key(&progress_step_id) {
             self.next_progress_step_number = self.next_progress_step_number.saturating_add(1);
-            progress_step_id = format!("progress-step-{}", self.next_progress_step_number);
+            progress_step_number = self.next_progress_step_number;
+            progress_step_id = format!("progress-step-{progress_step_number}");
         }
 
-        progress_step_id
+        (progress_step_id, progress_step_number)
     }
 
     fn resolve_latest_completed_progress_step_by_owner_id(
-        &mut self,
+        &self,
         owner_id: &str,
     ) -> Option<ProgressStep> {
-        let latest_completed_progress_step_id = self
-            .latest_completed_progress_step_id_by_owner_id
-            .get(owner_id)
-            .cloned()?;
-        let progress_step = self
-            .progress_step_by_id
-            .get(&latest_completed_progress_step_id)
-            .cloned();
-        if progress_step.is_none() {
-            self.latest_completed_progress_step_id_by_owner_id
-                .remove(owner_id);
-        }
-
-        progress_step
-    }
-
-    fn resolve_completed_progress_step_ids_by_owner_id(
-        &mut self,
-        owner_id: &str,
-    ) -> &mut HashSet<String> {
-        self.completed_progress_step_ids_by_owner_id
-            .entry(owner_id.to_string())
-            .or_default()
+        self.progress_step_by_id
+            .values()
+            .filter(|progress_step| {
+                progress_step.owner_id == owner_id && progress_step.is_completed()
+            })
+            .max_by_key(|progress_step| progress_step.sequence_number)
+            .cloned()
     }
 }
 

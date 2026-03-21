@@ -6,11 +6,12 @@ use chrono::{SecondsFormat, Utc};
 use reili_core::error::PortError;
 use reili_core::investigation::{
     InvestigationContext, InvestigationJobPayload, InvestigationLeadRunnerPort,
-    InvestigationProgressEventInput, InvestigationProgressEventPort, InvestigationResources,
-    InvestigationRuntime, LlmExecutionMetadata, LlmUsageSnapshot, RunInvestigationLeadInput,
+    InvestigationProgressEventInput, InvestigationProgressEventPort,
+    InvestigationProgressSessionFactoryPort, InvestigationResources, InvestigationRuntime,
+    LlmExecutionMetadata, LlmUsageSnapshot, RunInvestigationLeadInput,
 };
 use reili_core::messaging::slack::{
-    SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
+    SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
 };
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
@@ -35,7 +36,8 @@ const FALLBACK_REPORT_TEXT: &str = "Investigation completed but failed to genera
 #[derive(Clone)]
 pub struct InvestigationExecutionDeps {
     pub slack_reply_port: Arc<dyn SlackThreadReplyPort>,
-    pub slack_progress_stream_port: Arc<dyn SlackProgressStreamPort>,
+    pub investigation_progress_session_factory_port:
+        Arc<dyn InvestigationProgressSessionFactoryPort>,
     pub slack_thread_history_port: Arc<dyn SlackThreadHistoryPort>,
     pub investigation_resources: InvestigationResources,
     pub investigation_lead_runner: Arc<dyn InvestigationLeadRunnerPort>,
@@ -66,7 +68,9 @@ pub async fn execute_investigation_job(
 
     let progress_session_factory = create_investigation_progress_stream_session_factory(
         CreateInvestigationProgressStreamSessionFactoryInput {
-            slack_stream_reply_port: Arc::clone(&input.deps.slack_progress_stream_port),
+            progress_session_factory_port: Arc::clone(
+                &input.deps.investigation_progress_session_factory_port,
+            ),
             logger: Arc::clone(&input.deps.logger),
         },
     );
@@ -364,16 +368,16 @@ mod tests {
 
     use async_trait::async_trait;
     use reili_core::error::{AgentRunFailedError, PortError};
-    use reili_core::investigation::{AlertContext, InvestigationJobPayload, LlmUsageSnapshot};
     use reili_core::investigation::{
-        InvestigationLeadRunnerPort, InvestigationResources, InvestigationRuntime,
-        RunInvestigationLeadInput,
+        AlertContext, CompleteInvestigationProgressSessionInput, InvestigationJobPayload,
+        InvestigationLeadRunnerPort, InvestigationProgressSessionFactoryPort,
+        InvestigationProgressSessionPort, InvestigationResources, InvestigationRuntime,
+        LlmUsageSnapshot, RunInvestigationLeadInput, StartInvestigationProgressSessionInput,
     };
     use reili_core::knowledge::{WebSearchInput, WebSearchPort, WebSearchResult};
     use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
     use reili_core::messaging::slack::{
-        SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyInput,
-        SlackThreadReplyPort, StartSlackProgressStreamInput, StartSlackProgressStreamOutput,
+        SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
     };
     use reili_core::monitoring::datadog::{
         DatadogEventSearchParams, DatadogEventSearchPort, DatadogEventSearchResult,
@@ -414,31 +418,26 @@ mod tests {
         }
     }
 
-    struct MockSlackProgressStreamPort;
+    struct MockInvestigationProgressSessionFactoryPort;
+
+    struct MockInvestigationProgressSessionPort;
 
     #[async_trait]
-    impl SlackProgressStreamPort for MockSlackProgressStreamPort {
-        async fn start(
-            &self,
-            _input: StartSlackProgressStreamInput,
-        ) -> Result<StartSlackProgressStreamOutput, PortError> {
-            Ok(StartSlackProgressStreamOutput {
-                stream_ts: "stream-1".to_string(),
-            })
+    impl InvestigationProgressSessionPort for MockInvestigationProgressSessionPort {
+        async fn start(&mut self) {}
+
+        async fn apply(&mut self, _update: reili_core::investigation::InvestigationProgressUpdate) {
         }
 
-        async fn append(
-            &self,
-            _input: reili_core::messaging::slack::AppendSlackProgressStreamInput,
-        ) -> Result<(), PortError> {
-            Ok(())
-        }
+        async fn complete(&mut self, _input: CompleteInvestigationProgressSessionInput) {}
+    }
 
-        async fn stop(
+    impl InvestigationProgressSessionFactoryPort for MockInvestigationProgressSessionFactoryPort {
+        fn create_for_thread(
             &self,
-            _input: reili_core::messaging::slack::StopSlackProgressStreamInput,
-        ) -> Result<(), PortError> {
-            Ok(())
+            _input: StartInvestigationProgressSessionInput,
+        ) -> Box<dyn InvestigationProgressSessionPort> {
+            Box::new(MockInvestigationProgressSessionPort)
         }
     }
 
@@ -713,14 +712,17 @@ mod tests {
         slack_thread_history_port: Arc<MockSlackThreadHistoryPort>,
     ) -> ExecutionFixtures {
         let slack_reply_port = Arc::new(MockSlackReplyPort::default());
-        let slack_progress_stream_port = Arc::new(MockSlackProgressStreamPort);
+        let investigation_progress_session_factory_port =
+            Arc::new(MockInvestigationProgressSessionFactoryPort);
         let investigation_lead_runner = Arc::new(MockInvestigationLeadRunner::new());
         let logger = Arc::new(MockLogger::default());
 
         let deps = InvestigationExecutionDeps {
             slack_reply_port: Arc::clone(&slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
-            slack_progress_stream_port: Arc::clone(&slack_progress_stream_port)
-                as Arc<dyn SlackProgressStreamPort>,
+            investigation_progress_session_factory_port: Arc::clone(
+                &investigation_progress_session_factory_port,
+            )
+                as Arc<dyn InvestigationProgressSessionFactoryPort>,
             slack_thread_history_port: Arc::clone(&slack_thread_history_port)
                 as Arc<dyn SlackThreadHistoryPort>,
             investigation_resources: create_resources(),

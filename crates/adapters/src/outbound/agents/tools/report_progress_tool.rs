@@ -78,7 +78,7 @@ impl Tool for ReportProgressTool {
             .on_progress_event
             .publish(InvestigationProgressEventInput {
                 owner_id: self.owner_id.clone(),
-                event: InvestigationProgressEvent::ReasoningSummaryCreated {
+                event: InvestigationProgressEvent::ProgressSummaryCreated {
                     title: args.title,
                     summary: args.summary,
                 },
@@ -143,7 +143,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publishes_reasoning_summary_event_with_owner_id() {
+    async fn publishes_progress_summary_event_with_owner_id() {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let tool = ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::new(MockProgressEventPort::successful(Arc::clone(&calls))),
@@ -163,7 +163,7 @@ mod tests {
             calls.lock().expect("lock calls").as_slice(),
             &[InvestigationProgressEventInput {
                 owner_id: "investigation_lead".to_string(),
-                event: InvestigationProgressEvent::ReasoningSummaryCreated {
+                event: InvestigationProgressEvent::ProgressSummaryCreated {
                     title: "Collect logs".to_string(),
                     summary: "Investigate recent errors".to_string(),
                 },

@@ -389,16 +389,15 @@ mod tests {
     };
     use crate::investigation::InvestigationLogMeta;
     use async_trait::async_trait;
-    use reili_core::investigation::{InvestigationJobPayload, LlmUsageSnapshot};
     use reili_core::investigation::{
-        InvestigationLeadRunnerPort, InvestigationResources, RunInvestigationLeadInput,
+        CompleteInvestigationProgressSessionInput, InvestigationJobPayload,
+        InvestigationLeadRunnerPort, InvestigationProgressSessionFactoryPort,
+        InvestigationProgressSessionPort, InvestigationResources, LlmUsageSnapshot,
+        RunInvestigationLeadInput, StartInvestigationProgressSessionInput,
     };
     use reili_core::knowledge::{WebSearchInput, WebSearchPort, WebSearchResult};
+    use reili_core::messaging::slack::SlackThreadHistoryPort;
     use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
-    use reili_core::messaging::slack::{
-        SlackProgressStreamPort, SlackThreadHistoryPort, StartSlackProgressStreamInput,
-        StartSlackProgressStreamOutput,
-    };
     use reili_core::monitoring::datadog::{
         DatadogEventSearchParams, DatadogEventSearchPort, DatadogEventSearchResult,
         DatadogLogAggregateBucket, DatadogLogAggregateParams, DatadogLogAggregatePort,
@@ -533,31 +532,26 @@ mod tests {
         }
     }
 
-    struct MockSlackProgressStreamPort;
+    struct MockInvestigationProgressSessionFactoryPort;
+
+    struct MockInvestigationProgressSessionPort;
 
     #[async_trait]
-    impl SlackProgressStreamPort for MockSlackProgressStreamPort {
-        async fn start(
-            &self,
-            _input: StartSlackProgressStreamInput,
-        ) -> Result<StartSlackProgressStreamOutput, PortError> {
-            Ok(StartSlackProgressStreamOutput {
-                stream_ts: "stream-1".to_string(),
-            })
+    impl InvestigationProgressSessionPort for MockInvestigationProgressSessionPort {
+        async fn start(&mut self) {}
+
+        async fn apply(&mut self, _update: reili_core::investigation::InvestigationProgressUpdate) {
         }
 
-        async fn append(
-            &self,
-            _input: reili_core::messaging::slack::AppendSlackProgressStreamInput,
-        ) -> Result<(), PortError> {
-            Ok(())
-        }
+        async fn complete(&mut self, _input: CompleteInvestigationProgressSessionInput) {}
+    }
 
-        async fn stop(
+    impl InvestigationProgressSessionFactoryPort for MockInvestigationProgressSessionFactoryPort {
+        fn create_for_thread(
             &self,
-            _input: reili_core::messaging::slack::StopSlackProgressStreamInput,
-        ) -> Result<(), PortError> {
-            Ok(())
+            _input: StartInvestigationProgressSessionInput,
+        ) -> Box<dyn InvestigationProgressSessionPort> {
+            Box::new(MockInvestigationProgressSessionPort)
         }
     }
 
@@ -755,7 +749,9 @@ mod tests {
             job_queue: Arc::clone(&job_queue) as Arc<InvestigationJobQueuePort>,
             investigation_execution_deps: InvestigationExecutionDeps {
                 slack_reply_port: Arc::clone(&slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
-                slack_progress_stream_port: Arc::new(MockSlackProgressStreamPort),
+                investigation_progress_session_factory_port: Arc::new(
+                    MockInvestigationProgressSessionFactoryPort,
+                ),
                 slack_thread_history_port: Arc::new(MockSlackThreadHistoryPort),
                 investigation_resources: InvestigationResources {
                     log_aggregate_port: Arc::clone(&resources_port)
