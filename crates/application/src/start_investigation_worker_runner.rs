@@ -396,6 +396,7 @@ mod tests {
         RunInvestigationLeadInput, StartInvestigationProgressSessionInput,
     };
     use reili_core::knowledge::{WebSearchInput, WebSearchPort, WebSearchResult};
+    use reili_core::logger::{LogEntry as CoreLogEntry, LogLevel};
     use reili_core::messaging::slack::SlackThreadHistoryPort;
     use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
     use reili_core::monitoring::datadog::{
@@ -412,11 +413,10 @@ mod tests {
         GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
         GithubRepositoryContentParams, GithubRepositoryContentPort, GithubSearchParams,
     };
-    use serde_json::Value;
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
-    use crate::investigation::InvestigationLogger;
+    use crate::investigation::{InvestigationLogger, LogFieldValue};
 
     const USAGE_SNAPSHOT: LlmUsageSnapshot = LlmUsageSnapshot {
         requests: 1,
@@ -716,20 +716,17 @@ mod tests {
     }
 
     impl InvestigationLogger for MockLogger {
-        fn info(&self, message: &str, meta: InvestigationLogMeta) {
-            self.infos.lock().expect("lock infos").push(LogEntry {
-                message: message.to_string(),
-                meta,
-            });
-        }
+        fn log(&self, entry: CoreLogEntry) {
+            let captured = LogEntry {
+                message: entry.event.to_string(),
+                meta: entry.fields,
+            };
 
-        fn warn(&self, _message: &str, _meta: InvestigationLogMeta) {}
-
-        fn error(&self, message: &str, meta: InvestigationLogMeta) {
-            self.errors.lock().expect("lock errors").push(LogEntry {
-                message: message.to_string(),
-                meta,
-            });
+            match entry.level {
+                LogLevel::Info => self.infos.lock().expect("lock infos").push(captured),
+                LogLevel::Error => self.errors.lock().expect("lock errors").push(captured),
+                LogLevel::Debug | LogLevel::Warn => {}
+            }
         }
     }
 
@@ -844,7 +841,7 @@ mod tests {
                 .iter()
                 .find(|entry| entry.message == "Completed worker job")
                 .and_then(|entry| entry.meta.get("worker_queue_depth"))
-                .and_then(Value::as_str),
+                .and_then(LogFieldValue::as_str),
             Some("3")
         );
     }
@@ -886,7 +883,10 @@ mod tests {
         assert_eq!(error_logs.len(), 1);
         assert_eq!(error_logs[0].message, "Failed worker job");
         assert_eq!(
-            error_logs[0].meta.get("status").and_then(Value::as_str),
+            error_logs[0]
+                .meta
+                .get("status")
+                .and_then(LogFieldValue::as_str),
             Some("requeued")
         );
         assert_eq!(context.slack_reply_port.posted_replies().len(), 0);

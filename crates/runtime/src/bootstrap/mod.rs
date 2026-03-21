@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use reili_adapters::inbound::slack::SlackSignatureVerifier;
+use reili_adapters::logger::TracingLogger;
 use reili_adapters::outbound::agents::{
     BedrockInvestigationLeadRunner, BedrockInvestigationLeadRunnerInput, DatadogMcpToolConfig,
     OpenAiInvestigationLeadRunner, OpenAiInvestigationLeadRunnerInput,
@@ -14,13 +15,11 @@ use reili_adapters::outbound::datadog::{
 use reili_adapters::outbound::github::{GitHubSearchAdapter, GitHubSearchAdapterConfig};
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
-    SlackProgressReporter, SlackThreadHistoryAdapter, SlackThreadReplyAdapter, SlackWebApiClient,
-    SlackWebApiClientConfig,
+    SlackProgressReporter, SlackProgressReporterInput, SlackThreadHistoryAdapter,
+    SlackThreadReplyAdapter, SlackWebApiClient, SlackWebApiClientConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
-use reili_application::investigation::{
-    InvestigationExecutionDeps, InvestigationLogMeta, InvestigationLogger,
-};
+use reili_application::investigation::{InvestigationExecutionDeps, InvestigationLogger};
 use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, StartInvestigationWorkerRunnerUseCase,
     StartInvestigationWorkerRunnerUseCaseDeps,
@@ -95,9 +94,10 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     ));
     let investigation_progress_session_factory_port: Arc<
         dyn InvestigationProgressSessionFactoryPort,
-    > = Arc::new(SlackProgressReporter::new(Arc::clone(
-        &slack_web_api_client,
-    )));
+    > = Arc::new(SlackProgressReporter::new(SlackProgressReporterInput {
+        client: Arc::clone(&slack_web_api_client),
+        logger: Arc::clone(&logger),
+    }));
     let slack_thread_history_port: Arc<dyn SlackThreadHistoryPort> = Arc::new(
         SlackThreadHistoryAdapter::new(Arc::clone(&slack_web_api_client)),
     );
@@ -241,7 +241,7 @@ async fn create_provider_ports(
 }
 
 pub fn create_investigation_logger() -> Arc<dyn InvestigationLogger> {
-    Arc::new(TracingInvestigationLogger)
+    Arc::new(TracingLogger)
 }
 
 async fn resolve_slack_bot_user_id(
@@ -256,30 +256,4 @@ async fn resolve_slack_bot_user_id(
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .ok_or(RuntimeBootstrapError::MissingSlackBotUserId)
-}
-
-#[derive(Debug, Default)]
-struct TracingInvestigationLogger;
-
-impl InvestigationLogger for TracingInvestigationLogger {
-    fn info(&self, message: &str, meta: InvestigationLogMeta) {
-        tracing::info!(
-            message = message,
-            meta = tracing::field::display(serde_json::Value::Object(meta)),
-        );
-    }
-
-    fn warn(&self, message: &str, meta: InvestigationLogMeta) {
-        tracing::warn!(
-            message = message,
-            meta = tracing::field::display(serde_json::Value::Object(meta)),
-        );
-    }
-
-    fn error(&self, message: &str, meta: InvestigationLogMeta) {
-        tracing::error!(
-            message = message,
-            meta = tracing::field::display(serde_json::Value::Object(meta)),
-        );
-    }
 }
