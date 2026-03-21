@@ -4,7 +4,8 @@ use std::time::Instant;
 use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
 use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage};
 
-use super::logger::InvestigationLogMeta;
+use super::logger::{InvestigationLogMeta, InvestigationLogger};
+use crate::investigation::LogFieldValue;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlackThreadContextLoaderInput {
@@ -19,13 +20,21 @@ pub struct ThreadContextFetchFailedLogInput {
     pub error: String,
 }
 
-pub trait ThreadContextLoaderLogger: Send + Sync {
-    fn error(&self, message: &str, input: ThreadContextFetchFailedLogInput);
+impl ThreadContextFetchFailedLogInput {
+    fn into_log_meta(self) -> InvestigationLogMeta {
+        let mut meta = self.base_log_meta;
+        meta.insert(
+            "thread_context_fetch_latency_ms".to_string(),
+            LogFieldValue::from(self.thread_context_fetch_latency_ms),
+        );
+        meta.insert("error".to_string(), LogFieldValue::from(self.error));
+        meta
+    }
 }
 
 pub struct SlackThreadContextLoaderDeps {
     pub slack_thread_history_port: Arc<dyn SlackThreadHistoryPort>,
-    pub logger: Arc<dyn ThreadContextLoaderLogger>,
+    pub logger: Arc<dyn InvestigationLogger>,
 }
 
 pub struct SlackThreadContextLoader {
@@ -62,14 +71,14 @@ impl SlackThreadContextLoader {
         {
             Ok(history) => history,
             Err(error) => {
-                self.deps.logger.error(
-                    "thread_context_fetch_failed",
-                    ThreadContextFetchFailedLogInput {
-                        base_log_meta: input.base_log_meta,
-                        thread_context_fetch_latency_ms: started_at.elapsed().as_millis(),
-                        error: error.message,
-                    },
-                );
+                let log_input = ThreadContextFetchFailedLogInput {
+                    base_log_meta: input.base_log_meta,
+                    thread_context_fetch_latency_ms: started_at.elapsed().as_millis(),
+                    error: error.message,
+                };
+                self.deps
+                    .logger
+                    .error("thread_context_fetch_failed", log_input.into_log_meta());
                 Vec::new()
             }
         }
@@ -91,19 +100,17 @@ mod tests {
     use reili_core::error::PortError;
     use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
     use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
-    use serde_json::Value;
 
-    use crate::investigation::InvestigationLogMeta;
+    use crate::investigation::{InvestigationLogMeta, LogFieldValue, string_log_meta};
 
     use super::{
         SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
-        ThreadContextFetchFailedLogInput, ThreadContextLoaderLogger,
     };
 
     #[derive(Debug, Clone, PartialEq)]
     struct LoggedError {
         message: String,
-        input: ThreadContextFetchFailedLogInput,
+        meta: InvestigationLogMeta,
     }
 
     #[derive(Default)]
@@ -117,14 +124,14 @@ mod tests {
         }
     }
 
-    impl ThreadContextLoaderLogger for ThreadContextLoaderLoggerMock {
-        fn error(&self, message: &str, input: ThreadContextFetchFailedLogInput) {
+    impl crate::investigation::InvestigationLogger for ThreadContextLoaderLoggerMock {
+        fn log(&self, entry: crate::investigation::LogEntry) {
             self.errors
                 .lock()
                 .expect("lock logger errors")
                 .push(LoggedError {
-                    message: message.to_string(),
-                    input,
+                    message: entry.event.to_string(),
+                    meta: entry.fields,
                 });
         }
     }
@@ -233,7 +240,7 @@ mod tests {
         let loader = SlackThreadContextLoader::new(SlackThreadContextLoaderDeps {
             slack_thread_history_port: Arc::clone(&thread_history_port)
                 as Arc<dyn SlackThreadHistoryPort>,
-            logger: Arc::clone(&logger) as Arc<dyn ThreadContextLoaderLogger>,
+            logger: Arc::clone(&logger) as Arc<dyn crate::investigation::InvestigationLogger>,
         });
 
         let result = loader
@@ -248,12 +255,12 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].message, "thread_context_fetch_failed");
         assert_eq!(
-            errors[0]
-                .input
-                .base_log_meta
-                .get("jobId")
-                .and_then(Value::as_str),
+            errors[0].meta.get("jobId").and_then(LogFieldValue::as_str),
             Some("job-1")
+        );
+        assert_eq!(
+            errors[0].meta.get("error").and_then(LogFieldValue::as_str),
+            Some("slack api failed")
         );
     }
 
@@ -284,18 +291,12 @@ mod tests {
     }
 
     fn base_log_meta() -> InvestigationLogMeta {
-        serde_json::Map::from_iter([
-            (
-                "slackEventId".to_string(),
-                Value::String("Ev001".to_string()),
-            ),
-            ("jobId".to_string(), Value::String("job-1".to_string())),
-            ("channel".to_string(), Value::String("C001".to_string())),
-            (
-                "threadTs".to_string(),
-                Value::String("1710000000.000001".to_string()),
-            ),
-            ("attempt".to_string(), Value::String("1".to_string())),
+        string_log_meta([
+            ("slackEventId", "Ev001"),
+            ("jobId", "job-1"),
+            ("channel", "C001"),
+            ("threadTs", "1710000000.000001"),
+            ("attempt", "1"),
         ])
     }
 }

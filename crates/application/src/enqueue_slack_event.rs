@@ -136,13 +136,13 @@ mod tests {
         EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, InvestigationLogger, PortError,
         SlackMessage, SlackMessageHandlerPort, SlackThreadReplyInput, SlackThreadReplyPort,
     };
-    use crate::investigation::InvestigationLogMeta;
+    use crate::investigation::{InvestigationLogMeta, LogFieldValue};
     use async_trait::async_trait;
+    use reili_core::logger::{LogEntry as CoreLogEntry, LogLevel};
     use reili_core::messaging::slack::SlackTriggerType;
     use reili_core::queue::{
         CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailResult, JobQueuePort,
     };
-    use serde_json::Value;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
@@ -273,25 +273,18 @@ mod tests {
     }
 
     impl InvestigationLogger for MockLogger {
-        fn info(&self, message: &str, meta: InvestigationLogMeta) {
-            self.infos.lock().expect("lock infos").push(LogEntry {
-                message: message.to_string(),
-                meta,
-            });
-        }
+        fn log(&self, entry: CoreLogEntry) {
+            let captured = LogEntry {
+                message: entry.event.to_string(),
+                meta: entry.fields,
+            };
 
-        fn warn(&self, message: &str, meta: InvestigationLogMeta) {
-            self.warns.lock().expect("lock warns").push(LogEntry {
-                message: message.to_string(),
-                meta,
-            });
-        }
-
-        fn error(&self, message: &str, meta: InvestigationLogMeta) {
-            self.errors.lock().expect("lock errors").push(LogEntry {
-                message: message.to_string(),
-                meta,
-            });
+            match entry.level {
+                LogLevel::Info => self.infos.lock().expect("lock infos").push(captured),
+                LogLevel::Warn => self.warns.lock().expect("lock warns").push(captured),
+                LogLevel::Error => self.errors.lock().expect("lock errors").push(captured),
+                LogLevel::Debug => {}
+            }
         }
     }
 
@@ -407,7 +400,7 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].message, "Failed to enqueue investigation job");
         assert_eq!(
-            errors[0].meta.get("error").and_then(Value::as_str),
+            errors[0].meta.get("error").and_then(LogFieldValue::as_str),
             Some("fail-1")
         );
     }

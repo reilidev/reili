@@ -1,6 +1,7 @@
 use std::fmt as std_fmt;
 
 use chrono::{SecondsFormat, Utc};
+use reili_core::logger::{LogEntry, LogFieldValue, LogFields, LogLevel, Logger};
 use serde_json::{Map, Number, Value};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
@@ -10,6 +11,42 @@ use tracing_subscriber::fmt::{self as tracing_fmt, FmtContext};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{EnvFilter, Registry};
+
+#[derive(Debug, Default)]
+pub struct TracingLogger;
+
+impl Logger for TracingLogger {
+    fn log(&self, entry: LogEntry) {
+        let meta_json = Value::Object(log_fields_to_json(entry.fields));
+
+        match entry.level {
+            LogLevel::Debug => {
+                tracing::debug!(
+                    message = entry.event,
+                    meta = tracing::field::display(meta_json)
+                );
+            }
+            LogLevel::Info => {
+                tracing::info!(
+                    message = entry.event,
+                    meta = tracing::field::display(meta_json)
+                );
+            }
+            LogLevel::Warn => {
+                tracing::warn!(
+                    message = entry.event,
+                    meta = tracing::field::display(meta_json)
+                );
+            }
+            LogLevel::Error => {
+                tracing::error!(
+                    message = entry.event,
+                    meta = tracing::field::display(meta_json)
+                );
+            }
+        }
+    }
+}
 
 pub fn init_json_logger() -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
     let subscriber = build_json_subscriber(std::io::stderr);
@@ -132,15 +169,33 @@ fn default_env_filter() -> EnvFilter {
     }
 }
 
+fn log_fields_to_json(fields: LogFields) -> Map<String, Value> {
+    fields
+        .into_iter()
+        .map(|(key, value)| (key, log_field_value_to_json(value)))
+        .collect()
+}
+
+fn log_field_value_to_json(value: LogFieldValue) -> Value {
+    match value {
+        LogFieldValue::String(value) => Value::String(value),
+        LogFieldValue::I64(value) => Value::Number(Number::from(value)),
+        LogFieldValue::U64(value) => Value::Number(Number::from(value)),
+        LogFieldValue::Bool(value) => Value::Bool(value),
+        LogFieldValue::F64(value) => Number::from_f64(value).map_or(Value::Null, Value::Number),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{self, Write};
     use std::sync::{Arc, Mutex};
 
+    use reili_core::logger::{LogFieldValue, Logger, log_fields};
     use serde_json::Value;
     use tracing_subscriber::fmt::writer::MakeWriter;
 
-    use super::build_json_subscriber;
+    use super::{TracingLogger, build_json_subscriber};
 
     #[derive(Clone, Default)]
     struct SharedBuffer(Arc<Mutex<Vec<u8>>>);
@@ -224,5 +279,31 @@ mod tests {
         assert_eq!(log["meta"]["jobId"], "job-1");
         assert_eq!(log["meta"]["attempt"], "1");
         assert!(log["meta"].is_object());
+    }
+
+    #[test]
+    fn tracing_logger_serializes_typed_log_fields() {
+        let buffer = SharedBuffer::default();
+        let subscriber = build_json_subscriber(buffer.clone());
+        let logger = TracingLogger;
+
+        tracing::subscriber::with_default(subscriber, || {
+            logger.info(
+                "slack_stream_started",
+                log_fields([
+                    ("channel", LogFieldValue::from("C123")),
+                    ("attempt", LogFieldValue::from(2_u64)),
+                    ("success", LogFieldValue::from(true)),
+                ]),
+            );
+        });
+
+        let output = String::from_utf8(buffer.snapshot()).expect("decode buffered logs");
+        let log: Value = serde_json::from_str(output.trim()).expect("parse json log line");
+
+        assert_eq!(log["message"], "slack_stream_started");
+        assert_eq!(log["meta"]["channel"], "C123");
+        assert_eq!(log["meta"]["attempt"], 2);
+        assert_eq!(log["meta"]["success"], true);
     }
 }

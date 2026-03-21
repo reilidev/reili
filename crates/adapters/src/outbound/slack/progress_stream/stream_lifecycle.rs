@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
 use reili_core::investigation::StartInvestigationProgressSessionInput;
-use serde_json::Value;
 
 use super::chunk_rotation::{
     STREAM_ROTATION_CHARACTER_LIMIT, count_chunk_characters, should_rotate_stream,
 };
 use super::{
-    SlackAnyChunk, SlackAppendStreamInput, SlackProgressStreamApiPort, SlackProgressStreamLogger,
-    SlackStartStreamInput, SlackStopStreamInput, string_log_meta,
+    LogFieldValue, SlackAnyChunk, SlackAppendStreamInput, SlackProgressStreamApiPort,
+    SlackProgressStreamLogger, SlackStartStreamInput, SlackStopStreamInput, string_log_meta,
 };
 
 pub(crate) struct SlackProgressStreamLifecycle {
@@ -75,7 +74,7 @@ impl SlackProgressStreamLifecycle {
                 if let Some(last_error_message) = &self.last_error_message {
                     meta.insert(
                         "slack_stream_last_error".to_string(),
-                        Value::String(last_error_message.clone()),
+                        LogFieldValue::from(last_error_message.clone()),
                     );
                 }
                 self.logger.info("slack_stream_started", meta);
@@ -240,7 +239,7 @@ impl SlackProgressStreamLifecycle {
         if let Some(previous_stream_ts) = failed_stream_ts {
             meta.insert(
                 "previousStreamTs".to_string(),
-                Value::String(previous_stream_ts),
+                LogFieldValue::from(previous_stream_ts),
             );
         }
         self.logger.info("slack_stream_restarted", meta);
@@ -297,7 +296,7 @@ impl SlackProgressStreamLifecycle {
         if let Some(previous_stream_ts) = previous_stream_ts {
             meta.insert(
                 "previousStreamTs".to_string(),
-                Value::String(previous_stream_ts),
+                LogFieldValue::from(previous_stream_ts),
             );
         }
         self.logger.info("slack_stream_rotated", meta);
@@ -371,12 +370,15 @@ impl SlackProgressStreamLifecycle {
             ("slack_stream_append_count", self.append_count.to_string()),
         ]);
         if let Some(stream_ts) = &self.stream_ts {
-            meta.insert("streamTs".to_string(), Value::String(stream_ts.clone()));
+            meta.insert(
+                "streamTs".to_string(),
+                LogFieldValue::from(stream_ts.clone()),
+            );
         }
         if let Some(last_error_message) = &self.last_error_message {
             meta.insert(
                 "slack_stream_last_error".to_string(),
-                Value::String(last_error_message.clone()),
+                LogFieldValue::from(last_error_message.clone()),
             );
         }
 
@@ -410,9 +412,10 @@ mod tests {
     use async_trait::async_trait;
     use reili_core::error::PortError;
     use reili_core::investigation::StartInvestigationProgressSessionInput;
+    use reili_core::logger::{LogEntry, LogFields, LogLevel};
 
     use crate::outbound::slack::progress_stream::{
-        SlackAnyChunk, SlackAppendStreamInput, SlackMarkdownTextChunk, SlackProgressLogMeta,
+        LogFieldValue, SlackAnyChunk, SlackAppendStreamInput, SlackMarkdownTextChunk,
         SlackProgressStreamApiPort, SlackProgressStreamLifecycle, SlackProgressStreamLogger,
         SlackStartStreamInput, SlackStartStreamOutput, SlackStopStreamInput,
     };
@@ -505,33 +508,35 @@ mod tests {
 
     #[derive(Default)]
     struct MockLogger {
-        info_logs: Mutex<Vec<(String, SlackProgressLogMeta)>>,
-        warn_logs: Mutex<Vec<(String, SlackProgressLogMeta)>>,
+        info_logs: Mutex<Vec<(String, LogFields)>>,
+        warn_logs: Mutex<Vec<(String, LogFields)>>,
     }
 
     impl MockLogger {
-        fn info_logs(&self) -> Vec<(String, SlackProgressLogMeta)> {
+        fn info_logs(&self) -> Vec<(String, LogFields)> {
             self.info_logs.lock().expect("lock info logs").clone()
         }
 
-        fn warn_logs(&self) -> Vec<(String, SlackProgressLogMeta)> {
+        fn warn_logs(&self) -> Vec<(String, LogFields)> {
             self.warn_logs.lock().expect("lock warn logs").clone()
         }
     }
 
     impl SlackProgressStreamLogger for MockLogger {
-        fn info(&self, message: &str, meta: SlackProgressLogMeta) {
-            self.info_logs
-                .lock()
-                .expect("lock info logs")
-                .push((message.to_string(), meta));
-        }
-
-        fn warn(&self, message: &str, meta: SlackProgressLogMeta) {
-            self.warn_logs
-                .lock()
-                .expect("lock warn logs")
-                .push((message.to_string(), meta));
+        fn log(&self, entry: LogEntry) {
+            match entry.level {
+                LogLevel::Info => self
+                    .info_logs
+                    .lock()
+                    .expect("lock info logs")
+                    .push((entry.event.to_string(), entry.fields)),
+                LogLevel::Warn => self
+                    .warn_logs
+                    .lock()
+                    .expect("lock warn logs")
+                    .push((entry.event.to_string(), entry.fields)),
+                LogLevel::Debug | LogLevel::Error => {}
+            }
         }
     }
 
@@ -708,14 +713,14 @@ mod tests {
             stop_log
                 .1
                 .get("slack_stream_append_count")
-                .and_then(|value: &serde_json::Value| value.as_str()),
+                .and_then(LogFieldValue::as_str),
             Some("0")
         );
         assert_eq!(
             stop_log
                 .1
                 .get("slack_stream_last_error")
-                .and_then(|value: &serde_json::Value| value.as_str()),
+                .and_then(LogFieldValue::as_str),
             Some("Slack API returned error: method=chat.appendStream error=invalid_arguments")
         );
     }

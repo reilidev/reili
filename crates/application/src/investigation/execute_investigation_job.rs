@@ -13,11 +13,10 @@ use reili_core::investigation::{
 use reili_core::messaging::slack::{
     SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
 };
-use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
 
 use super::execution_errors::{ExecuteInvestigationJobError, resolve_investigation_failure_error};
-use super::logger::{InvestigationLogMeta, InvestigationLogger, string_log_meta};
+use super::logger::{InvestigationLogMeta, InvestigationLogger, LogFieldValue, string_log_meta};
 use super::services::{
     CreateInvestigationProgressStreamSessionFactoryInput,
     CreateInvestigationProgressStreamSessionInput, InvestigationLeadProgressEventHandler,
@@ -27,7 +26,6 @@ use super::services::{
 };
 use super::slack_thread_context_loader::{
     SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
-    ThreadContextFetchFailedLogInput, ThreadContextLoaderLogger,
 };
 use crate::alert_intake::{ExtractAlertContextInput, extract_alert_context};
 
@@ -99,9 +97,7 @@ pub async fn execute_investigation_job(
 
     let thread_context_loader = SlackThreadContextLoader::new(SlackThreadContextLoaderDeps {
         slack_thread_history_port: Arc::clone(&input.deps.slack_thread_history_port),
-        logger: Arc::new(ThreadContextLoggerAdapter {
-            logger: Arc::clone(&input.deps.logger),
-        }),
+        logger: Arc::clone(&input.deps.logger),
     });
 
     let execution_result = run_investigation(
@@ -142,12 +138,9 @@ pub async fn execute_investigation_job(
             meta = merge_log_meta(&meta, &build_llm_execution_log_meta(&success.llm_execution));
             meta.insert(
                 "worker_job_duration_ms".to_string(),
-                Value::String(duration_ms.to_string()),
+                LogFieldValue::from(duration_ms),
             );
-            meta.insert(
-                "latencyMs".to_string(),
-                Value::String(duration_ms.to_string()),
-            );
+            meta.insert("latencyMs".to_string(), LogFieldValue::from(duration_ms));
             input.deps.logger.info("Processed investigation job", meta);
             Ok(())
         }
@@ -166,15 +159,12 @@ pub async fn execute_investigation_job(
             );
             meta.insert(
                 "worker_job_duration_ms".to_string(),
-                Value::String(duration_ms.to_string()),
+                LogFieldValue::from(duration_ms),
             );
-            meta.insert(
-                "latencyMs".to_string(),
-                Value::String(duration_ms.to_string()),
-            );
+            meta.insert("latencyMs".to_string(), LogFieldValue::from(duration_ms));
             meta.insert(
                 "error".to_string(),
-                Value::String(failure_error.error_message),
+                LogFieldValue::from(failure_error.error_message),
             );
             input.deps.logger.error("Failed investigation job", meta);
             Err(error)
@@ -280,10 +270,16 @@ async fn post_slack_reply_stage(
 
 fn build_llm_token_log_meta(usage: &LlmUsageSnapshot) -> InvestigationLogMeta {
     string_log_meta([
-        ("llm_tokens_input_total", usage.input_tokens.to_string()),
-        ("llm_tokens_output_total", usage.output_tokens.to_string()),
-        ("llm_tokens_total", usage.total_tokens.to_string()),
-        ("llm_requests_total", usage.requests.to_string()),
+        (
+            "llm_tokens_input_total",
+            LogFieldValue::from(usage.input_tokens),
+        ),
+        (
+            "llm_tokens_output_total",
+            LogFieldValue::from(usage.output_tokens),
+        ),
+        ("llm_tokens_total", LogFieldValue::from(usage.total_tokens)),
+        ("llm_requests_total", LogFieldValue::from(usage.requests)),
     ])
 }
 
@@ -313,22 +309,6 @@ fn extract_mentioned_user_id(text: &str) -> Option<String> {
     }
 
     Some(user_id.to_string())
-}
-
-struct ThreadContextLoggerAdapter {
-    logger: Arc<dyn InvestigationLogger>,
-}
-
-impl ThreadContextLoaderLogger for ThreadContextLoggerAdapter {
-    fn error(&self, message: &str, input: ThreadContextFetchFailedLogInput) {
-        let mut meta = input.base_log_meta;
-        meta.insert(
-            "thread_context_fetch_latency_ms".to_string(),
-            Value::String(input.thread_context_fetch_latency_ms.to_string()),
-        );
-        meta.insert("error".to_string(), Value::String(input.error));
-        self.logger.error(message, meta);
-    }
 }
 
 struct ChannelProgressEventPort {
@@ -375,6 +355,7 @@ mod tests {
         LlmUsageSnapshot, RunInvestigationLeadInput, StartInvestigationProgressSessionInput,
     };
     use reili_core::knowledge::{WebSearchInput, WebSearchPort, WebSearchResult};
+    use reili_core::logger::{LogEntry, LogLevel};
     use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
     use reili_core::messaging::slack::{
         SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
@@ -396,7 +377,7 @@ mod tests {
     use super::{
         ExecuteInvestigationJobInput, InvestigationExecutionDeps, execute_investigation_job,
     };
-    use crate::investigation::logger::InvestigationLogger;
+    use crate::investigation::logger::{InvestigationLogger, LogFieldValue};
 
     const USAGE_SNAPSHOT: LlmUsageSnapshot = LlmUsageSnapshot {
         requests: 1,
@@ -532,25 +513,25 @@ mod tests {
     }
 
     impl InvestigationLogger for MockLogger {
-        fn info(&self, message: &str, meta: InvestigationLogMeta) {
-            self.info_logs
-                .lock()
-                .expect("lock info logs")
-                .push((message.to_string(), meta));
-        }
-
-        fn warn(&self, message: &str, meta: InvestigationLogMeta) {
-            self.warn_logs
-                .lock()
-                .expect("lock warn logs")
-                .push((message.to_string(), meta));
-        }
-
-        fn error(&self, message: &str, meta: InvestigationLogMeta) {
-            self.error_logs
-                .lock()
-                .expect("lock error logs")
-                .push((message.to_string(), meta));
+        fn log(&self, entry: LogEntry) {
+            match entry.level {
+                LogLevel::Info => self
+                    .info_logs
+                    .lock()
+                    .expect("lock info logs")
+                    .push((entry.event.to_string(), entry.fields)),
+                LogLevel::Warn => self
+                    .warn_logs
+                    .lock()
+                    .expect("lock warn logs")
+                    .push((entry.event.to_string(), entry.fields)),
+                LogLevel::Error => self
+                    .error_logs
+                    .lock()
+                    .expect("lock error logs")
+                    .push((entry.event.to_string(), entry.fields)),
+                LogLevel::Debug => {}
+            }
         }
     }
 
@@ -866,7 +847,7 @@ mod tests {
 
         assert_eq!(
             meta.get("llm_tokens_total"),
-            Some(&serde_json::Value::String("100".to_string()))
+            Some(&LogFieldValue::from(100_u64))
         );
         assert!(!meta.contains_key("llm_tokens_total_investigation_lead"));
     }

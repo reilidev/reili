@@ -223,6 +223,7 @@ mod tests {
         RecordToolCallStarted, create_investigation_progress_stream_session_factory,
     };
     use crate::investigation::logger::{InvestigationLogMeta, InvestigationLogger};
+    use reili_core::logger::{LogEntry, LogLevel};
 
     #[derive(Default)]
     struct MockLogger {
@@ -241,21 +242,21 @@ mod tests {
     }
 
     impl InvestigationLogger for MockLogger {
-        fn info(&self, message: &str, meta: InvestigationLogMeta) {
-            self.info_logs
-                .lock()
-                .expect("lock info logs")
-                .push((message.to_string(), meta));
+        fn log(&self, entry: LogEntry) {
+            match entry.level {
+                LogLevel::Info => self
+                    .info_logs
+                    .lock()
+                    .expect("lock info logs")
+                    .push((entry.event.to_string(), entry.fields)),
+                LogLevel::Warn => self
+                    .warn_logs
+                    .lock()
+                    .expect("lock warn logs")
+                    .push((entry.event.to_string(), entry.fields)),
+                LogLevel::Debug | LogLevel::Error => {}
+            }
         }
-
-        fn warn(&self, message: &str, meta: InvestigationLogMeta) {
-            self.warn_logs
-                .lock()
-                .expect("lock warn logs")
-                .push((message.to_string(), meta));
-        }
-
-        fn error(&self, _message: &str, _meta: InvestigationLogMeta) {}
     }
 
     #[derive(Default)]

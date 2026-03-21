@@ -6,33 +6,44 @@ use reili_core::investigation::{
     InvestigationProgressSessionPort, InvestigationProgressUpdate,
     StartInvestigationProgressSessionInput,
 };
+use reili_core::logger::Logger;
 
 use super::{
-    SlackProgressStreamApiPort, SlackProgressStreamLifecycle, SlackProgressStreamLogger,
-    TracingSlackProgressStreamLogger, build_progress_chunks, build_stream_start_chunks,
+    SlackProgressStreamApiPort, SlackProgressStreamLifecycle, build_progress_chunks,
+    build_stream_start_chunks,
 };
 use crate::outbound::slack::SlackProgressStreamAdapter;
 use crate::outbound::slack::slack_web_api_client::SlackWebApiClient;
 
+pub struct SlackProgressReporterInput {
+    pub client: Arc<SlackWebApiClient>,
+    pub logger: Arc<dyn Logger>,
+}
+
+pub(crate) struct SlackProgressReporterDeps {
+    pub api: Arc<dyn SlackProgressStreamApiPort>,
+    pub logger: Arc<dyn Logger>,
+}
+
 #[derive(Clone)]
 pub struct SlackProgressReporter {
     api: Arc<dyn SlackProgressStreamApiPort>,
-    logger: Arc<dyn SlackProgressStreamLogger>,
+    logger: Arc<dyn Logger>,
 }
 
 impl SlackProgressReporter {
-    pub fn new(client: Arc<SlackWebApiClient>) -> Self {
-        Self::new_with_dependencies(
-            Arc::new(SlackProgressStreamAdapter::new(client)),
-            Arc::new(TracingSlackProgressStreamLogger),
-        )
+    pub fn new(input: SlackProgressReporterInput) -> Self {
+        Self::new_with_dependencies(SlackProgressReporterDeps {
+            api: Arc::new(SlackProgressStreamAdapter::new(input.client)),
+            logger: input.logger,
+        })
     }
 
-    pub(crate) fn new_with_dependencies(
-        api: Arc<dyn SlackProgressStreamApiPort>,
-        logger: Arc<dyn SlackProgressStreamLogger>,
-    ) -> Self {
-        Self { api, logger }
+    pub(crate) fn new_with_dependencies(deps: SlackProgressReporterDeps) -> Self {
+        Self {
+            api: deps.api,
+            logger: deps.logger,
+        }
     }
 }
 
@@ -81,11 +92,11 @@ mod tests {
         CompleteInvestigationProgressSessionInput, InvestigationProgressSessionFactoryPort,
         InvestigationProgressUpdate, StartInvestigationProgressSessionInput,
     };
+    use reili_core::logger::{LogEntry, Logger};
 
-    use super::{SlackProgressReporter, SlackProgressStreamApiPort, SlackProgressStreamLogger};
+    use super::{SlackProgressReporter, SlackProgressReporterDeps, SlackProgressStreamApiPort};
     use crate::outbound::slack::progress_stream::{
-        SlackAppendStreamInput, SlackProgressLogMeta, SlackStartStreamInput,
-        SlackStartStreamOutput, SlackStopStreamInput,
+        SlackAppendStreamInput, SlackStartStreamInput, SlackStartStreamOutput, SlackStopStreamInput,
     };
 
     struct MockApi {
@@ -146,19 +157,17 @@ mod tests {
     #[derive(Default)]
     struct MockLogger;
 
-    impl SlackProgressStreamLogger for MockLogger {
-        fn info(&self, _message: &str, _meta: SlackProgressLogMeta) {}
-
-        fn warn(&self, _message: &str, _meta: SlackProgressLogMeta) {}
+    impl Logger for MockLogger {
+        fn log(&self, _entry: LogEntry) {}
     }
 
     #[tokio::test]
     async fn renders_semantic_updates_and_stops_stream() {
         let api = Arc::new(MockApi::new());
-        let factory = SlackProgressReporter::new_with_dependencies(
-            Arc::clone(&api) as Arc<dyn SlackProgressStreamApiPort>,
-            Arc::new(MockLogger),
-        );
+        let factory = SlackProgressReporter::new_with_dependencies(SlackProgressReporterDeps {
+            api: Arc::clone(&api) as Arc<dyn SlackProgressStreamApiPort>,
+            logger: Arc::new(MockLogger),
+        });
         let mut session = factory.create_for_thread(StartInvestigationProgressSessionInput {
             channel: "C123".to_string(),
             thread_ts: "123.456".to_string(),
