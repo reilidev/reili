@@ -8,7 +8,7 @@ pub const INVESTIGATION_LEAD_PROGRESS_OWNER_ID: &str = "investigation_lead";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InvestigationProgressEvent {
-    ReasoningSummaryCreated { title: String, summary: String },
+    ProgressSummaryCreated { title: String, summary: String },
     ToolCallStarted { task_id: String, title: String },
     ToolCallCompleted { task_id: String, title: String },
     MessageOutputCreated,

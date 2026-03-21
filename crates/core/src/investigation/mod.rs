@@ -3,6 +3,7 @@ pub mod context;
 pub mod investigation_lead_runner;
 pub mod job;
 pub mod progress_event;
+pub mod progress_reporting;
 pub mod telemetry;
 
 pub use alert_context::AlertContext;
@@ -15,5 +16,11 @@ pub use job::{InvestigationJob, InvestigationJobPayload};
 pub use progress_event::{
     INVESTIGATION_LEAD_PROGRESS_OWNER_ID, InvestigationProgressEvent,
     InvestigationProgressEventInput, InvestigationProgressEventPort,
+};
+pub use progress_reporting::{
+    CompleteInvestigationProgressSessionInput, InvestigationProgressScopeStatus,
+    InvestigationProgressSessionCompletionStatus, InvestigationProgressSessionFactoryPort,
+    InvestigationProgressSessionPort, InvestigationProgressUpdate,
+    StartInvestigationProgressSessionInput,
 };
 pub use telemetry::LlmUsageSnapshot;

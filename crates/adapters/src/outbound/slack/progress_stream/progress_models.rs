@@ -1,23 +1,20 @@
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-
-use crate::error::PortError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SlackMarkdownTextChunk {
+pub(crate) struct SlackMarkdownTextChunk {
     pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SlackPlanUpdateChunk {
+pub(crate) struct SlackPlanUpdateChunk {
     pub title: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SlackTaskUpdateStatus {
+pub(crate) enum SlackTaskUpdateStatus {
     Pending,
     InProgress,
     Complete,
@@ -26,13 +23,13 @@ pub enum SlackTaskUpdateStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum SlackChunkSourceType {
+pub(crate) enum SlackChunkSourceType {
     Url,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SlackChunkSource {
+pub(crate) struct SlackChunkSource {
     #[serde(rename = "type")]
     pub source_type: SlackChunkSourceType,
     pub url: String,
@@ -41,7 +38,7 @@ pub struct SlackChunkSource {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SlackTaskUpdateChunk {
+pub(crate) struct SlackTaskUpdateChunk {
     pub id: String,
     pub title: String,
     pub status: SlackTaskUpdateStatus,
@@ -55,14 +52,14 @@ pub struct SlackTaskUpdateChunk {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum SlackAnyChunk {
+pub(crate) enum SlackAnyChunk {
     MarkdownText(SlackMarkdownTextChunk),
     PlanUpdate(SlackPlanUpdateChunk),
     TaskUpdate(SlackTaskUpdateChunk),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SlackStreamBlock {
+pub(crate) struct SlackStreamBlock {
     #[serde(rename = "type")]
     pub block_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -71,7 +68,7 @@ pub struct SlackStreamBlock {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StartSlackProgressStreamInput {
+pub(crate) struct SlackStartStreamInput {
     pub channel: String,
     pub thread_ts: String,
     pub recipient_user_id: String,
@@ -82,7 +79,7 @@ pub struct StartSlackProgressStreamInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AppendSlackProgressStreamInput {
+pub(crate) struct SlackAppendStreamInput {
     pub channel: String,
     pub stream_ts: String,
     pub markdown_text: Option<String>,
@@ -91,7 +88,7 @@ pub struct AppendSlackProgressStreamInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StopSlackProgressStreamInput {
+pub(crate) struct SlackStopStreamInput {
     pub channel: String,
     pub stream_ts: String,
     pub markdown_text: Option<String>,
@@ -101,18 +98,8 @@ pub struct StopSlackProgressStreamInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StartSlackProgressStreamOutput {
+pub(crate) struct SlackStartStreamOutput {
     pub stream_ts: String,
-}
-
-#[async_trait]
-pub trait SlackProgressStreamPort: Send + Sync {
-    async fn start(
-        &self,
-        input: StartSlackProgressStreamInput,
-    ) -> Result<StartSlackProgressStreamOutput, PortError>;
-    async fn append(&self, input: AppendSlackProgressStreamInput) -> Result<(), PortError>;
-    async fn stop(&self, input: StopSlackProgressStreamInput) -> Result<(), PortError>;
 }
 
 #[cfg(test)]

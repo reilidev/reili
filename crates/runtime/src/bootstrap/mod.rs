@@ -14,8 +14,8 @@ use reili_adapters::outbound::datadog::{
 use reili_adapters::outbound::github::{GitHubSearchAdapter, GitHubSearchAdapterConfig};
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
-    SlackProgressStreamAdapter, SlackThreadHistoryAdapter, SlackThreadReplyAdapter,
-    SlackWebApiClient, SlackWebApiClientConfig,
+    SlackProgressReporter, SlackThreadHistoryAdapter, SlackThreadReplyAdapter, SlackWebApiClient,
+    SlackWebApiClientConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
 use reili_application::investigation::{
@@ -27,12 +27,12 @@ use reili_application::{
 };
 use reili_core::error::PortError;
 use reili_core::investigation::InvestigationJob;
-use reili_core::investigation::{InvestigationLeadRunnerPort, InvestigationResources};
+use reili_core::investigation::{
+    InvestigationLeadRunnerPort, InvestigationProgressSessionFactoryPort, InvestigationResources,
+};
 use reili_core::knowledge::WebSearchPort;
 use reili_core::messaging::slack::SlackMessageHandlerPort;
-use reili_core::messaging::slack::{
-    SlackProgressStreamPort, SlackThreadHistoryPort, SlackThreadReplyPort,
-};
+use reili_core::messaging::slack::{SlackThreadHistoryPort, SlackThreadReplyPort};
 use reili_core::monitoring::datadog::{
     DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
     DatadogMetricCatalogPort, DatadogMetricQueryPort,
@@ -93,9 +93,11 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let slack_reply_port: Arc<dyn SlackThreadReplyPort> = Arc::new(SlackThreadReplyAdapter::new(
         Arc::clone(&slack_web_api_client),
     ));
-    let slack_progress_stream_port: Arc<dyn SlackProgressStreamPort> = Arc::new(
-        SlackProgressStreamAdapter::new(Arc::clone(&slack_web_api_client)),
-    );
+    let investigation_progress_session_factory_port: Arc<
+        dyn InvestigationProgressSessionFactoryPort,
+    > = Arc::new(SlackProgressReporter::new(Arc::clone(
+        &slack_web_api_client,
+    )));
     let slack_thread_history_port: Arc<dyn SlackThreadHistoryPort> = Arc::new(
         SlackThreadHistoryAdapter::new(Arc::clone(&slack_web_api_client)),
     );
@@ -170,7 +172,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
             job_queue,
             investigation_execution_deps: InvestigationExecutionDeps {
                 slack_reply_port,
-                slack_progress_stream_port,
+                investigation_progress_session_factory_port,
                 slack_thread_history_port,
                 investigation_resources,
                 investigation_lead_runner,

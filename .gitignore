@@ -1,5 +1,7 @@
-node_modules
 .env
-.claude/settings.local.json
 dist
 .tmp
+
+# AI tools
+.codex
+.claude

@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use reili_core::error::PortError;
-use reili_core::messaging::slack::{
-    AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort, SlackStreamBlock,
-    StartSlackProgressStreamInput, StartSlackProgressStreamOutput, StopSlackProgressStreamInput,
-};
 use serde::Serialize;
 
+use super::progress_stream::{
+    SlackAnyChunk, SlackAppendStreamInput, SlackProgressStreamApiPort, SlackStartStreamInput,
+    SlackStartStreamOutput, SlackStopStreamInput, SlackStreamBlock,
+};
 use super::slack_web_api_client::SlackWebApiClient;
 use crate::json_utils::read_non_empty_json_string;
 
@@ -23,11 +23,11 @@ impl SlackProgressStreamAdapter {
 }
 
 #[async_trait]
-impl SlackProgressStreamPort for SlackProgressStreamAdapter {
+impl SlackProgressStreamApiPort for SlackProgressStreamAdapter {
     async fn start(
         &self,
-        input: StartSlackProgressStreamInput,
-    ) -> Result<StartSlackProgressStreamOutput, PortError> {
+        input: SlackStartStreamInput,
+    ) -> Result<SlackStartStreamOutput, PortError> {
         if input.markdown_text.is_none() && input.chunks.is_none() {
             return Err(PortError::new(
                 "Slack stream start requires markdownText or chunks",
@@ -52,10 +52,10 @@ impl SlackProgressStreamPort for SlackProgressStreamAdapter {
 
         let stream_ts = read_non_empty_json_string(response.get("ts"))
             .ok_or_else(|| PortError::new("Slack stream start response did not contain ts"))?;
-        Ok(StartSlackProgressStreamOutput { stream_ts })
+        Ok(SlackStartStreamOutput { stream_ts })
     }
 
-    async fn append(&self, input: AppendSlackProgressStreamInput) -> Result<(), PortError> {
+    async fn append(&self, input: SlackAppendStreamInput) -> Result<(), PortError> {
         self.client
             .post(
                 "chat.appendStream",
@@ -71,7 +71,7 @@ impl SlackProgressStreamPort for SlackProgressStreamAdapter {
         Ok(())
     }
 
-    async fn stop(&self, input: StopSlackProgressStreamInput) -> Result<(), PortError> {
+    async fn stop(&self, input: SlackStopStreamInput) -> Result<(), PortError> {
         self.client
             .post(
                 "chat.stopStream",
@@ -129,18 +129,15 @@ struct StopSlackProgressStreamRequest {
 mod tests {
     use std::sync::Arc;
 
-    use reili_core::messaging::slack::progress_stream::{
-        SlackTaskUpdateChunk, SlackTaskUpdateStatus,
-    };
-    use reili_core::messaging::slack::{
-        AppendSlackProgressStreamInput, SlackAnyChunk, SlackProgressStreamPort,
-        StartSlackProgressStreamInput, StopSlackProgressStreamInput,
-    };
     use serde_json::json;
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::SlackProgressStreamAdapter;
+    use crate::outbound::slack::progress_stream::{
+        SlackAnyChunk, SlackAppendStreamInput, SlackProgressStreamApiPort, SlackStartStreamInput,
+        SlackStopStreamInput, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
+    };
     use crate::outbound::slack::slack_web_api_client::{
         SlackWebApiClient, SlackWebApiClientConfig,
     };
@@ -149,7 +146,7 @@ mod tests {
     async fn start_requires_markdown_text_or_chunks() {
         let adapter = SlackProgressStreamAdapter::new(Arc::new(create_client("http://localhost")));
         let error = adapter
-            .start(StartSlackProgressStreamInput {
+            .start(SlackStartStreamInput {
                 channel: "C123".to_string(),
                 thread_ts: "1710000000.000001".to_string(),
                 recipient_user_id: "U123".to_string(),
@@ -184,7 +181,7 @@ mod tests {
 
         let adapter = SlackProgressStreamAdapter::new(Arc::new(create_client(&server.uri())));
         let result = adapter
-            .start(StartSlackProgressStreamInput {
+            .start(SlackStartStreamInput {
                 channel: "C123".to_string(),
                 thread_ts: "1710000000.000001".to_string(),
                 recipient_user_id: "U123".to_string(),
@@ -228,7 +225,7 @@ mod tests {
 
         let adapter = SlackProgressStreamAdapter::new(Arc::new(create_client(&server.uri())));
         adapter
-            .append(AppendSlackProgressStreamInput {
+            .append(SlackAppendStreamInput {
                 channel: "C123".to_string(),
                 stream_ts: "1710000000.000100".to_string(),
                 markdown_text: Some("progress".to_string()),
@@ -237,7 +234,7 @@ mod tests {
             .await
             .expect("append stream");
         adapter
-            .stop(StopSlackProgressStreamInput {
+            .stop(SlackStopStreamInput {
                 channel: "C123".to_string(),
                 stream_ts: "1710000000.000100".to_string(),
                 markdown_text: Some("done".to_string()),
@@ -273,7 +270,7 @@ mod tests {
 
         let adapter = SlackProgressStreamAdapter::new(Arc::new(create_client(&server.uri())));
         adapter
-            .append(AppendSlackProgressStreamInput {
+            .append(SlackAppendStreamInput {
                 channel: "C123".to_string(),
                 stream_ts: "1710000000.000100".to_string(),
                 markdown_text: None,
