@@ -1,4 +1,4 @@
-use reili_core::investigation::LlmUsageSnapshot;
+use reili_core::task::LlmUsageSnapshot;
 
 const EMPTY_LLM_USAGE_SNAPSHOT: LlmUsageSnapshot = LlmUsageSnapshot {
     requests: 0,

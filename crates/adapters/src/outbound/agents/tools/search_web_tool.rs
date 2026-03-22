@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use reili_core::error::PortError;
-use reili_core::investigation::InvestigationResources;
 use reili_core::knowledge::{WebSearchInput, WebSearchUserLocation};
+use reili_core::task::TaskResources;
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
@@ -12,11 +12,11 @@ use super::tool_json::to_json_string;
 
 #[derive(Clone)]
 pub struct SearchWebTool {
-    resources: Arc<InvestigationResources>,
+    resources: Arc<TaskResources>,
 }
 
 impl SearchWebTool {
-    pub fn new(resources: Arc<InvestigationResources>) -> Self {
+    pub fn new(resources: Arc<TaskResources>) -> Self {
         Self { resources }
     }
 }
@@ -107,7 +107,7 @@ mod tests {
         SearchWebTool::new(resources)
     }
 
-    fn build_test_resources(web_search_port: Arc<dyn WebSearchPort>) -> InvestigationResources {
+    fn build_test_resources(web_search_port: Arc<dyn WebSearchPort>) -> TaskResources {
         use reili_core::monitoring::datadog::{
             DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
             DatadogMetricCatalogPort, DatadogMetricQueryPort,
@@ -230,7 +230,7 @@ mod tests {
             }
         }
 
-        InvestigationResources {
+        TaskResources {
             log_aggregate_port: Arc::new(StubLogAggregate),
             log_search_port: Arc::new(StubLogSearch),
             metric_catalog_port: Arc::new(StubMetricCatalog),

@@ -1,27 +1,23 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
-use reili_core::investigation::{
-    InvestigationLeadRunReport, InvestigationLeadRunnerPort, RunInvestigationLeadInput,
-};
+use reili_core::task::{RunTaskInput, TaskRunReport, TaskRunnerPort};
 use rig::{client::ProviderClient, providers::openai};
 
 use super::datadog_mcp_tools::DatadogMcpToolConfig;
-use super::llm_investigation_lead_runner::{
-    RunLlmInvestigationLeadInput, run_llm_investigation_lead,
-};
 use super::llm_provider_settings::{
     CreateOpenAiProviderSettingsInput, LlmProviderSettings, create_openai_provider_settings,
 };
+use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
 
-pub struct OpenAiInvestigationLeadRunnerInput {
+pub struct OpenAiTaskRunnerInput {
     pub api_key: String,
-    pub investigation_lead_model: String,
+    pub task_runner_model: String,
     pub datadog_mcp: DatadogMcpToolConfig,
     pub github_scope_org: String,
     pub language: String,
 }
 
-pub struct OpenAiInvestigationLeadRunner {
+pub struct OpenAiTaskRunner {
     api_key: String,
     provider_settings: LlmProviderSettings,
     datadog_mcp: DatadogMcpToolConfig,
@@ -29,12 +25,12 @@ pub struct OpenAiInvestigationLeadRunner {
     language: String,
 }
 
-impl OpenAiInvestigationLeadRunner {
-    pub fn new(input: OpenAiInvestigationLeadRunnerInput) -> Self {
+impl OpenAiTaskRunner {
+    pub fn new(input: OpenAiTaskRunnerInput) -> Self {
         Self {
             api_key: input.api_key,
             provider_settings: create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
-                investigation_lead_model: input.investigation_lead_model,
+                task_runner_model: input.task_runner_model,
             }),
             datadog_mcp: input.datadog_mcp,
             github_scope_org: input.github_scope_org,
@@ -44,12 +40,9 @@ impl OpenAiInvestigationLeadRunner {
 }
 
 #[async_trait]
-impl InvestigationLeadRunnerPort for OpenAiInvestigationLeadRunner {
-    async fn run(
-        &self,
-        input: RunInvestigationLeadInput,
-    ) -> Result<InvestigationLeadRunReport, AgentRunFailedError> {
-        run_llm_investigation_lead(RunLlmInvestigationLeadInput {
+impl TaskRunnerPort for OpenAiTaskRunner {
+    async fn run(&self, input: RunTaskInput) -> Result<TaskRunReport, AgentRunFailedError> {
+        run_llm_task(RunLlmTaskInput {
             client: openai::Client::from_val(self.api_key.clone().into()),
             settings: self.provider_settings.clone(),
             datadog_mcp: self.datadog_mcp.clone(),

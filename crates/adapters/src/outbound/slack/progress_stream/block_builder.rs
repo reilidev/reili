@@ -1,4 +1,4 @@
-use reili_core::investigation::{InvestigationProgressScopeStatus, InvestigationProgressUpdate};
+use reili_core::task::{TaskProgressScopeStatus, TaskProgressUpdate};
 
 use super::{SlackAnyChunk, SlackMarkdownTextChunk, SlackTaskUpdateChunk, SlackTaskUpdateStatus};
 
@@ -10,9 +10,9 @@ pub(crate) fn build_stream_start_chunks() -> Vec<SlackAnyChunk> {
     })]
 }
 
-pub(crate) fn build_progress_chunks(update: InvestigationProgressUpdate) -> Vec<SlackAnyChunk> {
+pub(crate) fn build_progress_chunks(update: TaskProgressUpdate) -> Vec<SlackAnyChunk> {
     vec![match update {
-        InvestigationProgressUpdate::ScopeStarted {
+        TaskProgressUpdate::ScopeStarted {
             step_id,
             title,
             detail,
@@ -25,7 +25,7 @@ pub(crate) fn build_progress_chunks(update: InvestigationProgressUpdate) -> Vec<
             output: None,
             sources: None,
         }),
-        InvestigationProgressUpdate::ScopeUpdated {
+        TaskProgressUpdate::ScopeUpdated {
             step_id,
             title,
             status,
@@ -35,15 +35,14 @@ pub(crate) fn build_progress_chunks(update: InvestigationProgressUpdate) -> Vec<
             id: step_id,
             title,
             status: match status {
-                InvestigationProgressScopeStatus::InProgress => SlackTaskUpdateStatus::InProgress,
-                InvestigationProgressScopeStatus::Complete => SlackTaskUpdateStatus::Complete,
+                TaskProgressScopeStatus::InProgress => SlackTaskUpdateStatus::InProgress,
+                TaskProgressScopeStatus::Complete => SlackTaskUpdateStatus::Complete,
             },
             details: detail,
-            output: matches!(status, InvestigationProgressScopeStatus::Complete)
-                .then(|| "done".to_string()),
+            output: matches!(status, TaskProgressScopeStatus::Complete).then(|| "done".to_string()),
             sources: None,
         }),
-        InvestigationProgressUpdate::ScopeCompleted { step_id, title, .. } => {
+        TaskProgressUpdate::ScopeCompleted { step_id, title, .. } => {
             SlackAnyChunk::TaskUpdate(SlackTaskUpdateChunk {
                 id: step_id,
                 title,
@@ -58,17 +57,15 @@ pub(crate) fn build_progress_chunks(update: InvestigationProgressUpdate) -> Vec<
 
 #[cfg(test)]
 mod tests {
-    use reili_core::investigation::{
-        InvestigationProgressScopeStatus, InvestigationProgressUpdate,
-    };
+    use reili_core::task::{TaskProgressScopeStatus, TaskProgressUpdate};
 
     use super::{SlackAnyChunk, SlackTaskUpdateStatus, build_progress_chunks};
 
     #[test]
     fn renders_scope_started_as_in_progress_task_update() {
-        let chunks = build_progress_chunks(InvestigationProgressUpdate::ScopeStarted {
+        let chunks = build_progress_chunks(TaskProgressUpdate::ScopeStarted {
             step_id: "progress-step-1".to_string(),
-            owner_id: "investigation_lead".to_string(),
+            owner_id: "task_runner".to_string(),
             title: "Collect evidence".to_string(),
             detail: Some("Inspect logs\n".to_string()),
         });
@@ -88,9 +85,9 @@ mod tests {
 
     #[test]
     fn renders_scope_completed_as_done_task_update() {
-        let chunks = build_progress_chunks(InvestigationProgressUpdate::ScopeCompleted {
+        let chunks = build_progress_chunks(TaskProgressUpdate::ScopeCompleted {
             step_id: "progress-step-1".to_string(),
-            owner_id: "investigation_lead".to_string(),
+            owner_id: "task_runner".to_string(),
             title: "Collect evidence".to_string(),
         });
 
@@ -106,11 +103,11 @@ mod tests {
 
     #[test]
     fn renders_scope_updated_with_complete_status_as_done_task_update() {
-        let chunks = build_progress_chunks(InvestigationProgressUpdate::ScopeUpdated {
+        let chunks = build_progress_chunks(TaskProgressUpdate::ScopeUpdated {
             step_id: "progress-step-1".to_string(),
-            owner_id: "investigation_lead".to_string(),
+            owner_id: "task_runner".to_string(),
             title: "Collect evidence".to_string(),
-            status: InvestigationProgressScopeStatus::Complete,
+            status: TaskProgressScopeStatus::Complete,
             detail: None,
         });
 

@@ -11,7 +11,7 @@ use reili_adapters::inbound::slack::{
     ParsedSlackEvent, parse_slack_event, verify_slack_signature_middleware,
 };
 use reili_adapters::logger::init_json_logger;
-use reili_application::investigation::{InvestigationLogger, string_log_meta};
+use reili_application::task::{TaskLogger, string_log_meta};
 use reili_core::messaging::slack::SlackMessageHandlerPort;
 use serde_json::json;
 
@@ -36,7 +36,7 @@ pub enum AppRunError {
 struct AppHttpState {
     slack_message_handler: Arc<dyn SlackMessageHandlerPort>,
     bot_user_id: String,
-    logger: Arc<dyn InvestigationLogger>,
+    logger: Arc<dyn TaskLogger>,
 }
 
 pub async fn run_app() -> Result<(), AppRunError> {

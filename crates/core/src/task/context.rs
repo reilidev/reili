@@ -12,7 +12,7 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct InvestigationResources {
+pub struct TaskResources {
     pub log_aggregate_port: Arc<dyn DatadogLogAggregatePort>,
     pub log_search_port: Arc<dyn DatadogLogSearchPort>,
     pub metric_catalog_port: Arc<dyn DatadogMetricCatalogPort>,
@@ -25,14 +25,14 @@ pub struct InvestigationResources {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvestigationRuntime {
+pub struct TaskRuntime {
     pub started_at_iso: String,
     pub channel: String,
     pub thread_ts: String,
     pub retry_count: u32,
 }
 
-pub struct InvestigationContext {
-    pub resources: InvestigationResources,
-    pub runtime: InvestigationRuntime,
+pub struct TaskContext {
+    pub resources: TaskResources,
+    pub runtime: TaskRuntime,
 }

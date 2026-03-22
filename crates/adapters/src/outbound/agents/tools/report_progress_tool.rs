@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use reili_core::error::PortError;
-use reili_core::investigation::{
-    InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
-};
+use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
@@ -12,13 +10,13 @@ use serde_json::json;
 use super::tool_json::to_json_string;
 
 pub struct ReportProgressToolInput {
-    pub on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+    pub on_progress_event: Arc<dyn TaskProgressEventPort>,
     pub owner_id: String,
 }
 
 #[derive(Clone)]
 pub struct ReportProgressTool {
-    on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+    on_progress_event: Arc<dyn TaskProgressEventPort>,
     owner_id: String,
 }
 
@@ -76,9 +74,9 @@ impl Tool for ReportProgressTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let publish_result = self
             .on_progress_event
-            .publish(InvestigationProgressEventInput {
+            .publish(TaskProgressEventInput {
                 owner_id: self.owner_id.clone(),
-                event: InvestigationProgressEvent::ProgressSummaryCreated {
+                event: TaskProgressEvent::ProgressSummaryCreated {
                     title: args.title,
                     summary: args.summary,
                 },
@@ -102,27 +100,25 @@ mod tests {
 
     use async_trait::async_trait;
     use reili_core::error::PortError;
-    use reili_core::investigation::{
-        InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
-    };
+    use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
     use rig::tool::Tool;
 
     use super::{ReportProgressArgs, ReportProgressTool, ReportProgressToolInput};
 
     struct MockProgressEventPort {
-        calls: Arc<Mutex<Vec<InvestigationProgressEventInput>>>,
+        calls: Arc<Mutex<Vec<TaskProgressEventInput>>>,
         should_fail: bool,
     }
 
     impl MockProgressEventPort {
-        fn successful(calls: Arc<Mutex<Vec<InvestigationProgressEventInput>>>) -> Self {
+        fn successful(calls: Arc<Mutex<Vec<TaskProgressEventInput>>>) -> Self {
             Self {
                 calls,
                 should_fail: false,
             }
         }
 
-        fn failing(calls: Arc<Mutex<Vec<InvestigationProgressEventInput>>>) -> Self {
+        fn failing(calls: Arc<Mutex<Vec<TaskProgressEventInput>>>) -> Self {
             Self {
                 calls,
                 should_fail: true,
@@ -131,8 +127,8 @@ mod tests {
     }
 
     #[async_trait]
-    impl InvestigationProgressEventPort for MockProgressEventPort {
-        async fn publish(&self, input: InvestigationProgressEventInput) -> Result<(), PortError> {
+    impl TaskProgressEventPort for MockProgressEventPort {
+        async fn publish(&self, input: TaskProgressEventInput) -> Result<(), PortError> {
             if self.should_fail {
                 return Err(PortError::new("progress publish failed"));
             }
@@ -147,7 +143,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let tool = ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::new(MockProgressEventPort::successful(Arc::clone(&calls))),
-            owner_id: "investigation_lead".to_string(),
+            owner_id: "task_runner".to_string(),
         });
 
         let output = tool
@@ -161,9 +157,9 @@ mod tests {
         assert_eq!(output, "{\"ok\":true}");
         assert_eq!(
             calls.lock().expect("lock calls").as_slice(),
-            &[InvestigationProgressEventInput {
-                owner_id: "investigation_lead".to_string(),
-                event: InvestigationProgressEvent::ProgressSummaryCreated {
+            &[TaskProgressEventInput {
+                owner_id: "task_runner".to_string(),
+                event: TaskProgressEvent::ProgressSummaryCreated {
                     title: "Collect logs".to_string(),
                     summary: "Investigate recent errors".to_string(),
                 },
@@ -176,7 +172,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let tool = ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::new(MockProgressEventPort::failing(Arc::clone(&calls))),
-            owner_id: "investigation_lead".to_string(),
+            owner_id: "task_runner".to_string(),
         });
 
         let output = tool

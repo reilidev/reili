@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reili_core::investigation::{
-    CompleteInvestigationProgressSessionInput, InvestigationProgressSessionCompletionStatus,
-    InvestigationProgressSessionFactoryPort as CoreInvestigationProgressSessionFactoryPort,
-    InvestigationProgressSessionPort as CoreInvestigationProgressSessionPort,
-    InvestigationProgressUpdate, StartInvestigationProgressSessionInput,
+use reili_core::task::{
+    CompleteTaskProgressSessionInput, StartTaskProgressSessionInput,
+    TaskProgressSessionCompletionStatus,
+    TaskProgressSessionFactoryPort as CoreTaskProgressSessionFactoryPort,
+    TaskProgressSessionPort as CoreTaskProgressSessionPort, TaskProgressUpdate,
 };
 
-use crate::investigation::logger::{InvestigationLogger, string_log_meta};
+use crate::task::logger::{TaskLogger, string_log_meta};
 
 use super::progress_update_commands::{
     RecordMessageOutputCreated, RecordProgressSummary, RecordToolCallCompleted,
@@ -16,13 +16,13 @@ use super::progress_update_commands::{
 };
 use super::progress_update_projector::{ProgressUpdateProjector, ToolCompletedProgressProjection};
 
-pub struct CreateInvestigationProgressStreamSessionFactoryInput {
-    pub progress_session_factory_port: Arc<dyn CoreInvestigationProgressSessionFactoryPort>,
-    pub logger: Arc<dyn InvestigationLogger>,
+pub struct CreateTaskProgressStreamSessionFactoryInput {
+    pub progress_session_factory_port: Arc<dyn CoreTaskProgressSessionFactoryPort>,
+    pub logger: Arc<dyn TaskLogger>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CreateInvestigationProgressStreamSessionInput {
+pub struct CreateTaskProgressStreamSessionInput {
     pub channel: String,
     pub thread_ts: String,
     pub recipient_user_id: String,
@@ -31,7 +31,7 @@ pub struct CreateInvestigationProgressStreamSessionInput {
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub trait InvestigationProgressStreamSession: Send {
+pub trait TaskProgressStreamSession: Send {
     async fn start(&mut self);
     async fn post_progress_summary(&mut self, input: RecordProgressSummary);
     async fn post_tool_started(&mut self, input: RecordToolCallStarted);
@@ -42,31 +42,31 @@ pub trait InvestigationProgressStreamSession: Send {
 }
 
 #[cfg_attr(test, mockall::automock)]
-pub trait InvestigationProgressStreamSessionFactory: Send + Sync {
+pub trait TaskProgressStreamSessionFactory: Send + Sync {
     fn create_for_thread(
         &self,
-        input: CreateInvestigationProgressStreamSessionInput,
-    ) -> Box<dyn InvestigationProgressStreamSession>;
+        input: CreateTaskProgressStreamSessionInput,
+    ) -> Box<dyn TaskProgressStreamSession>;
 }
 
 #[must_use]
-pub fn create_investigation_progress_stream_session_factory(
-    input: CreateInvestigationProgressStreamSessionFactoryInput,
-) -> impl InvestigationProgressStreamSessionFactory {
-    InvestigationProgressStreamSessionFactoryImpl { input }
+pub fn create_task_progress_stream_session_factory(
+    input: CreateTaskProgressStreamSessionFactoryInput,
+) -> impl TaskProgressStreamSessionFactory {
+    TaskProgressStreamSessionFactoryImpl { input }
 }
 
-struct InvestigationProgressStreamSessionFactoryImpl {
-    input: CreateInvestigationProgressStreamSessionFactoryInput,
+struct TaskProgressStreamSessionFactoryImpl {
+    input: CreateTaskProgressStreamSessionFactoryInput,
 }
 
-impl InvestigationProgressStreamSessionFactory for InvestigationProgressStreamSessionFactoryImpl {
+impl TaskProgressStreamSessionFactory for TaskProgressStreamSessionFactoryImpl {
     fn create_for_thread(
         &self,
-        input: CreateInvestigationProgressStreamSessionInput,
-    ) -> Box<dyn InvestigationProgressStreamSession> {
+        input: CreateTaskProgressStreamSessionInput,
+    ) -> Box<dyn TaskProgressStreamSession> {
         let progress_session = self.input.progress_session_factory_port.create_for_thread(
-            StartInvestigationProgressSessionInput {
+            StartTaskProgressSessionInput {
                 channel: input.channel.clone(),
                 thread_ts: input.thread_ts.clone(),
                 recipient_user_id: input.recipient_user_id.clone(),
@@ -74,7 +74,7 @@ impl InvestigationProgressStreamSessionFactory for InvestigationProgressStreamSe
             },
         );
 
-        Box::new(InvestigationProgressStreamSessionFacade::new(
+        Box::new(TaskProgressStreamSessionFacade::new(
             input,
             Arc::clone(&self.input.logger),
             progress_session,
@@ -82,18 +82,18 @@ impl InvestigationProgressStreamSessionFactory for InvestigationProgressStreamSe
     }
 }
 
-struct InvestigationProgressStreamSessionFacade {
-    input: CreateInvestigationProgressStreamSessionInput,
-    logger: Arc<dyn InvestigationLogger>,
+struct TaskProgressStreamSessionFacade {
+    input: CreateTaskProgressStreamSessionInput,
+    logger: Arc<dyn TaskLogger>,
     projector: ProgressUpdateProjector,
-    progress_session: Box<dyn CoreInvestigationProgressSessionPort>,
+    progress_session: Box<dyn CoreTaskProgressSessionPort>,
 }
 
-impl InvestigationProgressStreamSessionFacade {
+impl TaskProgressStreamSessionFacade {
     fn new(
-        input: CreateInvestigationProgressStreamSessionInput,
-        logger: Arc<dyn InvestigationLogger>,
-        progress_session: Box<dyn CoreInvestigationProgressSessionPort>,
+        input: CreateTaskProgressStreamSessionInput,
+        logger: Arc<dyn TaskLogger>,
+        progress_session: Box<dyn CoreTaskProgressSessionPort>,
     ) -> Self {
         Self {
             input,
@@ -103,7 +103,7 @@ impl InvestigationProgressStreamSessionFacade {
         }
     }
 
-    async fn apply_updates(&mut self, updates: Vec<InvestigationProgressUpdate>) {
+    async fn apply_updates(&mut self, updates: Vec<TaskProgressUpdate>) {
         for update in updates {
             self.progress_session.apply(update).await;
         }
@@ -145,15 +145,15 @@ impl InvestigationProgressStreamSessionFacade {
         );
     }
 
-    async fn complete(&mut self, status: InvestigationProgressSessionCompletionStatus) {
+    async fn complete(&mut self, status: TaskProgressSessionCompletionStatus) {
         self.progress_session
-            .complete(CompleteInvestigationProgressSessionInput { status })
+            .complete(CompleteTaskProgressSessionInput { status })
             .await;
     }
 }
 
 #[async_trait]
-impl InvestigationProgressStreamSession for InvestigationProgressStreamSessionFacade {
+impl TaskProgressStreamSession for TaskProgressStreamSessionFacade {
     async fn start(&mut self) {
         self.progress_session.start().await;
     }
@@ -197,12 +197,12 @@ impl InvestigationProgressStreamSession for InvestigationProgressStreamSessionFa
     }
 
     async fn stop_as_succeeded(&mut self) {
-        self.complete(InvestigationProgressSessionCompletionStatus::Succeeded)
+        self.complete(TaskProgressSessionCompletionStatus::Succeeded)
             .await;
     }
 
     async fn stop_as_failed(&mut self) {
-        self.complete(InvestigationProgressSessionCompletionStatus::Failed)
+        self.complete(TaskProgressSessionCompletionStatus::Failed)
             .await;
     }
 }
@@ -212,39 +212,38 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use mockall::Sequence;
-    use reili_core::investigation::{
-        CompleteInvestigationProgressSessionInput, InvestigationProgressSessionCompletionStatus,
-        InvestigationProgressSessionPort, InvestigationProgressUpdate,
-        MockInvestigationProgressSessionFactoryPort, MockInvestigationProgressSessionPort,
-        StartInvestigationProgressSessionInput,
+    use reili_core::task::{
+        CompleteTaskProgressSessionInput, MockTaskProgressSessionFactoryPort,
+        MockTaskProgressSessionPort, StartTaskProgressSessionInput,
+        TaskProgressSessionCompletionStatus, TaskProgressSessionPort, TaskProgressUpdate,
     };
 
     use super::{
-        CreateInvestigationProgressStreamSessionFactoryInput,
-        CreateInvestigationProgressStreamSessionInput, InvestigationProgressStreamSessionFactory,
+        CreateTaskProgressStreamSessionFactoryInput, CreateTaskProgressStreamSessionInput,
         RecordMessageOutputCreated, RecordProgressSummary, RecordToolCallCompleted,
-        RecordToolCallStarted, create_investigation_progress_stream_session_factory,
+        RecordToolCallStarted, TaskProgressStreamSessionFactory,
+        create_task_progress_stream_session_factory,
     };
-    use crate::investigation::logger::{InvestigationLogMeta, InvestigationLogger};
+    use crate::task::logger::{TaskLogMeta, TaskLogger};
     use reili_core::logger::{LogEntry, LogLevel};
 
     #[derive(Default)]
     struct MockLogger {
-        info_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
-        warn_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
+        info_logs: Mutex<Vec<(String, TaskLogMeta)>>,
+        warn_logs: Mutex<Vec<(String, TaskLogMeta)>>,
     }
 
     impl MockLogger {
-        fn info_logs(&self) -> Vec<(String, InvestigationLogMeta)> {
+        fn info_logs(&self) -> Vec<(String, TaskLogMeta)> {
             self.info_logs.lock().expect("lock info logs").clone()
         }
 
-        fn warn_logs(&self) -> Vec<(String, InvestigationLogMeta)> {
+        fn warn_logs(&self) -> Vec<(String, TaskLogMeta)> {
             self.warn_logs.lock().expect("lock warn logs").clone()
         }
     }
 
-    impl InvestigationLogger for MockLogger {
+    impl TaskLogger for MockLogger {
         fn log(&self, entry: LogEntry) {
             match entry.level {
                 LogLevel::Info => self
@@ -264,24 +263,24 @@ mod tests {
 
     #[derive(Default)]
     struct MockCoreSessionState {
-        created_inputs: Vec<StartInvestigationProgressSessionInput>,
+        created_inputs: Vec<StartTaskProgressSessionInput>,
         events: Vec<String>,
-        updates: Vec<InvestigationProgressUpdate>,
-        completions: Vec<InvestigationProgressSessionCompletionStatus>,
+        updates: Vec<TaskProgressUpdate>,
+        completions: Vec<TaskProgressSessionCompletionStatus>,
     }
 
     fn create_core_session_factory(
         state: Arc<Mutex<MockCoreSessionState>>,
-        configure_session: impl FnOnce(&mut MockInvestigationProgressSessionPort),
-    ) -> MockInvestigationProgressSessionFactoryPort {
-        let mut session = MockInvestigationProgressSessionPort::new();
+        configure_session: impl FnOnce(&mut MockTaskProgressSessionPort),
+    ) -> MockTaskProgressSessionFactoryPort {
+        let mut session = MockTaskProgressSessionPort::new();
         configure_session(&mut session);
 
-        let mut factory = MockInvestigationProgressSessionFactoryPort::new();
+        let mut factory = MockTaskProgressSessionFactoryPort::new();
         factory.expect_create_for_thread().times(1).return_once(
-            move |input: StartInvestigationProgressSessionInput| {
+            move |input: StartTaskProgressSessionInput| {
                 state.lock().expect("lock state").created_inputs.push(input);
-                Box::new(session) as Box<dyn InvestigationProgressSessionPort>
+                Box::new(session) as Box<dyn TaskProgressSessionPort>
             },
         );
         factory
@@ -293,11 +292,11 @@ mod tests {
         let logger = Arc::new(MockLogger::default());
         let mut sequence = Sequence::new();
         let factory_state = Arc::clone(&state);
-        let factory = create_investigation_progress_stream_session_factory(
-            CreateInvestigationProgressStreamSessionFactoryInput {
+        let factory = create_task_progress_stream_session_factory(
+            CreateTaskProgressStreamSessionFactoryInput {
                 progress_session_factory_port: Arc::new(create_core_session_factory(
                     Arc::clone(&factory_state),
-                    |session: &mut MockInvestigationProgressSessionPort| {
+                    |session: &mut MockTaskProgressSessionPort| {
                         let start_state = Arc::clone(&factory_state);
                         session
                             .expect_start()
@@ -316,7 +315,7 @@ mod tests {
                             .expect_apply()
                             .times(2)
                             .in_sequence(&mut sequence)
-                            .returning(move |update: InvestigationProgressUpdate| {
+                            .returning(move |update: TaskProgressUpdate| {
                                 let mut state = apply_state.lock().expect("lock state");
                                 state.events.push("apply".to_string());
                                 state.updates.push(update);
@@ -327,7 +326,7 @@ mod tests {
                             .expect_complete()
                             .times(1)
                             .in_sequence(&mut sequence)
-                            .returning(move |input: CompleteInvestigationProgressSessionInput| {
+                            .returning(move |input: CompleteTaskProgressSessionInput| {
                                 let mut state = complete_state.lock().expect("lock state");
                                 state.events.push("complete".to_string());
                                 state.completions.push(input.status);
@@ -337,25 +336,24 @@ mod tests {
                 logger,
             },
         );
-        let mut session =
-            factory.create_for_thread(CreateInvestigationProgressStreamSessionInput {
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                recipient_user_id: "U123".to_string(),
-                recipient_team_id: Some("T123".to_string()),
-            });
+        let mut session = factory.create_for_thread(CreateTaskProgressStreamSessionInput {
+            channel: "C123".to_string(),
+            thread_ts: "123.456".to_string(),
+            recipient_user_id: "U123".to_string(),
+            recipient_team_id: Some("T123".to_string()),
+        });
 
         session.start().await;
         session
             .post_progress_summary(RecordProgressSummary {
-                owner_id: "investigation_lead".to_string(),
+                owner_id: "task_runner".to_string(),
                 title: "Collect evidence".to_string(),
                 summary: "Inspect logs".to_string(),
             })
             .await;
         session
             .post_message_output_created(RecordMessageOutputCreated {
-                owner_id: "investigation_lead".to_string(),
+                owner_id: "task_runner".to_string(),
             })
             .await;
         session.stop_as_succeeded().await;
@@ -363,7 +361,7 @@ mod tests {
         let state = state.lock().expect("lock state");
         assert_eq!(
             state.created_inputs,
-            vec![StartInvestigationProgressSessionInput {
+            vec![StartTaskProgressSessionInput {
                 channel: "C123".to_string(),
                 thread_ts: "123.456".to_string(),
                 recipient_user_id: "U123".to_string(),
@@ -381,7 +379,7 @@ mod tests {
         );
         assert_eq!(
             state.completions,
-            vec![InvestigationProgressSessionCompletionStatus::Succeeded]
+            vec![TaskProgressSessionCompletionStatus::Succeeded]
         );
     }
 
@@ -389,14 +387,14 @@ mod tests {
     async fn logs_reopened_progress_step_when_new_tool_activity_reuses_completed_scope() {
         let state = Arc::new(Mutex::new(MockCoreSessionState::default()));
         let logger = Arc::new(MockLogger::default());
-        let factory = create_investigation_progress_stream_session_factory(
-            CreateInvestigationProgressStreamSessionFactoryInput {
+        let factory = create_task_progress_stream_session_factory(
+            CreateTaskProgressStreamSessionFactoryInput {
                 progress_session_factory_port: Arc::new(create_core_session_factory(
                     Arc::clone(&state),
-                    |session: &mut MockInvestigationProgressSessionPort| {
+                    |session: &mut MockTaskProgressSessionPort| {
                         let apply_state = Arc::clone(&state);
                         session.expect_apply().times(3).returning(
-                            move |update: InvestigationProgressUpdate| {
+                            move |update: TaskProgressUpdate| {
                                 let mut state = apply_state.lock().expect("lock state");
                                 state.events.push("apply".to_string());
                                 state.updates.push(update);
@@ -404,32 +402,31 @@ mod tests {
                         );
                     },
                 )),
-                logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+                logger: Arc::clone(&logger) as Arc<dyn TaskLogger>,
             },
         );
-        let mut session =
-            factory.create_for_thread(CreateInvestigationProgressStreamSessionInput {
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                recipient_user_id: "U123".to_string(),
-                recipient_team_id: None,
-            });
+        let mut session = factory.create_for_thread(CreateTaskProgressStreamSessionInput {
+            channel: "C123".to_string(),
+            thread_ts: "123.456".to_string(),
+            recipient_user_id: "U123".to_string(),
+            recipient_team_id: None,
+        });
 
         session
             .post_progress_summary(RecordProgressSummary {
-                owner_id: "investigation_lead".to_string(),
+                owner_id: "task_runner".to_string(),
                 title: "Collect evidence".to_string(),
                 summary: String::new(),
             })
             .await;
         session
             .post_message_output_created(RecordMessageOutputCreated {
-                owner_id: "investigation_lead".to_string(),
+                owner_id: "task_runner".to_string(),
             })
             .await;
         session
             .post_tool_started(RecordToolCallStarted {
-                owner_id: "investigation_lead".to_string(),
+                owner_id: "task_runner".to_string(),
                 task_id: "task-2".to_string(),
                 title: "logs".to_string(),
             })
@@ -447,28 +444,27 @@ mod tests {
     async fn logs_when_tool_completion_arrives_without_matching_progress_step() {
         let state = Arc::new(Mutex::new(MockCoreSessionState::default()));
         let logger = Arc::new(MockLogger::default());
-        let factory = create_investigation_progress_stream_session_factory(
-            CreateInvestigationProgressStreamSessionFactoryInput {
+        let factory = create_task_progress_stream_session_factory(
+            CreateTaskProgressStreamSessionFactoryInput {
                 progress_session_factory_port: Arc::new(create_core_session_factory(
                     Arc::clone(&state),
-                    |session: &mut MockInvestigationProgressSessionPort| {
+                    |session: &mut MockTaskProgressSessionPort| {
                         session.expect_apply().times(0);
                     },
                 )),
-                logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+                logger: Arc::clone(&logger) as Arc<dyn TaskLogger>,
             },
         );
-        let mut session =
-            factory.create_for_thread(CreateInvestigationProgressStreamSessionInput {
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                recipient_user_id: "U123".to_string(),
-                recipient_team_id: None,
-            });
+        let mut session = factory.create_for_thread(CreateTaskProgressStreamSessionInput {
+            channel: "C123".to_string(),
+            thread_ts: "123.456".to_string(),
+            recipient_user_id: "U123".to_string(),
+            recipient_team_id: None,
+        });
 
         session
             .post_tool_completed(RecordToolCallCompleted {
-                owner_id: "investigation_lead".to_string(),
+                owner_id: "task_runner".to_string(),
                 task_id: "task-404".to_string(),
                 title: "logs".to_string(),
             })

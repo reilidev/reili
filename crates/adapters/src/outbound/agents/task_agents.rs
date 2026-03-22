@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use reili_core::investigation::{
-    INVESTIGATION_LEAD_PROGRESS_OWNER_ID, InvestigationProgressEventPort, InvestigationRequest,
-    InvestigationResources, InvestigationRuntime,
+use reili_core::task::{
+    TASK_RUNNER_PROGRESS_OWNER_ID, TaskProgressEventPort, TaskRequest, TaskResources, TaskRuntime,
 };
 use rig::agent::Agent;
 use rig::prelude::CompletionClient;
@@ -26,26 +25,24 @@ const GITHUB_PROGRESS_OWNER_ID: &str = "investigate_github";
 type CompletionAgent<C> = Agent<<C as CompletionClient>::CompletionModel>;
 type SpecialistAgent<C> = Agent<<C as CompletionClient>::CompletionModel, ProgressEventHook>;
 
-pub struct BuildInvestigationLeadAgentInput<C>
+pub struct BuildTaskAgentInput<C>
 where
     C: CompletionClient,
 {
     pub client: C,
     pub settings: LlmProviderSettings,
-    pub resources: Arc<InvestigationResources>,
+    pub resources: Arc<TaskResources>,
     pub datadog_site: String,
     pub datadog_mcp_toolset: DatadogMcpToolset,
     pub github_scope_org: String,
-    pub runtime: InvestigationRuntime,
-    pub on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+    pub runtime: TaskRuntime,
+    pub on_progress_event: Arc<dyn TaskProgressEventPort>,
     pub language: String,
     pub usage_collector: LlmUsageCollector,
 }
 
 #[must_use]
-pub fn build_investigation_lead_agent<C>(
-    input: BuildInvestigationLeadAgentInput<C>,
-) -> CompletionAgent<C>
+pub fn build_task_agent<C>(input: BuildTaskAgentInput<C>) -> CompletionAgent<C>
 where
     C: CompletionClient + Clone,
     C::CompletionModel: 'static,
@@ -75,22 +72,20 @@ where
 
     input
         .client
-        .agent(input.settings.investigation_lead_model.clone())
-        .name("InvestigationLead")
-        .preamble(&build_investigation_lead_instructions(
-            BuildInvestigationLeadInstructionsInput {
-                datadog_site: input.datadog_site,
-                github_scope_org: input.github_scope_org,
-                runtime: input.runtime,
-                language: input.language,
-            },
-        ))
-        .default_max_turns(input.settings.investigation_lead_max_turns)
+        .agent(input.settings.task_runner_model.clone())
+        .name("TaskRunner")
+        .preamble(&build_task_instructions(BuildTaskInstructionsInput {
+            datadog_site: input.datadog_site,
+            github_scope_org: input.github_scope_org,
+            runtime: input.runtime,
+            language: input.language,
+        }))
+        .default_max_turns(input.settings.task_runner_max_turns)
         .additional_params(input.settings.additional_params.clone())
         .tools(input.datadog_mcp_toolset.lead_tools())
         .tool(ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::clone(&input.on_progress_event),
-            owner_id: INVESTIGATION_LEAD_PROGRESS_OWNER_ID.to_string(),
+            owner_id: TASK_RUNNER_PROGRESS_OWNER_ID.to_string(),
         }))
         .tool(ProgressReportingSubAgentTool::new(
             datadog_agent,
@@ -107,8 +102,8 @@ where
 }
 
 #[must_use]
-pub fn build_investigation_lead_prompt(request: &InvestigationRequest) -> String {
-    let investigation_prompt = "Investigate the following user input and respond with the most appropriate investigation or direct answer.
+pub fn build_task_prompt(request: &TaskRequest) -> String {
+    let task_prompt = "Investigate the following user input and respond with the most appropriate investigation or direct answer.
 The input may be an alert, request, question, link, or partial context.";
     let trigger_message_text = request.trigger_message.text.trim();
     let trigger_message_section = format!("\n\nTrigger Message: {trigger_message_text}");
@@ -121,7 +116,7 @@ The input may be an alert, request, question, link, or partial context.";
         format!("\n\nThread Context:\n{thread_transcript}")
     };
 
-    format!("{investigation_prompt}{trigger_message_section}{thread_context_section}")
+    format!("{task_prompt}{trigger_message_section}{thread_context_section}")
 }
 
 fn build_thread_transcript(
@@ -135,7 +130,7 @@ fn build_thread_transcript(
             let text = message.text.trim();
             let iso_timestamp = to_iso_timestamp(&message.ts);
             format!(
-                "[ts: {} | iso: {}] {}: {}",
+                "ts: {}, iso_timestamp: {}, posted_by: {}\nmessage:{}",
                 message.ts, iso_timestamp, author, text
             )
         })
@@ -220,11 +215,11 @@ where
 {
     client: C,
     settings: LlmProviderSettings,
-    resources: Arc<InvestigationResources>,
+    resources: Arc<TaskResources>,
     datadog_mcp_toolset: DatadogMcpToolset,
     github_scope_org: String,
     language: String,
-    on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+    on_progress_event: Arc<dyn TaskProgressEventPort>,
     owner_id: String,
     usage_collector: LlmUsageCollector,
 }
@@ -306,14 +301,14 @@ where
         .build()
 }
 
-struct BuildInvestigationLeadInstructionsInput {
+struct BuildTaskInstructionsInput {
     datadog_site: String,
     github_scope_org: String,
-    runtime: InvestigationRuntime,
+    runtime: TaskRuntime,
     language: String,
 }
 
-fn build_investigation_lead_instructions(input: BuildInvestigationLeadInstructionsInput) -> String {
+fn build_task_instructions(input: BuildTaskInstructionsInput) -> String {
     let datadog_site = if input.datadog_site.is_empty() {
         "datadoghq.com".to_string()
     } else {
@@ -409,18 +404,17 @@ Use {language} for all responses.",
 
 #[cfg(test)]
 mod tests {
-    use reili_core::investigation::InvestigationRequest;
-    use reili_core::investigation::InvestigationRuntime;
     use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
+    use reili_core::task::TaskRequest;
+    use reili_core::task::TaskRuntime;
     use serde_json::json;
 
     use super::super::llm_provider_settings::{
         CreateOpenAiProviderSettingsInput, create_openai_provider_settings,
     };
     use super::{
-        BuildGithubInstructionsInput, BuildInvestigationLeadInstructionsInput,
-        build_datadog_instructions, build_github_instructions,
-        build_investigation_lead_instructions, build_investigation_lead_prompt,
+        BuildGithubInstructionsInput, BuildTaskInstructionsInput, build_datadog_instructions,
+        build_github_instructions, build_task_instructions, build_task_prompt,
     };
 
     fn sample_trigger_message() -> SlackMessage {
@@ -437,8 +431,8 @@ mod tests {
     }
 
     #[test]
-    fn builds_investigation_lead_prompt_with_thread_context() {
-        let request = InvestigationRequest {
+    fn builds_task_prompt_with_thread_context() {
+        let request = TaskRequest {
             trigger_message: sample_trigger_message(),
             thread_messages: vec![SlackThreadMessage {
                 ts: "1710000000.000001".to_string(),
@@ -446,28 +440,29 @@ mod tests {
                 text: "thread context".to_string(),
             }],
         };
-        let prompt = build_investigation_lead_prompt(&request);
+        let prompt = build_task_prompt(&request);
         assert!(prompt.contains("Trigger Message: Please investigate this alert"));
         assert!(prompt.contains("Thread Context:"));
-        assert!(prompt.contains("U123: thread context"));
+        assert!(prompt.contains("posted_by: U123"));
+        assert!(prompt.contains("message:thread context"));
     }
 
     #[test]
-    fn builds_investigation_lead_prompt_without_thread_context() {
-        let request = InvestigationRequest {
+    fn builds_task_prompt_without_thread_context() {
+        let request = TaskRequest {
             trigger_message: sample_trigger_message(),
             thread_messages: vec![],
         };
-        let prompt = build_investigation_lead_prompt(&request);
+        let prompt = build_task_prompt(&request);
         assert!(prompt.contains("Trigger Message: Please investigate this alert"));
         assert!(!prompt.contains("Thread Context:"));
     }
 
     #[test]
-    fn builds_investigation_lead_prompt_with_bot_user_you_annotation() {
+    fn builds_task_prompt_with_bot_user_you_annotation() {
         let mut trigger = sample_trigger_message();
         trigger.text = "<@U999> investigate this alert".to_string();
-        let request = InvestigationRequest {
+        let request = TaskRequest {
             trigger_message: trigger,
             thread_messages: vec![SlackThreadMessage {
                 ts: "1710000000.000010".to_string(),
@@ -475,13 +470,14 @@ mod tests {
                 text: "I started investigation".to_string(),
             }],
         };
-        let prompt = build_investigation_lead_prompt(&request);
-        assert!(prompt.contains("U999 (You): I started investigation"));
+        let prompt = build_task_prompt(&request);
+        assert!(prompt.contains("posted_by: U999 (You)"));
+        assert!(prompt.contains("message:I started investigation"));
     }
 
     #[test]
     fn formats_thread_messages_as_transcript() {
-        let request = InvestigationRequest {
+        let request = TaskRequest {
             trigger_message: sample_trigger_message(),
             thread_messages: vec![
                 SlackThreadMessage {
@@ -496,14 +492,19 @@ mod tests {
                 },
             ],
         };
-        let prompt = build_investigation_lead_prompt(&request);
-        assert!(prompt.contains("[ts: 1710000000.000001 | iso: 2024-03-09T16:00:00.000Z] U123: First message\n---\n[ts: 1710000000.000002 | iso: 2024-03-09T16:00:00.000Z] system: follow-up from bot"));
+        let prompt = build_task_prompt(&request);
+        assert!(prompt.contains(
+            "ts: 1710000000.000001, iso_timestamp: 2024-03-09T16:00:00.000Z, posted_by: U123\nmessage:First message"
+        ));
+        assert!(prompt.contains(
+            "ts: 1710000000.000002, iso_timestamp: 2024-03-09T16:00:00.000Z, posted_by: system\nmessage:follow-up from bot"
+        ));
     }
 
     #[test]
     fn provider_settings_enable_parallel_tool_calls() {
         let settings = create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
-            investigation_lead_model: "gpt-5.3-codex".to_string(),
+            task_runner_model: "gpt-5.3-codex".to_string(),
         });
         let params = settings.additional_params;
 
@@ -518,19 +519,18 @@ mod tests {
     }
 
     #[test]
-    fn investigation_lead_instructions_include_report_progress_rules() {
-        let instructions =
-            build_investigation_lead_instructions(BuildInvestigationLeadInstructionsInput {
-                datadog_site: "datadoghq.com".to_string(),
-                github_scope_org: "acme".to_string(),
-                runtime: InvestigationRuntime {
-                    started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                    channel: "C123".to_string(),
-                    thread_ts: "123.456".to_string(),
-                    retry_count: 0,
-                },
-                language: "Japanese".to_string(),
-            });
+    fn task_instructions_include_report_progress_rules() {
+        let instructions = build_task_instructions(BuildTaskInstructionsInput {
+            datadog_site: "datadoghq.com".to_string(),
+            github_scope_org: "acme".to_string(),
+            runtime: TaskRuntime {
+                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+                channel: "C123".to_string(),
+                thread_ts: "123.456".to_string(),
+                retry_count: 0,
+            },
+            language: "Japanese".to_string(),
+        });
 
         assert!(instructions.contains("call report_progress"));
         assert!(instructions.contains("title and summary fields"));
@@ -566,19 +566,18 @@ mod tests {
     }
 
     #[test]
-    fn investigation_lead_instructions_include_web_search_rules() {
-        let instructions =
-            build_investigation_lead_instructions(BuildInvestigationLeadInstructionsInput {
-                datadog_site: "datadoghq.com".to_string(),
-                github_scope_org: "acme".to_string(),
-                runtime: InvestigationRuntime {
-                    started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                    channel: "C123".to_string(),
-                    thread_ts: "123.456".to_string(),
-                    retry_count: 0,
-                },
-                language: "Japanese".to_string(),
-            });
+    fn task_instructions_include_web_search_rules() {
+        let instructions = build_task_instructions(BuildTaskInstructionsInput {
+            datadog_site: "datadoghq.com".to_string(),
+            github_scope_org: "acme".to_string(),
+            runtime: TaskRuntime {
+                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+                channel: "C123".to_string(),
+                thread_ts: "123.456".to_string(),
+                retry_count: 0,
+            },
+            language: "Japanese".to_string(),
+        });
 
         assert!(instructions.contains("search_web"));
         assert!(instructions.contains("external dependencies"));

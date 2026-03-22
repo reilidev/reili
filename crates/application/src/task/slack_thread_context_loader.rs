@@ -4,24 +4,24 @@ use std::time::Instant;
 use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
 use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage};
 
-use super::logger::{InvestigationLogMeta, InvestigationLogger};
-use crate::investigation::LogFieldValue;
+use super::logger::{TaskLogMeta, TaskLogger};
+use crate::task::LogFieldValue;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlackThreadContextLoaderInput {
     pub message: SlackMessage,
-    pub base_log_meta: InvestigationLogMeta,
+    pub base_log_meta: TaskLogMeta,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ThreadContextFetchFailedLogInput {
-    pub base_log_meta: InvestigationLogMeta,
+    pub base_log_meta: TaskLogMeta,
     pub thread_context_fetch_latency_ms: u128,
     pub error: String,
 }
 
 impl ThreadContextFetchFailedLogInput {
-    fn into_log_meta(self) -> InvestigationLogMeta {
+    fn into_log_meta(self) -> TaskLogMeta {
         let mut meta = self.base_log_meta;
         meta.insert(
             "thread_context_fetch_latency_ms".to_string(),
@@ -34,7 +34,7 @@ impl ThreadContextFetchFailedLogInput {
 
 pub struct SlackThreadContextLoaderDeps {
     pub slack_thread_history_port: Arc<dyn SlackThreadHistoryPort>,
-    pub logger: Arc<dyn InvestigationLogger>,
+    pub logger: Arc<dyn TaskLogger>,
 }
 
 pub struct SlackThreadContextLoader {
@@ -102,7 +102,7 @@ mod tests {
     };
     use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
 
-    use crate::investigation::{InvestigationLogMeta, LogFieldValue, string_log_meta};
+    use crate::task::{LogFieldValue, TaskLogMeta, string_log_meta};
 
     use super::{
         SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
@@ -111,7 +111,7 @@ mod tests {
     #[derive(Debug, Clone, PartialEq)]
     struct LoggedError {
         message: String,
-        meta: InvestigationLogMeta,
+        meta: TaskLogMeta,
     }
 
     #[derive(Default)]
@@ -125,8 +125,8 @@ mod tests {
         }
     }
 
-    impl crate::investigation::InvestigationLogger for ThreadContextLoaderLoggerMock {
-        fn log(&self, entry: crate::investigation::LogEntry) {
+    impl crate::task::TaskLogger for ThreadContextLoaderLoggerMock {
+        fn log(&self, entry: crate::task::LogEntry) {
             self.errors
                 .lock()
                 .expect("lock logger errors")
@@ -224,7 +224,7 @@ mod tests {
         let loader = SlackThreadContextLoader::new(SlackThreadContextLoaderDeps {
             slack_thread_history_port: Arc::clone(&thread_history_port)
                 as Arc<dyn SlackThreadHistoryPort>,
-            logger: Arc::clone(&logger) as Arc<dyn crate::investigation::InvestigationLogger>,
+            logger: Arc::clone(&logger) as Arc<dyn crate::task::TaskLogger>,
         });
 
         let result = loader
@@ -281,7 +281,7 @@ mod tests {
         }
     }
 
-    fn base_log_meta() -> InvestigationLogMeta {
+    fn base_log_meta() -> TaskLogMeta {
         string_log_meta([
             ("slackEventId", "Ev001"),
             ("jobId", "job-1"),

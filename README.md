@@ -1,7 +1,7 @@
 <div align="center">
   <h1>Reili</h1>
   <img src="./reili.png" alt="Reili logo" width="240" />
-  <p><strong>A Slack-native AI agent for DevOps investigations</strong></p>
+  <p><strong>A Slack-native AI agent for DevOps tasks, currently focused on investigations</strong></p>
   <p>
     Investigate alerts quickly across Datadog, GitHub, and Slack threads.
     <br />
@@ -11,17 +11,17 @@
 
 ## Why Reili
 
-`Reili` starts from Slack messages and investigation requests, then:
+`Reili` starts from Slack messages and task requests, then:
 
 - Investigates Datadog Logs, Metrics, and Events
 - Explores GitHub repositories, PRs, Issues, and code while connecting that context with Datadog to understand system structure and trace issues
 
-It focuses on triage, investigation, and communicating findings.
+Its current task focus is triage, investigation, and communicating findings.
 
 ## Core Features
 
 - Slack-native intake via `app_mention` events
-- Investigation result reporting in Slack threads
+- Task result reporting in Slack threads
 - Evidence collection from GitHub and Datadog
 
 ### Runtime Characteristics
@@ -112,7 +112,7 @@ docker compose -f compose.example.yaml up -d
 
 ## Usage
 
-Mention the bot in Slack with an investigation request:
+Mention the bot in Slack with a task request:
 
 ```text
 @Reili Please investigate this alert. Check error increase in the last 30 minutes and correlate with recent PRs.
@@ -120,19 +120,19 @@ Mention the bot in Slack with an investigation request:
 
 What happens:
 
-1. It posts investigation progress in the thread
+1. It posts task progress in the thread
 2. It investigates across Datadog and GitHub
 3. It replies with an evidence-backed summary
 
 ## Permissions and Tool Transparency
 
-Reili is intentionally scoped around investigation and decision support. In production it does not
+Reili is intentionally scoped around task execution and decision support. The current runtime remains read-only and investigation-focused. In production it does not
 get shell access, cluster access, or deployment credentials. Its effective capabilities are the
 integrations and tools wired in this runtime.
 
 ### Agent Tool Inventory
 
-The investigation agent can call only the following tool families:
+The task runner can call only the following tool families:
 
 - Slack progress reporting: `report_progress` (primarily used to post progress messages back to Slack)
 - Datadog MCP reads: `search_datadog_services`, `search_datadog_logs`,
@@ -158,7 +158,7 @@ Required Slack credentials:
 
 Required Event Subscriptions:
 
-- `app_mention`: starts an investigation when someone mentions the bot
+- `app_mention`: starts a task when someone mentions the bot
 
 Required Bot OAuth scopes:
 
@@ -178,8 +178,8 @@ Slack API methods currently used by the runtime:
 
 - `auth.test`: resolves the bot user ID at startup
 - `conversations.replies`: loads thread context when the triggering message is a thread reply
-- `chat.postMessage`: posts queue failures and the final investigation summary
-- `chat.startStream`, `chat.appendStream`, `chat.stopStream`: posts incremental investigation
+- `chat.postMessage`: posts queue failures and the final task summary
+- `chat.startStream`, `chat.appendStream`, `chat.stopStream`: posts incremental task
   progress in the same thread
 
 Slack boundary:
@@ -194,7 +194,7 @@ Slack boundary:
 
 ### Datadog Permissions and API Usage
 
-Reili uses Datadog as an evidence source during investigations.
+Reili uses Datadog as an evidence source during current investigation tasks.
 
 Required Datadog credentials:
 
@@ -207,7 +207,7 @@ Datadog capabilities currently used by the runtime:
 - Connect to the remote Datadog MCP Server over Streamable HTTP
 - Search services, logs, metrics, monitors, incidents, and events through Datadog-provided MCP
   tools
-- Fetch metric detail and context from Datadog MCP for investigation pivots
+- Fetch metric detail and context from Datadog MCP for task pivots
 
 Datadog MCP endpoint currently used by the runtime:
 
@@ -227,13 +227,13 @@ Datadog boundary:
 - It does not create or edit monitors, dashboards, notebooks, SLOs, incidents, downtimes, or
   service definitions
 - It does not acknowledge alerts, mute monitors, change retention, or trigger remediation actions
-- Requests are scoped to investigation queries generated from the Slack thread context and user
+- Requests are scoped to task queries generated from the Slack thread context and user
   prompt
 
 ### GitHub App Permissions and Scope
 
-Reili uses a GitHub App installation token. The current runtime only exercises investigation
-capabilities against GitHub.
+Reili uses a GitHub App installation token. The current runtime only exercises read-only,
+investigation-oriented task capabilities against GitHub.
 
 Recommended GitHub App permissions for the current runtime:
 
@@ -279,4 +279,4 @@ For local development setup, architecture rules, and contributor workflows, see 
 - Executing operational actions like auto-remediation or auto-deploy
 - Heavy stateful workflow orchestration
 
-This project is intentionally focused on investigation and decision support.
+This project is intentionally focused on investigation-oriented task execution and decision support.

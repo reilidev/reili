@@ -6,7 +6,7 @@ const DEFAULT_DATADOG_SITE: &str = "datadoghq.com";
 const DEFAULT_LANGUAGE: &str = "English";
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
 const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
-const DEFAULT_OPENAI_INVESTIGATION_LEAD_MODEL: &str = "gpt-5.3-codex";
+const DEFAULT_OPENAI_TASK_RUNNER_MODEL: &str = "gpt-5.3-codex";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackAuthConfig {
     pub slack_bot_token: String,
@@ -14,7 +14,7 @@ pub struct SlackAuthConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvestigationConfig {
+pub struct TaskConfig {
     pub datadog_api_key: String,
     pub datadog_app_key: String,
     pub datadog_site: String,
@@ -46,7 +46,7 @@ impl LlmProviderConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenAiLlmConfig {
     pub api_key: String,
-    pub investigation_lead_model: String,
+    pub task_runner_model: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,7 +106,7 @@ impl EnvironmentReader for ProcessEnvironment {
 
 fn load_app_config_with_env(env: &dyn EnvironmentReader) -> Result<AppConfig, EnvConfigError> {
     let slack_auth = read_slack_auth_config(env)?;
-    let investigation_config = read_investigation_config(env)?;
+    let task_config = read_task_config(env)?;
 
     Ok(AppConfig {
         slack_bot_token: slack_auth.slack_bot_token,
@@ -115,12 +115,12 @@ fn load_app_config_with_env(env: &dyn EnvironmentReader) -> Result<AppConfig, En
         worker_concurrency: DEFAULT_WORKER_CONCURRENCY,
         job_max_retry: DEFAULT_JOB_MAX_RETRY,
         job_backoff_ms: DEFAULT_JOB_BACKOFF_MS,
-        datadog_api_key: investigation_config.datadog_api_key,
-        datadog_app_key: investigation_config.datadog_app_key,
-        datadog_site: investigation_config.datadog_site,
-        llm: investigation_config.llm,
+        datadog_api_key: task_config.datadog_api_key,
+        datadog_app_key: task_config.datadog_app_key,
+        datadog_site: task_config.datadog_site,
+        llm: task_config.llm,
         github: read_github_app_config(env)?,
-        language: investigation_config.language,
+        language: task_config.language,
     })
 }
 
@@ -131,10 +131,8 @@ fn read_slack_auth_config(env: &dyn EnvironmentReader) -> Result<SlackAuthConfig
     })
 }
 
-fn read_investigation_config(
-    env: &dyn EnvironmentReader,
-) -> Result<InvestigationConfig, EnvConfigError> {
-    Ok(InvestigationConfig {
+fn read_task_config(env: &dyn EnvironmentReader) -> Result<TaskConfig, EnvConfigError> {
+    Ok(TaskConfig {
         datadog_api_key: read_required_env(env, "DATADOG_API_KEY")?,
         datadog_app_key: read_required_env(env, "DATADOG_APP_KEY")?,
         datadog_site: read_or_default(env, "DATADOG_SITE", DEFAULT_DATADOG_SITE),
@@ -164,7 +162,7 @@ fn read_llm_config(env: &dyn EnvironmentReader) -> Result<LlmConfig, EnvConfigEr
 fn read_openai_llm_config(env: &dyn EnvironmentReader) -> Result<OpenAiLlmConfig, EnvConfigError> {
     Ok(OpenAiLlmConfig {
         api_key: read_required_env(env, "LLM_OPENAI_API_KEY")?,
-        investigation_lead_model: DEFAULT_OPENAI_INVESTIGATION_LEAD_MODEL.to_string(),
+        task_runner_model: DEFAULT_OPENAI_TASK_RUNNER_MODEL.to_string(),
     })
 }
 
@@ -253,7 +251,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_OPENAI_INVESTIGATION_LEAD_MODEL,
+        DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_OPENAI_TASK_RUNNER_MODEL,
         DEFAULT_WORKER_CONCURRENCY, LlmProviderConfig, MockEnvironmentReader,
         load_app_config_with_env,
     };
@@ -332,18 +330,14 @@ mod tests {
 
     #[test]
     fn loads_openai_llm_config() {
-        let env =
-            environment_reader_mock(&[("LLM_OPENAI_INVESTIGATION_LEAD_MODEL", "custom-model")]);
+        let env = environment_reader_mock(&[("LLM_OPENAI_TASK_RUNNER_MODEL", "custom-model")]);
 
         let config = load_app_config_with_env(&env).expect("load app config");
 
         match config.llm.provider {
             LlmProviderConfig::OpenAi(provider) => {
                 assert_eq!(provider.api_key, "openai-api-key");
-                assert_eq!(
-                    provider.investigation_lead_model,
-                    DEFAULT_OPENAI_INVESTIGATION_LEAD_MODEL
-                );
+                assert_eq!(provider.task_runner_model, DEFAULT_OPENAI_TASK_RUNNER_MODEL);
             }
             LlmProviderConfig::Bedrock(_) => panic!("expected openai provider"),
         }

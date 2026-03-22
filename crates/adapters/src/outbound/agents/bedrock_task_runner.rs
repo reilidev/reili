@@ -1,19 +1,15 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
-use reili_core::investigation::{
-    InvestigationLeadRunReport, InvestigationLeadRunnerPort, RunInvestigationLeadInput,
-};
+use reili_core::task::{RunTaskInput, TaskRunReport, TaskRunnerPort};
 use rig_bedrock::client::ClientBuilder;
 
 use super::datadog_mcp_tools::DatadogMcpToolConfig;
-use super::llm_investigation_lead_runner::{
-    RunLlmInvestigationLeadInput, run_llm_investigation_lead,
-};
 use super::llm_provider_settings::{
     CreateBedrockProviderSettingsInput, LlmProviderSettings, create_bedrock_provider_settings,
 };
+use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
 
-pub struct BedrockInvestigationLeadRunnerInput {
+pub struct BedrockTaskRunnerInput {
     pub region: String,
     pub model_id: String,
     pub datadog_mcp: DatadogMcpToolConfig,
@@ -21,7 +17,7 @@ pub struct BedrockInvestigationLeadRunnerInput {
     pub language: String,
 }
 
-pub struct BedrockInvestigationLeadRunner {
+pub struct BedrockTaskRunner {
     region: String,
     provider_settings: LlmProviderSettings,
     datadog_mcp: DatadogMcpToolConfig,
@@ -29,8 +25,8 @@ pub struct BedrockInvestigationLeadRunner {
     language: String,
 }
 
-impl BedrockInvestigationLeadRunner {
-    pub fn new(input: BedrockInvestigationLeadRunnerInput) -> Self {
+impl BedrockTaskRunner {
+    pub fn new(input: BedrockTaskRunnerInput) -> Self {
         Self {
             region: input.region,
             provider_settings: create_bedrock_provider_settings(
@@ -46,14 +42,11 @@ impl BedrockInvestigationLeadRunner {
 }
 
 #[async_trait]
-impl InvestigationLeadRunnerPort for BedrockInvestigationLeadRunner {
-    async fn run(
-        &self,
-        input: RunInvestigationLeadInput,
-    ) -> Result<InvestigationLeadRunReport, AgentRunFailedError> {
+impl TaskRunnerPort for BedrockTaskRunner {
+    async fn run(&self, input: RunTaskInput) -> Result<TaskRunReport, AgentRunFailedError> {
         let client = ClientBuilder::default().region(&self.region).build().await;
 
-        run_llm_investigation_lead(RunLlmInvestigationLeadInput {
+        run_llm_task(RunLlmTaskInput {
             client,
             settings: self.provider_settings.clone(),
             datadog_mcp: self.datadog_mcp.clone(),

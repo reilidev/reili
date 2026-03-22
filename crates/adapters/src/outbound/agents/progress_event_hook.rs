@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use reili_core::investigation::{
-    InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
-};
+use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
 use rig::agent::{HookAction, PromptHook};
 use rig::completion::CompletionModel;
 use rig::message::Message;
@@ -14,14 +12,14 @@ const REPORT_PROGRESS_TOOL_NAME: &str = "report_progress";
 #[derive(Clone)]
 pub struct ProgressEventHook {
     owner_id: String,
-    on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+    on_progress_event: Arc<dyn TaskProgressEventPort>,
     usage_collector: LlmUsageCollector,
 }
 
 impl ProgressEventHook {
     pub fn new(
         owner_id: String,
-        on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+        on_progress_event: Arc<dyn TaskProgressEventPort>,
         usage_collector: LlmUsageCollector,
     ) -> Self {
         Self {
@@ -38,9 +36,9 @@ impl ProgressEventHook {
 
         let publish_result = self
             .on_progress_event
-            .publish(InvestigationProgressEventInput {
+            .publish(TaskProgressEventInput {
                 owner_id: self.owner_id.clone(),
-                event: InvestigationProgressEvent::ToolCallStarted {
+                event: TaskProgressEvent::ToolCallStarted {
                     task_id: task_id.to_string(),
                     title: tool_name.to_string(),
                 },
@@ -64,9 +62,9 @@ impl ProgressEventHook {
 
         let publish_result = self
             .on_progress_event
-            .publish(InvestigationProgressEventInput {
+            .publish(TaskProgressEventInput {
                 owner_id: self.owner_id.clone(),
-                event: InvestigationProgressEvent::ToolCallCompleted {
+                event: TaskProgressEvent::ToolCallCompleted {
                     task_id: task_id.to_string(),
                     title: tool_name.to_string(),
                 },
@@ -165,20 +163,18 @@ mod tests {
 
     use async_trait::async_trait;
     use reili_core::error::PortError;
-    use reili_core::investigation::{
-        InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
-    };
+    use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
 
     use super::ProgressEventHook;
     use crate::outbound::agents::llm_usage_collector::LlmUsageCollector;
 
     struct MockProgressEventPort {
-        calls: Arc<Mutex<Vec<InvestigationProgressEventInput>>>,
+        calls: Arc<Mutex<Vec<TaskProgressEventInput>>>,
     }
 
     #[async_trait]
-    impl InvestigationProgressEventPort for MockProgressEventPort {
-        async fn publish(&self, input: InvestigationProgressEventInput) -> Result<(), PortError> {
+    impl TaskProgressEventPort for MockProgressEventPort {
+        async fn publish(&self, input: TaskProgressEventInput) -> Result<(), PortError> {
             self.calls.lock().expect("lock calls").push(input);
             Ok(())
         }
@@ -200,9 +196,9 @@ mod tests {
 
         assert_eq!(
             calls.lock().expect("lock calls").as_slice(),
-            &[InvestigationProgressEventInput {
+            &[TaskProgressEventInput {
                 owner_id: "investigate_datadog".to_string(),
-                event: InvestigationProgressEvent::ToolCallStarted {
+                event: TaskProgressEvent::ToolCallStarted {
                     task_id: "task-1".to_string(),
                     title: "search_datadog_logs".to_string(),
                 },
@@ -226,9 +222,9 @@ mod tests {
 
         assert_eq!(
             calls.lock().expect("lock calls").as_slice(),
-            &[InvestigationProgressEventInput {
+            &[TaskProgressEventInput {
                 owner_id: "investigate_datadog".to_string(),
-                event: InvestigationProgressEvent::ToolCallCompleted {
+                event: TaskProgressEvent::ToolCallCompleted {
                     task_id: "task-2".to_string(),
                     title: "query_datadog_metrics".to_string(),
                 },
