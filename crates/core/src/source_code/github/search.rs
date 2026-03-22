@@ -44,7 +44,7 @@ pub struct GithubIssueSearchResultItem {
     pub pull_request: bool,
 }
 
-#[cfg_attr(test, mockall::automock)]
+#[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 #[async_trait]
 pub trait GithubCodeSearchPort: Send + Sync {
     async fn search_code(

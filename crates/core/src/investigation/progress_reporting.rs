@@ -47,7 +47,7 @@ pub struct CompleteInvestigationProgressSessionInput {
     pub status: InvestigationProgressSessionCompletionStatus,
 }
 
-#[cfg_attr(test, mockall::automock)]
+#[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 #[async_trait]
 pub trait InvestigationProgressSessionPort: Send {
     async fn start(&mut self);
@@ -55,7 +55,7 @@ pub trait InvestigationProgressSessionPort: Send {
     async fn complete(&mut self, input: CompleteInvestigationProgressSessionInput);
 }
 
-#[cfg_attr(test, mockall::automock)]
+#[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 pub trait InvestigationProgressSessionFactoryPort: Send + Sync {
     fn create_for_thread(
         &self,

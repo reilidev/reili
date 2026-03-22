@@ -14,3 +14,10 @@ pub use search::{
     GithubCodeSearchPort, GithubCodeSearchResultItem, GithubIssueSearchResultItem,
     GithubRepoSearchResultItem, GithubSearchParams,
 };
+
+#[cfg(any(test, feature = "test-support"))]
+pub use pull_request::MockGithubPullRequestPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use repository_content::MockGithubRepositoryContentPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use search::MockGithubCodeSearchPort;

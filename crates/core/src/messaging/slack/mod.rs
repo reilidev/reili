@@ -9,3 +9,10 @@ pub use message_handler::SlackMessageHandlerPort;
 pub use thread_history::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
 pub use thread_message::SlackThreadMessage;
 pub use thread_reply::{SlackThreadReplyInput, SlackThreadReplyPort};
+
+#[cfg(any(test, feature = "test-support"))]
+pub use message_handler::MockSlackMessageHandlerPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use thread_history::MockSlackThreadHistoryPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use thread_reply::MockSlackThreadReplyPort;

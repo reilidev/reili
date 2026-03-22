@@ -343,35 +343,33 @@ async fn run_progress_event_loop(
 
 #[cfg(test)]
 mod tests {
-    use super::InvestigationLogMeta;
     use std::sync::{Arc, Mutex};
 
-    use async_trait::async_trait;
-    use reili_core::error::{AgentRunFailedError, PortError};
+    use reili_core::error::PortError;
     use reili_core::investigation::{
-        AlertContext, CompleteInvestigationProgressSessionInput, InvestigationJobPayload,
+        AlertContext, InvestigationJobPayload, InvestigationLeadRunReport,
         InvestigationLeadRunnerPort, InvestigationProgressSessionFactoryPort,
         InvestigationProgressSessionPort, InvestigationResources, InvestigationRuntime,
-        LlmUsageSnapshot, RunInvestigationLeadInput, StartInvestigationProgressSessionInput,
+        LlmExecutionMetadata, LlmUsageSnapshot, MockInvestigationLeadRunnerPort,
+        MockInvestigationProgressSessionFactoryPort, MockInvestigationProgressSessionPort,
+        RunInvestigationLeadInput,
     };
-    use reili_core::knowledge::{WebSearchInput, WebSearchPort, WebSearchResult};
-    use reili_core::logger::{LogEntry, LogLevel};
-    use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
+    use reili_core::knowledge::{MockWebSearchPort, WebSearchPort};
+    use reili_core::logger::LogEntry;
     use reili_core::messaging::slack::{
-        SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
+        FetchSlackThreadHistoryInput, MockSlackThreadHistoryPort, MockSlackThreadReplyPort,
+        SlackMessage, SlackThreadHistoryPort, SlackThreadMessage, SlackThreadReplyInput,
+        SlackThreadReplyPort, SlackTriggerType,
     };
     use reili_core::monitoring::datadog::{
-        DatadogEventSearchParams, DatadogEventSearchPort, DatadogEventSearchResult,
-        DatadogLogAggregateBucket, DatadogLogAggregateParams, DatadogLogAggregatePort,
-        DatadogLogSearchParams, DatadogLogSearchPort, DatadogLogSearchResult,
-        DatadogMetricCatalogParams, DatadogMetricCatalogPort, DatadogMetricQueryParams,
-        DatadogMetricQueryPort, DatadogMetricQueryResult,
+        DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
+        DatadogMetricCatalogPort, DatadogMetricQueryPort, MockDatadogEventSearchPort,
+        MockDatadogLogAggregatePort, MockDatadogLogSearchPort, MockDatadogMetricCatalogPort,
+        MockDatadogMetricQueryPort,
     };
     use reili_core::source_code::github::{
-        GithubCodeSearchPort, GithubCodeSearchResultItem, GithubIssueSearchResultItem,
-        GithubPullRequestDiff, GithubPullRequestParams, GithubPullRequestPort,
-        GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
-        GithubRepositoryContentParams, GithubRepositoryContentPort, GithubSearchParams,
+        GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
+        MockGithubCodeSearchPort, MockGithubPullRequestPort, MockGithubRepositoryContentPort,
     };
 
     use super::{
@@ -386,280 +384,63 @@ mod tests {
         total_tokens: 30,
     };
 
-    #[derive(Default)]
-    struct MockSlackReplyPort {
-        calls: Mutex<Vec<SlackThreadReplyInput>>,
-    }
-
-    #[async_trait]
-    impl SlackThreadReplyPort for MockSlackReplyPort {
-        async fn post_thread_reply(&self, input: SlackThreadReplyInput) -> Result<(), PortError> {
-            self.calls.lock().expect("lock reply calls").push(input);
-            Ok(())
-        }
-    }
-
-    struct MockInvestigationProgressSessionFactoryPort;
-
-    struct MockInvestigationProgressSessionPort;
-
-    #[async_trait]
-    impl InvestigationProgressSessionPort for MockInvestigationProgressSessionPort {
-        async fn start(&mut self) {}
-
-        async fn apply(&mut self, _update: reili_core::investigation::InvestigationProgressUpdate) {
-        }
-
-        async fn complete(&mut self, _input: CompleteInvestigationProgressSessionInput) {}
-    }
-
-    impl InvestigationProgressSessionFactoryPort for MockInvestigationProgressSessionFactoryPort {
-        fn create_for_thread(
-            &self,
-            _input: StartInvestigationProgressSessionInput,
-        ) -> Box<dyn InvestigationProgressSessionPort> {
-            Box::new(MockInvestigationProgressSessionPort)
-        }
-    }
-
-    struct MockSlackThreadHistoryPort {
-        response: Mutex<Result<Vec<SlackThreadMessage>, PortError>>,
-        calls: Mutex<Vec<reili_core::messaging::slack::FetchSlackThreadHistoryInput>>,
-    }
-
-    impl MockSlackThreadHistoryPort {
-        fn success(messages: Vec<SlackThreadMessage>) -> Self {
-            Self {
-                response: Mutex::new(Ok(messages)),
-                calls: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn failure(message: &str) -> Self {
-            Self {
-                response: Mutex::new(Err(PortError::new(message))),
-                calls: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn calls(&self) -> Vec<reili_core::messaging::slack::FetchSlackThreadHistoryInput> {
-            self.calls.lock().expect("lock history calls").clone()
-        }
-    }
-
-    #[async_trait]
-    impl SlackThreadHistoryPort for MockSlackThreadHistoryPort {
-        async fn fetch_thread_history(
-            &self,
-            input: reili_core::messaging::slack::FetchSlackThreadHistoryInput,
-        ) -> Result<Vec<SlackThreadMessage>, PortError> {
-            self.calls.lock().expect("lock history calls").push(input);
-            self.response.lock().expect("lock history response").clone()
-        }
-    }
-
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct CapturedInvestigationLeadRunInput {
         alert_context: AlertContext,
         runtime: InvestigationRuntime,
     }
 
-    struct MockInvestigationLeadRunner {
-        captured: Mutex<Vec<CapturedInvestigationLeadRunInput>>,
-    }
+    struct NoopLogger;
 
-    impl MockInvestigationLeadRunner {
-        fn new() -> Self {
-            Self {
-                captured: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn captured(&self) -> Vec<CapturedInvestigationLeadRunInput> {
-            self.captured.lock().expect("lock captured runs").clone()
-        }
-    }
-
-    #[async_trait]
-    impl InvestigationLeadRunnerPort for MockInvestigationLeadRunner {
-        async fn run(
-            &self,
-            input: RunInvestigationLeadInput,
-        ) -> Result<reili_core::investigation::InvestigationLeadRunReport, AgentRunFailedError>
-        {
-            self.captured.lock().expect("lock captured runs").push(
-                CapturedInvestigationLeadRunInput {
-                    alert_context: input.alert_context,
-                    runtime: input.context.runtime,
-                },
-            );
-
-            Ok(reili_core::investigation::InvestigationLeadRunReport {
-                result_text: "investigation_lead result".to_string(),
-                usage: USAGE_SNAPSHOT,
-                execution: reili_core::investigation::LlmExecutionMetadata {
-                    provider: "openai".to_string(),
-                    model: "gpt-test".to_string(),
-                },
-            })
-        }
-    }
-
-    #[derive(Default)]
-    struct MockLogger {
-        info_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
-        warn_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
-        error_logs: Mutex<Vec<(String, InvestigationLogMeta)>>,
-    }
-
-    impl InvestigationLogger for MockLogger {
-        fn log(&self, entry: LogEntry) {
-            match entry.level {
-                LogLevel::Info => self
-                    .info_logs
-                    .lock()
-                    .expect("lock info logs")
-                    .push((entry.event.to_string(), entry.fields)),
-                LogLevel::Warn => self
-                    .warn_logs
-                    .lock()
-                    .expect("lock warn logs")
-                    .push((entry.event.to_string(), entry.fields)),
-                LogLevel::Error => self
-                    .error_logs
-                    .lock()
-                    .expect("lock error logs")
-                    .push((entry.event.to_string(), entry.fields)),
-                LogLevel::Debug => {}
-            }
-        }
-    }
-
-    struct UnusedResourcesPort;
-
-    #[async_trait]
-    impl DatadogLogAggregatePort for UnusedResourcesPort {
-        async fn aggregate_by_facet(
-            &self,
-            _params: DatadogLogAggregateParams,
-        ) -> Result<Vec<DatadogLogAggregateBucket>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl DatadogLogSearchPort for UnusedResourcesPort {
-        async fn search_logs(
-            &self,
-            _params: DatadogLogSearchParams,
-        ) -> Result<Vec<DatadogLogSearchResult>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl DatadogMetricCatalogPort for UnusedResourcesPort {
-        async fn list_metrics(
-            &self,
-            _params: DatadogMetricCatalogParams,
-        ) -> Result<Vec<String>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl DatadogMetricQueryPort for UnusedResourcesPort {
-        async fn query_metrics(
-            &self,
-            _params: DatadogMetricQueryParams,
-        ) -> Result<Vec<DatadogMetricQueryResult>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl DatadogEventSearchPort for UnusedResourcesPort {
-        async fn search_events(
-            &self,
-            _params: DatadogEventSearchParams,
-        ) -> Result<Vec<DatadogEventSearchResult>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl GithubCodeSearchPort for UnusedResourcesPort {
-        async fn search_code(
-            &self,
-            _params: GithubSearchParams,
-        ) -> Result<Vec<GithubCodeSearchResultItem>, PortError> {
-            Err(PortError::new("unused"))
-        }
-
-        async fn search_repos(
-            &self,
-            _params: GithubSearchParams,
-        ) -> Result<Vec<GithubRepoSearchResultItem>, PortError> {
-            Err(PortError::new("unused"))
-        }
-
-        async fn search_issues_and_pull_requests(
-            &self,
-            _params: GithubSearchParams,
-        ) -> Result<Vec<GithubIssueSearchResultItem>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl GithubRepositoryContentPort for UnusedResourcesPort {
-        async fn get_repository_content(
-            &self,
-            _params: GithubRepositoryContentParams,
-        ) -> Result<GithubRepositoryContent, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl GithubPullRequestPort for UnusedResourcesPort {
-        async fn get_pull_request(
-            &self,
-            _params: GithubPullRequestParams,
-        ) -> Result<GithubPullRequestSummary, PortError> {
-            Err(PortError::new("unused"))
-        }
-
-        async fn get_pull_request_diff(
-            &self,
-            _params: GithubPullRequestParams,
-        ) -> Result<GithubPullRequestDiff, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl WebSearchPort for UnusedResourcesPort {
-        async fn search(&self, _input: WebSearchInput) -> Result<WebSearchResult, PortError> {
-            Err(PortError::new("unused"))
-        }
+    impl InvestigationLogger for NoopLogger {
+        fn log(&self, _entry: LogEntry) {}
     }
 
     fn create_resources() -> InvestigationResources {
-        let port = Arc::new(UnusedResourcesPort);
+        let log_aggregate_port: Arc<dyn DatadogLogAggregatePort> =
+            Arc::new(MockDatadogLogAggregatePort::new());
+        let log_search_port: Arc<dyn DatadogLogSearchPort> =
+            Arc::new(MockDatadogLogSearchPort::new());
+        let metric_catalog_port: Arc<dyn DatadogMetricCatalogPort> =
+            Arc::new(MockDatadogMetricCatalogPort::new());
+        let metric_query_port: Arc<dyn DatadogMetricQueryPort> =
+            Arc::new(MockDatadogMetricQueryPort::new());
+        let event_search_port: Arc<dyn DatadogEventSearchPort> =
+            Arc::new(MockDatadogEventSearchPort::new());
+        let github_code_search_port: Arc<dyn GithubCodeSearchPort> =
+            Arc::new(MockGithubCodeSearchPort::new());
+        let github_repository_content_port: Arc<dyn GithubRepositoryContentPort> =
+            Arc::new(MockGithubRepositoryContentPort::new());
+        let github_pull_request_port: Arc<dyn GithubPullRequestPort> =
+            Arc::new(MockGithubPullRequestPort::new());
+        let web_search_port: Arc<dyn WebSearchPort> = Arc::new(MockWebSearchPort::new());
 
         InvestigationResources {
-            log_aggregate_port: Arc::clone(&port) as Arc<dyn DatadogLogAggregatePort>,
-            log_search_port: Arc::clone(&port) as Arc<dyn DatadogLogSearchPort>,
-            metric_catalog_port: Arc::clone(&port) as Arc<dyn DatadogMetricCatalogPort>,
-            metric_query_port: Arc::clone(&port) as Arc<dyn DatadogMetricQueryPort>,
-            event_search_port: Arc::clone(&port) as Arc<dyn DatadogEventSearchPort>,
-            github_code_search_port: Arc::clone(&port) as Arc<dyn GithubCodeSearchPort>,
-            github_repository_content_port: Arc::clone(&port)
-                as Arc<dyn GithubRepositoryContentPort>,
-            github_pull_request_port: Arc::clone(&port) as Arc<dyn GithubPullRequestPort>,
-            web_search_port: Arc::clone(&port) as Arc<dyn WebSearchPort>,
+            log_aggregate_port,
+            log_search_port,
+            metric_catalog_port,
+            metric_query_port,
+            event_search_port,
+            github_code_search_port,
+            github_repository_content_port,
+            github_pull_request_port,
+            web_search_port,
         }
+    }
+
+    fn create_progress_session_factory() -> Arc<dyn InvestigationProgressSessionFactoryPort> {
+        let mut session = MockInvestigationProgressSessionPort::new();
+        session.expect_start().times(1).returning(|| ());
+        session.expect_apply().times(0);
+        session.expect_complete().times(1).returning(|_| ());
+
+        let mut factory = MockInvestigationProgressSessionFactoryPort::new();
+        factory
+            .expect_create_for_thread()
+            .times(1)
+            .return_once(move |_| Box::new(session) as Box<dyn InvestigationProgressSessionPort>);
+
+        Arc::new(factory) as Arc<dyn InvestigationProgressSessionFactoryPort>
     }
 
     fn create_payload(
@@ -684,57 +465,103 @@ mod tests {
 
     struct ExecutionFixtures {
         deps: InvestigationExecutionDeps,
-        slack_reply_port: Arc<MockSlackReplyPort>,
-        slack_thread_history_port: Arc<MockSlackThreadHistoryPort>,
-        investigation_lead_runner: Arc<MockInvestigationLeadRunner>,
+        slack_reply_calls: Arc<Mutex<Vec<SlackThreadReplyInput>>>,
+        slack_thread_history_calls: Arc<Mutex<Vec<FetchSlackThreadHistoryInput>>>,
+        investigation_lead_runs: Arc<Mutex<Vec<CapturedInvestigationLeadRunInput>>>,
     }
 
     fn create_execution_fixtures(
-        slack_thread_history_port: Arc<MockSlackThreadHistoryPort>,
+        thread_history_response: Option<Result<Vec<SlackThreadMessage>, PortError>>,
     ) -> ExecutionFixtures {
-        let slack_reply_port = Arc::new(MockSlackReplyPort::default());
-        let investigation_progress_session_factory_port =
-            Arc::new(MockInvestigationProgressSessionFactoryPort);
-        let investigation_lead_runner = Arc::new(MockInvestigationLeadRunner::new());
-        let logger = Arc::new(MockLogger::default());
+        let slack_reply_calls = Arc::new(Mutex::new(Vec::new()));
+        let slack_thread_history_calls = Arc::new(Mutex::new(Vec::new()));
+        let investigation_lead_runs = Arc::new(Mutex::new(Vec::new()));
+
+        let mut slack_reply_port = MockSlackThreadReplyPort::new();
+        let reply_calls = Arc::clone(&slack_reply_calls);
+        slack_reply_port
+            .expect_post_thread_reply()
+            .times(1)
+            .returning(move |input: SlackThreadReplyInput| {
+                reply_calls.lock().expect("lock reply calls").push(input);
+                Ok(())
+            });
+
+        let mut slack_thread_history_port = MockSlackThreadHistoryPort::new();
+        match thread_history_response {
+            Some(response) => {
+                let history_calls = Arc::clone(&slack_thread_history_calls);
+                slack_thread_history_port
+                    .expect_fetch_thread_history()
+                    .times(1)
+                    .returning(move |input: FetchSlackThreadHistoryInput| {
+                        history_calls
+                            .lock()
+                            .expect("lock history calls")
+                            .push(input);
+                        response.clone()
+                    });
+            }
+            None => {
+                slack_thread_history_port
+                    .expect_fetch_thread_history()
+                    .times(0);
+            }
+        }
+
+        let mut investigation_lead_runner = MockInvestigationLeadRunnerPort::new();
+        let captured_runs = Arc::clone(&investigation_lead_runs);
+        investigation_lead_runner.expect_run().times(1).returning(
+            move |input: RunInvestigationLeadInput| {
+                captured_runs.lock().expect("lock captured runs").push(
+                    CapturedInvestigationLeadRunInput {
+                        alert_context: input.alert_context,
+                        runtime: input.context.runtime,
+                    },
+                );
+
+                Ok(InvestigationLeadRunReport {
+                    result_text: "investigation_lead result".to_string(),
+                    usage: USAGE_SNAPSHOT,
+                    execution: LlmExecutionMetadata {
+                        provider: "openai".to_string(),
+                        model: "gpt-test".to_string(),
+                    },
+                })
+            },
+        );
 
         let deps = InvestigationExecutionDeps {
-            slack_reply_port: Arc::clone(&slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
-            investigation_progress_session_factory_port: Arc::clone(
-                &investigation_progress_session_factory_port,
-            )
-                as Arc<dyn InvestigationProgressSessionFactoryPort>,
-            slack_thread_history_port: Arc::clone(&slack_thread_history_port)
+            slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
+            investigation_progress_session_factory_port: create_progress_session_factory(),
+            slack_thread_history_port: Arc::new(slack_thread_history_port)
                 as Arc<dyn SlackThreadHistoryPort>,
             investigation_resources: create_resources(),
-            investigation_lead_runner: Arc::clone(&investigation_lead_runner)
+            investigation_lead_runner: Arc::new(investigation_lead_runner)
                 as Arc<dyn InvestigationLeadRunnerPort>,
-            logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+            logger: Arc::new(NoopLogger) as Arc<dyn InvestigationLogger>,
         };
 
         ExecutionFixtures {
             deps,
-            slack_reply_port,
-            slack_thread_history_port,
-            investigation_lead_runner,
+            slack_reply_calls,
+            slack_thread_history_calls,
+            investigation_lead_runs,
         }
     }
 
     #[tokio::test]
     async fn fetches_thread_history_only_for_thread_replies() {
-        let fixtures =
-            create_execution_fixtures(Arc::new(MockSlackThreadHistoryPort::success(vec![
-                SlackThreadMessage {
-                    ts: "1710000000.000001".to_string(),
-                    user: Some("U999".to_string()),
-                    text: "thread context".to_string(),
-                },
-            ])));
+        let fixtures = create_execution_fixtures(Some(Ok(vec![SlackThreadMessage {
+            ts: "1710000000.000001".to_string(),
+            user: Some("U999".to_string()),
+            text: "thread context".to_string(),
+        }])));
         let ExecutionFixtures {
             deps,
-            slack_reply_port,
-            slack_thread_history_port,
-            investigation_lead_runner,
+            slack_reply_calls,
+            slack_thread_history_calls,
+            investigation_lead_runs,
         } = fixtures;
 
         let result = execute_investigation_job(ExecuteInvestigationJobInput {
@@ -751,14 +578,20 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(
-            slack_thread_history_port.calls(),
-            vec![reili_core::messaging::slack::FetchSlackThreadHistoryInput {
+            slack_thread_history_calls
+                .lock()
+                .expect("lock history calls")
+                .clone(),
+            vec![FetchSlackThreadHistoryInput {
                 channel: "C001".to_string(),
                 thread_ts: "1710000000.000001".to_string(),
             }]
         );
 
-        let captured = investigation_lead_runner.captured();
+        let captured = investigation_lead_runs
+            .lock()
+            .expect("lock captured runs")
+            .clone();
         assert_eq!(captured.len(), 1);
         assert_eq!(
             captured[0].alert_context.trigger_message_text,
@@ -769,11 +602,7 @@ mod tests {
             "[ts: 1710000000.000001 | iso: 2024-03-09T16:00:00.000Z] U999 (You): thread context"
         );
         assert_eq!(
-            slack_reply_port
-                .calls
-                .lock()
-                .expect("lock reply calls")
-                .clone(),
+            slack_reply_calls.lock().expect("lock reply calls").clone(),
             vec![SlackThreadReplyInput {
                 channel: "C001".to_string(),
                 thread_ts: "1710000000.000001".to_string(),
@@ -784,12 +613,11 @@ mod tests {
 
     #[tokio::test]
     async fn does_not_fetch_thread_history_for_non_thread_messages() {
-        let fixtures =
-            create_execution_fixtures(Arc::new(MockSlackThreadHistoryPort::success(Vec::new())));
+        let fixtures = create_execution_fixtures(None);
         let ExecutionFixtures {
             deps,
-            slack_thread_history_port,
-            investigation_lead_runner,
+            slack_thread_history_calls,
+            investigation_lead_runs,
             ..
         } = fixtures;
 
@@ -802,22 +630,27 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert!(slack_thread_history_port.calls().is_empty());
+        assert!(
+            slack_thread_history_calls
+                .lock()
+                .expect("lock history calls")
+                .is_empty()
+        );
 
-        let captured = investigation_lead_runner.captured();
+        let captured = investigation_lead_runs
+            .lock()
+            .expect("lock captured runs")
+            .clone();
         assert_eq!(captured.len(), 1);
         assert!(captured[0].alert_context.thread_transcript.is_empty());
     }
 
     #[tokio::test]
     async fn falls_back_when_thread_history_fetch_fails() {
-        let fixtures = create_execution_fixtures(Arc::new(MockSlackThreadHistoryPort::failure(
-            "slack api failed",
-        )));
+        let fixtures = create_execution_fixtures(Some(Err(PortError::new("slack api failed"))));
         let ExecutionFixtures {
             deps,
-            slack_thread_history_port: _,
-            investigation_lead_runner,
+            investigation_lead_runs,
             ..
         } = fixtures;
 
@@ -831,7 +664,10 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let captured = investigation_lead_runner.captured();
+        let captured = investigation_lead_runs
+            .lock()
+            .expect("lock captured runs")
+            .clone();
         assert_eq!(captured.len(), 1);
         assert!(captured[0].alert_context.thread_transcript.is_empty());
     }

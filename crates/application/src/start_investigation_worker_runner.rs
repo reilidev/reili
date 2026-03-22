@@ -388,32 +388,30 @@ mod tests {
         process_claimed_job,
     };
     use crate::investigation::InvestigationLogMeta;
-    use async_trait::async_trait;
     use reili_core::investigation::{
-        CompleteInvestigationProgressSessionInput, InvestigationJobPayload,
-        InvestigationLeadRunnerPort, InvestigationProgressSessionFactoryPort,
-        InvestigationProgressSessionPort, InvestigationResources, LlmUsageSnapshot,
-        RunInvestigationLeadInput, StartInvestigationProgressSessionInput,
+        InvestigationJobPayload, InvestigationLeadRunReport, InvestigationLeadRunnerPort,
+        InvestigationProgressSessionFactoryPort, InvestigationProgressSessionPort,
+        InvestigationResources, LlmExecutionMetadata, LlmUsageSnapshot,
+        MockInvestigationLeadRunnerPort, MockInvestigationProgressSessionFactoryPort,
+        MockInvestigationProgressSessionPort, RunInvestigationLeadInput,
     };
-    use reili_core::knowledge::{WebSearchInput, WebSearchPort, WebSearchResult};
+    use reili_core::knowledge::{MockWebSearchPort, WebSearchPort};
     use reili_core::logger::{LogEntry as CoreLogEntry, LogLevel};
-    use reili_core::messaging::slack::SlackThreadHistoryPort;
-    use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
+    use reili_core::messaging::slack::{
+        MockSlackThreadHistoryPort, MockSlackThreadReplyPort, SlackMessage, SlackThreadHistoryPort,
+        SlackTriggerType,
+    };
     use reili_core::monitoring::datadog::{
-        DatadogEventSearchParams, DatadogEventSearchPort, DatadogEventSearchResult,
-        DatadogLogAggregateBucket, DatadogLogAggregateParams, DatadogLogAggregatePort,
-        DatadogLogSearchParams, DatadogLogSearchPort, DatadogLogSearchResult,
-        DatadogMetricCatalogParams, DatadogMetricCatalogPort, DatadogMetricQueryParams,
-        DatadogMetricQueryPort, DatadogMetricQueryResult,
+        DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
+        DatadogMetricCatalogPort, DatadogMetricQueryPort, MockDatadogEventSearchPort,
+        MockDatadogLogAggregatePort, MockDatadogLogSearchPort, MockDatadogMetricCatalogPort,
+        MockDatadogMetricQueryPort,
     };
-    use reili_core::queue::{CompleteJobInput, FailJobInput, JobFailResult, JobQueuePort};
+    use reili_core::queue::{CompleteJobInput, FailJobInput, JobFailResult, MockJobQueuePort};
     use reili_core::source_code::github::{
-        GithubCodeSearchPort, GithubCodeSearchResultItem, GithubIssueSearchResultItem,
-        GithubPullRequestDiff, GithubPullRequestParams, GithubPullRequestPort,
-        GithubPullRequestSummary, GithubRepoSearchResultItem, GithubRepositoryContent,
-        GithubRepositoryContentParams, GithubRepositoryContentPort, GithubSearchParams,
+        GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
+        MockGithubCodeSearchPort, MockGithubPullRequestPort, MockGithubRepositoryContentPort,
     };
-    use std::collections::VecDeque;
     use std::sync::Mutex;
 
     use crate::investigation::{InvestigationLogger, LogFieldValue};
@@ -429,274 +427,6 @@ mod tests {
     struct LogEntry {
         message: String,
         meta: InvestigationLogMeta,
-    }
-
-    #[derive(Default)]
-    struct MockJobQueue {
-        complete_inputs: Mutex<Vec<CompleteJobInput>>,
-        fail_inputs: Mutex<Vec<FailJobInput>>,
-        fail_results: Mutex<VecDeque<Result<JobFailResult<InvestigationJob>, PortError>>>,
-        depth_results: Mutex<VecDeque<Result<usize, PortError>>>,
-    }
-
-    impl MockJobQueue {
-        fn complete_inputs(&self) -> Vec<CompleteJobInput> {
-            self.complete_inputs
-                .lock()
-                .expect("lock complete inputs")
-                .clone()
-        }
-
-        fn fail_inputs(&self) -> Vec<FailJobInput> {
-            self.fail_inputs.lock().expect("lock fail inputs").clone()
-        }
-
-        fn with_fail_results(
-            &self,
-            values: Vec<Result<JobFailResult<InvestigationJob>, PortError>>,
-        ) {
-            let mut lock = self.fail_results.lock().expect("lock fail results");
-            *lock = VecDeque::from(values);
-        }
-
-        fn with_depth_results(&self, values: Vec<Result<usize, PortError>>) {
-            let mut lock = self.depth_results.lock().expect("lock depth results");
-            *lock = VecDeque::from(values);
-        }
-    }
-
-    #[async_trait]
-    impl JobQueuePort<InvestigationJob> for MockJobQueue {
-        async fn enqueue(&self, _job: InvestigationJob) -> Result<(), PortError> {
-            Ok(())
-        }
-
-        async fn claim(&self) -> Result<Option<InvestigationJob>, PortError> {
-            Ok(None)
-        }
-
-        async fn complete(&self, input: CompleteJobInput) -> Result<(), PortError> {
-            self.complete_inputs
-                .lock()
-                .expect("lock complete inputs")
-                .push(input);
-            Ok(())
-        }
-
-        async fn fail(
-            &self,
-            input: FailJobInput,
-        ) -> Result<JobFailResult<InvestigationJob>, PortError> {
-            self.fail_inputs
-                .lock()
-                .expect("lock fail inputs")
-                .push(input);
-            let mut lock = self.fail_results.lock().expect("lock fail results");
-            match lock.pop_front() {
-                Some(result) => result,
-                None => Err(PortError::new("missing configured fail result")),
-            }
-        }
-
-        async fn get_depth(&self) -> Result<usize, PortError> {
-            let mut lock = self.depth_results.lock().expect("lock depth results");
-            match lock.pop_front() {
-                Some(result) => result,
-                None => Ok(0),
-            }
-        }
-    }
-
-    #[derive(Default)]
-    struct MockSlackThreadReplyPort {
-        posted_replies: Mutex<Vec<SlackThreadReplyInput>>,
-    }
-
-    impl MockSlackThreadReplyPort {
-        fn posted_replies(&self) -> Vec<SlackThreadReplyInput> {
-            self.posted_replies
-                .lock()
-                .expect("lock posted replies")
-                .clone()
-        }
-    }
-
-    #[async_trait]
-    impl SlackThreadReplyPort for MockSlackThreadReplyPort {
-        async fn post_thread_reply(&self, input: SlackThreadReplyInput) -> Result<(), PortError> {
-            self.posted_replies
-                .lock()
-                .expect("lock posted replies")
-                .push(input);
-            Ok(())
-        }
-    }
-
-    struct MockInvestigationProgressSessionFactoryPort;
-
-    struct MockInvestigationProgressSessionPort;
-
-    #[async_trait]
-    impl InvestigationProgressSessionPort for MockInvestigationProgressSessionPort {
-        async fn start(&mut self) {}
-
-        async fn apply(&mut self, _update: reili_core::investigation::InvestigationProgressUpdate) {
-        }
-
-        async fn complete(&mut self, _input: CompleteInvestigationProgressSessionInput) {}
-    }
-
-    impl InvestigationProgressSessionFactoryPort for MockInvestigationProgressSessionFactoryPort {
-        fn create_for_thread(
-            &self,
-            _input: StartInvestigationProgressSessionInput,
-        ) -> Box<dyn InvestigationProgressSessionPort> {
-            Box::new(MockInvestigationProgressSessionPort)
-        }
-    }
-
-    struct MockSlackThreadHistoryPort;
-
-    #[async_trait]
-    impl SlackThreadHistoryPort for MockSlackThreadHistoryPort {
-        async fn fetch_thread_history(
-            &self,
-            _input: reili_core::messaging::slack::FetchSlackThreadHistoryInput,
-        ) -> Result<Vec<SlackThreadMessage>, PortError> {
-            Ok(Vec::new())
-        }
-    }
-
-    struct MockInvestigationLeadRunner;
-
-    #[async_trait]
-    impl InvestigationLeadRunnerPort for MockInvestigationLeadRunner {
-        async fn run(
-            &self,
-            _input: RunInvestigationLeadInput,
-        ) -> Result<
-            reili_core::investigation::InvestigationLeadRunReport,
-            reili_core::error::AgentRunFailedError,
-        > {
-            Ok(reili_core::investigation::InvestigationLeadRunReport {
-                result_text: "investigation_lead result".to_string(),
-                usage: USAGE_SNAPSHOT,
-                execution: reili_core::investigation::LlmExecutionMetadata {
-                    provider: "openai".to_string(),
-                    model: "gpt-test".to_string(),
-                },
-            })
-        }
-    }
-
-    struct UnusedResourcesPort;
-
-    #[async_trait]
-    impl DatadogLogAggregatePort for UnusedResourcesPort {
-        async fn aggregate_by_facet(
-            &self,
-            _params: DatadogLogAggregateParams,
-        ) -> Result<Vec<DatadogLogAggregateBucket>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl DatadogLogSearchPort for UnusedResourcesPort {
-        async fn search_logs(
-            &self,
-            _params: DatadogLogSearchParams,
-        ) -> Result<Vec<DatadogLogSearchResult>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl DatadogMetricCatalogPort for UnusedResourcesPort {
-        async fn list_metrics(
-            &self,
-            _params: DatadogMetricCatalogParams,
-        ) -> Result<Vec<String>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl DatadogMetricQueryPort for UnusedResourcesPort {
-        async fn query_metrics(
-            &self,
-            _params: DatadogMetricQueryParams,
-        ) -> Result<Vec<DatadogMetricQueryResult>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl DatadogEventSearchPort for UnusedResourcesPort {
-        async fn search_events(
-            &self,
-            _params: DatadogEventSearchParams,
-        ) -> Result<Vec<DatadogEventSearchResult>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl GithubCodeSearchPort for UnusedResourcesPort {
-        async fn search_repos(
-            &self,
-            _params: GithubSearchParams,
-        ) -> Result<Vec<GithubRepoSearchResultItem>, PortError> {
-            Err(PortError::new("unused"))
-        }
-
-        async fn search_code(
-            &self,
-            _params: GithubSearchParams,
-        ) -> Result<Vec<GithubCodeSearchResultItem>, PortError> {
-            Err(PortError::new("unused"))
-        }
-
-        async fn search_issues_and_pull_requests(
-            &self,
-            _params: GithubSearchParams,
-        ) -> Result<Vec<GithubIssueSearchResultItem>, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl GithubPullRequestPort for UnusedResourcesPort {
-        async fn get_pull_request(
-            &self,
-            _params: GithubPullRequestParams,
-        ) -> Result<GithubPullRequestSummary, PortError> {
-            Err(PortError::new("unused"))
-        }
-
-        async fn get_pull_request_diff(
-            &self,
-            _params: GithubPullRequestParams,
-        ) -> Result<GithubPullRequestDiff, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl GithubRepositoryContentPort for UnusedResourcesPort {
-        async fn get_repository_content(
-            &self,
-            _params: GithubRepositoryContentParams,
-        ) -> Result<GithubRepositoryContent, PortError> {
-            Err(PortError::new("unused"))
-        }
-    }
-
-    #[async_trait]
-    impl WebSearchPort for UnusedResourcesPort {
-        async fn search(&self, _input: WebSearchInput) -> Result<WebSearchResult, PortError> {
-            Err(PortError::new("unused"))
-        }
     }
 
     #[derive(Default)]
@@ -730,45 +460,122 @@ mod tests {
         }
     }
 
+    fn create_resources() -> InvestigationResources {
+        let log_aggregate_port: Arc<dyn DatadogLogAggregatePort> =
+            Arc::new(MockDatadogLogAggregatePort::new());
+        let log_search_port: Arc<dyn DatadogLogSearchPort> =
+            Arc::new(MockDatadogLogSearchPort::new());
+        let metric_catalog_port: Arc<dyn DatadogMetricCatalogPort> =
+            Arc::new(MockDatadogMetricCatalogPort::new());
+        let metric_query_port: Arc<dyn DatadogMetricQueryPort> =
+            Arc::new(MockDatadogMetricQueryPort::new());
+        let event_search_port: Arc<dyn DatadogEventSearchPort> =
+            Arc::new(MockDatadogEventSearchPort::new());
+        let github_code_search_port: Arc<dyn GithubCodeSearchPort> =
+            Arc::new(MockGithubCodeSearchPort::new());
+        let github_repository_content_port: Arc<dyn GithubRepositoryContentPort> =
+            Arc::new(MockGithubRepositoryContentPort::new());
+        let github_pull_request_port: Arc<dyn GithubPullRequestPort> =
+            Arc::new(MockGithubPullRequestPort::new());
+        let web_search_port: Arc<dyn WebSearchPort> = Arc::new(MockWebSearchPort::new());
+
+        InvestigationResources {
+            log_aggregate_port,
+            log_search_port,
+            metric_catalog_port,
+            metric_query_port,
+            event_search_port,
+            github_code_search_port,
+            github_repository_content_port,
+            github_pull_request_port,
+            web_search_port,
+        }
+    }
+
+    fn create_progress_session_factory_for_execution()
+    -> Arc<dyn InvestigationProgressSessionFactoryPort> {
+        let mut session = MockInvestigationProgressSessionPort::new();
+        session.expect_start().times(1).returning(|| ());
+        session.expect_apply().times(0);
+        session.expect_complete().times(1).returning(|_| ());
+
+        let mut factory = MockInvestigationProgressSessionFactoryPort::new();
+        factory
+            .expect_create_for_thread()
+            .times(1)
+            .return_once(move |_| Box::new(session) as Box<dyn InvestigationProgressSessionPort>);
+
+        Arc::new(factory) as Arc<dyn InvestigationProgressSessionFactoryPort>
+    }
+
     struct TestContext {
         deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
-        job_queue: Arc<MockJobQueue>,
-        slack_reply_port: Arc<MockSlackThreadReplyPort>,
+        complete_inputs: Arc<Mutex<Vec<CompleteJobInput>>>,
+        fail_inputs: Arc<Mutex<Vec<FailJobInput>>>,
+        posted_replies: Arc<Mutex<Vec<SlackThreadReplyInput>>>,
         logger: Arc<MockLogger>,
     }
 
-    fn create_context() -> TestContext {
-        let job_queue = Arc::new(MockJobQueue::default());
-        let slack_reply_port = Arc::new(MockSlackThreadReplyPort::default());
+    fn create_success_context() -> TestContext {
+        let complete_inputs = Arc::new(Mutex::new(Vec::new()));
+        let fail_inputs = Arc::new(Mutex::new(Vec::new()));
+        let posted_replies = Arc::new(Mutex::new(Vec::new()));
         let logger = Arc::new(MockLogger::default());
-        let resources_port = Arc::new(UnusedResourcesPort);
+        let mut job_queue = MockJobQueuePort::<InvestigationJob>::new();
+        let complete_calls = Arc::clone(&complete_inputs);
+        job_queue
+            .expect_complete()
+            .times(1)
+            .returning(move |input: CompleteJobInput| {
+                complete_calls
+                    .lock()
+                    .expect("lock complete inputs")
+                    .push(input);
+                Ok(())
+            });
+        job_queue.expect_fail().times(0);
+        job_queue.expect_get_depth().times(1).return_const(Ok(3));
+
+        let mut slack_reply_port = MockSlackThreadReplyPort::new();
+        let reply_calls = Arc::clone(&posted_replies);
+        slack_reply_port
+            .expect_post_thread_reply()
+            .times(1)
+            .returning(move |input: SlackThreadReplyInput| {
+                reply_calls.lock().expect("lock posted replies").push(input);
+                Ok(())
+            });
+
+        let mut slack_thread_history_port = MockSlackThreadHistoryPort::new();
+        slack_thread_history_port
+            .expect_fetch_thread_history()
+            .times(0);
+
+        let mut investigation_lead_runner = MockInvestigationLeadRunnerPort::new();
+        investigation_lead_runner.expect_run().times(1).returning(
+            |_: RunInvestigationLeadInput| {
+                Ok(InvestigationLeadRunReport {
+                    result_text: "investigation_lead result".to_string(),
+                    usage: USAGE_SNAPSHOT,
+                    execution: LlmExecutionMetadata {
+                        provider: "openai".to_string(),
+                        model: "gpt-test".to_string(),
+                    },
+                })
+            },
+        );
+
         let deps = Arc::new(StartInvestigationWorkerRunnerUseCaseDeps {
-            job_queue: Arc::clone(&job_queue) as Arc<InvestigationJobQueuePort>,
+            job_queue: Arc::new(job_queue) as Arc<InvestigationJobQueuePort>,
             investigation_execution_deps: InvestigationExecutionDeps {
-                slack_reply_port: Arc::clone(&slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
-                investigation_progress_session_factory_port: Arc::new(
-                    MockInvestigationProgressSessionFactoryPort,
-                ),
-                slack_thread_history_port: Arc::new(MockSlackThreadHistoryPort),
-                investigation_resources: InvestigationResources {
-                    log_aggregate_port: Arc::clone(&resources_port)
-                        as Arc<dyn DatadogLogAggregatePort>,
-                    log_search_port: Arc::clone(&resources_port) as Arc<dyn DatadogLogSearchPort>,
-                    metric_catalog_port: Arc::clone(&resources_port)
-                        as Arc<dyn DatadogMetricCatalogPort>,
-                    metric_query_port: Arc::clone(&resources_port)
-                        as Arc<dyn DatadogMetricQueryPort>,
-                    event_search_port: Arc::clone(&resources_port)
-                        as Arc<dyn DatadogEventSearchPort>,
-                    github_code_search_port: Arc::clone(&resources_port)
-                        as Arc<dyn GithubCodeSearchPort>,
-                    github_repository_content_port: Arc::clone(&resources_port)
-                        as Arc<dyn GithubRepositoryContentPort>,
-                    github_pull_request_port: Arc::clone(&resources_port)
-                        as Arc<dyn GithubPullRequestPort>,
-                    web_search_port: resources_port as Arc<dyn WebSearchPort>,
-                },
-                investigation_lead_runner: Arc::new(MockInvestigationLeadRunner),
+                slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
+                investigation_progress_session_factory_port:
+                    create_progress_session_factory_for_execution(),
+                slack_thread_history_port: Arc::new(slack_thread_history_port)
+                    as Arc<dyn SlackThreadHistoryPort>,
+                investigation_resources: create_resources(),
+                investigation_lead_runner: Arc::new(investigation_lead_runner)
+                    as Arc<dyn InvestigationLeadRunnerPort>,
                 logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
             },
             worker_concurrency: 1,
@@ -778,8 +585,76 @@ mod tests {
 
         TestContext {
             deps,
-            job_queue,
-            slack_reply_port,
+            complete_inputs,
+            fail_inputs,
+            posted_replies,
+            logger,
+        }
+    }
+
+    fn create_failure_context(
+        fail_result: JobFailResult<InvestigationJob>,
+        queue_depth_result: Result<usize, PortError>,
+        expected_reply_calls: usize,
+    ) -> TestContext {
+        let complete_inputs = Arc::new(Mutex::new(Vec::new()));
+        let fail_inputs = Arc::new(Mutex::new(Vec::new()));
+        let posted_replies = Arc::new(Mutex::new(Vec::new()));
+        let logger = Arc::new(MockLogger::default());
+        let mut job_queue = MockJobQueuePort::<InvestigationJob>::new();
+        job_queue.expect_complete().times(0);
+        let fail_calls = Arc::clone(&fail_inputs);
+        job_queue
+            .expect_fail()
+            .times(1)
+            .returning(move |input: FailJobInput| {
+                fail_calls.lock().expect("lock fail inputs").push(input);
+                Ok(fail_result.clone())
+            });
+        job_queue
+            .expect_get_depth()
+            .times(1)
+            .return_const(queue_depth_result.clone());
+
+        let mut slack_reply_port = MockSlackThreadReplyPort::new();
+        if expected_reply_calls == 0 {
+            slack_reply_port.expect_post_thread_reply().times(0);
+        } else {
+            let reply_calls = Arc::clone(&posted_replies);
+            slack_reply_port
+                .expect_post_thread_reply()
+                .times(expected_reply_calls)
+                .returning(move |input: SlackThreadReplyInput| {
+                    reply_calls.lock().expect("lock posted replies").push(input);
+                    Ok(())
+                });
+        }
+
+        let deps = Arc::new(StartInvestigationWorkerRunnerUseCaseDeps {
+            job_queue: Arc::new(job_queue) as Arc<InvestigationJobQueuePort>,
+            investigation_execution_deps: InvestigationExecutionDeps {
+                slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
+                investigation_progress_session_factory_port: Arc::new(
+                    MockInvestigationProgressSessionFactoryPort::new(),
+                )
+                    as Arc<dyn InvestigationProgressSessionFactoryPort>,
+                slack_thread_history_port: Arc::new(MockSlackThreadHistoryPort::new())
+                    as Arc<dyn SlackThreadHistoryPort>,
+                investigation_resources: create_resources(),
+                investigation_lead_runner: Arc::new(MockInvestigationLeadRunnerPort::new())
+                    as Arc<dyn InvestigationLeadRunnerPort>,
+                logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+            },
+            worker_concurrency: 1,
+            job_max_retry: 2,
+            job_backoff_ms: 1_000,
+        });
+
+        TestContext {
+            deps,
+            complete_inputs,
+            fail_inputs,
+            posted_replies,
             logger,
         }
     }
@@ -813,8 +688,7 @@ mod tests {
 
     #[tokio::test]
     async fn process_claimed_job_completes_and_logs() {
-        let context = create_context();
-        context.job_queue.with_depth_results(vec![Ok(3)]);
+        let context = create_success_context();
 
         process_claimed_job(ProcessClaimedJobInput {
             deps: Arc::clone(&context.deps),
@@ -827,9 +701,29 @@ mod tests {
         })
         .await;
 
-        assert_eq!(context.job_queue.complete_inputs().len(), 1);
-        assert_eq!(context.job_queue.fail_inputs().len(), 0);
-        assert_eq!(context.slack_reply_port.posted_replies().len(), 1);
+        assert_eq!(
+            context
+                .complete_inputs
+                .lock()
+                .expect("lock complete inputs")
+                .len(),
+            1
+        );
+        assert!(
+            context
+                .fail_inputs
+                .lock()
+                .expect("lock fail inputs")
+                .is_empty()
+        );
+        assert_eq!(
+            context
+                .posted_replies
+                .lock()
+                .expect("lock posted replies")
+                .len(),
+            1
+        );
         let info_logs = context.logger.infos();
         assert!(
             info_logs
@@ -848,16 +742,18 @@ mod tests {
 
     #[tokio::test]
     async fn handle_failed_claimed_job_requeues_and_logs() {
-        let context = create_context();
-        context.job_queue.with_fail_results(vec![Ok(JobFailResult {
-            status: JobFailStatus::Requeued,
-            job: create_job(CreateJobInput {
-                job_id: "job-1".to_string(),
-                retry_count: 1,
-                thread_ts: None,
-            }),
-        })]);
-        context.job_queue.with_depth_results(vec![Ok(2)]);
+        let context = create_failure_context(
+            JobFailResult {
+                status: JobFailStatus::Requeued,
+                job: create_job(CreateJobInput {
+                    job_id: "job-1".to_string(),
+                    retry_count: 1,
+                    thread_ts: None,
+                }),
+            },
+            Ok(2),
+            0,
+        );
 
         handle_failed_claimed_job(super::HandleFailedClaimedJobInput {
             deps: Arc::clone(&context.deps),
@@ -873,7 +769,11 @@ mod tests {
         })
         .await;
 
-        let fail_inputs = context.job_queue.fail_inputs();
+        let fail_inputs = context
+            .fail_inputs
+            .lock()
+            .expect("lock fail inputs")
+            .clone();
         assert_eq!(fail_inputs.len(), 1);
         assert_eq!(fail_inputs[0].reason, "processing failed");
         assert_eq!(fail_inputs[0].max_retry, 2);
@@ -889,21 +789,29 @@ mod tests {
                 .and_then(LogFieldValue::as_str),
             Some("requeued")
         );
-        assert_eq!(context.slack_reply_port.posted_replies().len(), 0);
+        assert!(
+            context
+                .posted_replies
+                .lock()
+                .expect("lock posted replies")
+                .is_empty()
+        );
     }
 
     #[tokio::test]
     async fn handle_failed_claimed_job_posts_dead_letter_message() {
-        let context = create_context();
-        context.job_queue.with_fail_results(vec![Ok(JobFailResult {
-            status: JobFailStatus::DeadLetter,
-            job: create_job(CreateJobInput {
-                job_id: "job-1".to_string(),
-                retry_count: 2,
-                thread_ts: Some("1710000000.000001".to_string()),
-            }),
-        })]);
-        context.job_queue.with_depth_results(vec![Ok(0)]);
+        let context = create_failure_context(
+            JobFailResult {
+                status: JobFailStatus::DeadLetter,
+                job: create_job(CreateJobInput {
+                    job_id: "job-1".to_string(),
+                    retry_count: 2,
+                    thread_ts: Some("1710000000.000001".to_string()),
+                }),
+            },
+            Ok(0),
+            1,
+        );
 
         handle_failed_claimed_job(super::HandleFailedClaimedJobInput {
             deps: Arc::clone(&context.deps),
@@ -919,7 +827,11 @@ mod tests {
         })
         .await;
 
-        let posted_replies = context.slack_reply_port.posted_replies();
+        let posted_replies = context
+            .posted_replies
+            .lock()
+            .expect("lock posted replies")
+            .clone();
         assert_eq!(posted_replies.len(), 1);
         assert_eq!(
             posted_replies[0].text,
@@ -930,16 +842,18 @@ mod tests {
 
     #[tokio::test]
     async fn handle_failed_claimed_job_dead_letters_permanent_failure_immediately() {
-        let context = create_context();
-        context.job_queue.with_fail_results(vec![Ok(JobFailResult {
-            status: JobFailStatus::DeadLetter,
-            job: create_job(CreateJobInput {
-                job_id: "job-1".to_string(),
-                retry_count: 0,
-                thread_ts: Some("1710000000.000001".to_string()),
-            }),
-        })]);
-        context.job_queue.with_depth_results(vec![Ok(0)]);
+        let context = create_failure_context(
+            JobFailResult {
+                status: JobFailStatus::DeadLetter,
+                job: create_job(CreateJobInput {
+                    job_id: "job-1".to_string(),
+                    retry_count: 0,
+                    thread_ts: Some("1710000000.000001".to_string()),
+                }),
+            },
+            Ok(0),
+            1,
+        );
 
         handle_failed_claimed_job(super::HandleFailedClaimedJobInput {
             deps: Arc::clone(&context.deps),
@@ -955,11 +869,19 @@ mod tests {
         })
         .await;
 
-        let fail_inputs = context.job_queue.fail_inputs();
+        let fail_inputs = context
+            .fail_inputs
+            .lock()
+            .expect("lock fail inputs")
+            .clone();
         assert_eq!(fail_inputs.len(), 1);
         assert_eq!(fail_inputs[0].max_retry, 0);
 
-        let posted_replies = context.slack_reply_port.posted_replies();
+        let posted_replies = context
+            .posted_replies
+            .lock()
+            .expect("lock posted replies")
+            .clone();
         assert_eq!(posted_replies.len(), 1);
         assert_eq!(
             posted_replies[0].text,

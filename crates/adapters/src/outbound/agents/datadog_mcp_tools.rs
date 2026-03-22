@@ -99,7 +99,6 @@ pub async fn connect_datadog_mcp_toolset(
     let tools = match client.list_tools().await {
         Ok(tools) => tools,
         Err(error) => {
-            println!("Failed to connect to Datadog MCP server: {}", error.message);
             let diagnostic = diagnose_datadog_mcp_initialize(config).await;
             return Err(create_datadog_mcp_connect_error(error.message, diagnostic));
         }

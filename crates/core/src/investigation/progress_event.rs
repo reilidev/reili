@@ -21,7 +21,7 @@ pub struct InvestigationProgressEventInput {
     pub event: InvestigationProgressEvent,
 }
 
-#[cfg_attr(test, mockall::automock)]
+#[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 #[async_trait]
 pub trait InvestigationProgressEventPort: Send + Sync {
     async fn publish(&self, input: InvestigationProgressEventInput) -> Result<(), PortError>;

@@ -11,7 +11,7 @@ pub struct SlackThreadReplyInput {
     pub text: String,
 }
 
-#[cfg_attr(test, mockall::automock)]
+#[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 #[async_trait]
 pub trait SlackThreadReplyPort: Send + Sync {
     async fn post_thread_reply(&self, input: SlackThreadReplyInput) -> Result<(), PortError>;
