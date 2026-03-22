@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
-use chrono::Utc;
-use reili_core::investigation::AlertContext;
+use chrono::{DateTime, SecondsFormat, Utc};
 use reili_core::investigation::{
-    INVESTIGATION_LEAD_PROGRESS_OWNER_ID, InvestigationProgressEventPort, InvestigationResources,
-    InvestigationRuntime,
+    INVESTIGATION_LEAD_PROGRESS_OWNER_ID, InvestigationProgressEventPort, InvestigationRequest,
+    InvestigationResources, InvestigationRuntime,
 };
 use rig::agent::Agent;
 use rig::prelude::CompletionClient;
@@ -108,21 +107,113 @@ where
 }
 
 #[must_use]
-pub fn build_investigation_lead_prompt(alert_context: &AlertContext) -> String {
+pub fn build_investigation_lead_prompt(request: &InvestigationRequest) -> String {
     let investigation_prompt = "Investigate the following user input and respond with the most appropriate investigation or direct answer.
 The input may be an alert, request, question, link, or partial context.";
-    let trigger_message_section = format!(
-        "\n\nTrigger Message: {}",
-        alert_context.trigger_message_text
-    );
-    let thread_context_section = if alert_context.thread_transcript.is_empty() {
+    let trigger_message_text = request.trigger_message.text.trim();
+    let trigger_message_section = format!("\n\nTrigger Message: {trigger_message_text}");
+    let bot_user_id = extract_mentioned_user_id(&request.trigger_message.text);
+    let thread_transcript =
+        build_thread_transcript(&request.thread_messages, bot_user_id.as_deref());
+    let thread_context_section = if thread_transcript.is_empty() {
         String::new()
     } else {
-        format!("\n\nThread Context:\n{}", alert_context.thread_transcript)
+        format!("\n\nThread Context:\n{thread_transcript}")
     };
 
     format!("{investigation_prompt}{trigger_message_section}{thread_context_section}")
 }
+
+fn build_thread_transcript(
+    messages: &[reili_core::messaging::slack::SlackThreadMessage],
+    bot_user_id: Option<&str>,
+) -> String {
+    messages
+        .iter()
+        .map(|message| {
+            let author = normalize_author(message.user.as_deref(), bot_user_id);
+            let text = message.text.trim();
+            let iso_timestamp = to_iso_timestamp(&message.ts);
+            format!(
+                "[ts: {} | iso: {}] {}: {}",
+                message.ts, iso_timestamp, author, text
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n---\n")
+}
+
+fn normalize_author(user: Option<&str>, bot_user_id: Option<&str>) -> String {
+    let normalized = match user.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => value,
+        None => return "system".to_string(),
+    };
+
+    if bot_user_id.is_some_and(|bot_user_id_value| normalized == bot_user_id_value) {
+        return format!("{normalized} (You)");
+    }
+
+    normalized.to_string()
+}
+
+fn to_iso_timestamp(ts: &str) -> String {
+    let mut parts = ts.split('.');
+    let seconds_part = parts.next().unwrap_or_default();
+    let milliseconds_part = parts.next().unwrap_or("0");
+
+    let seconds = match seconds_part.parse::<i64>() {
+        Ok(value) => value,
+        Err(_) => return "unknown".to_string(),
+    };
+
+    let milliseconds_slice = normalize_milliseconds(milliseconds_part);
+    let milliseconds = match milliseconds_slice.parse::<i64>() {
+        Ok(value) => value,
+        Err(_) => return "unknown".to_string(),
+    };
+
+    let unix_millis = match seconds
+        .checked_mul(1_000)
+        .and_then(|value| value.checked_add(milliseconds))
+    {
+        Some(value) => value,
+        None => return "unknown".to_string(),
+    };
+
+    match DateTime::<Utc>::from_timestamp_millis(unix_millis) {
+        Some(value) => value.to_rfc3339_opts(SecondsFormat::Millis, true),
+        None => "unknown".to_string(),
+    }
+}
+
+fn normalize_milliseconds(milliseconds_part: &str) -> String {
+    let mut normalized = milliseconds_part.to_string();
+    while normalized.len() < 3 {
+        normalized.push('0');
+    }
+
+    normalized.chars().take(3).collect()
+}
+
+fn extract_mentioned_user_id(text: &str) -> Option<String> {
+    let start_index = text.find("<@")?;
+    let remaining = &text[start_index + 2..];
+    let end_index = remaining.find('>')?;
+    let user_id = &remaining[..end_index];
+    if user_id.is_empty() {
+        return None;
+    }
+
+    if !user_id
+        .chars()
+        .all(|value| value.is_ascii_uppercase() || value.is_ascii_digit())
+    {
+        return None;
+    }
+
+    Some(user_id.to_string())
+}
+
 struct BuildSpecialistAgentInput<C>
 where
     C: CompletionClient,
@@ -318,8 +409,9 @@ Use {language} for all responses.",
 
 #[cfg(test)]
 mod tests {
-    use reili_core::investigation::AlertContext;
+    use reili_core::investigation::InvestigationRequest;
     use reili_core::investigation::InvestigationRuntime;
+    use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
     use serde_json::json;
 
     use super::super::llm_provider_settings::{
@@ -331,19 +423,81 @@ mod tests {
         build_investigation_lead_instructions, build_investigation_lead_prompt,
     };
 
-    fn sample_alert_context() -> AlertContext {
-        AlertContext {
-            raw_text: "Please investigate this alert".to_string(),
-            trigger_message_text: "Please investigate this alert".to_string(),
-            thread_transcript: "thread context".to_string(),
+    fn sample_trigger_message() -> SlackMessage {
+        SlackMessage {
+            slack_event_id: "Ev001".to_string(),
+            team_id: Some("T001".to_string()),
+            trigger: SlackTriggerType::AppMention,
+            channel: "C001".to_string(),
+            user: "U001".to_string(),
+            text: "Please investigate this alert".to_string(),
+            ts: "1710000000.000001".to_string(),
+            thread_ts: None,
         }
     }
 
     #[test]
     fn builds_investigation_lead_prompt_with_thread_context() {
-        let prompt = build_investigation_lead_prompt(&sample_alert_context());
+        let request = InvestigationRequest {
+            trigger_message: sample_trigger_message(),
+            thread_messages: vec![SlackThreadMessage {
+                ts: "1710000000.000001".to_string(),
+                user: Some("U123".to_string()),
+                text: "thread context".to_string(),
+            }],
+        };
+        let prompt = build_investigation_lead_prompt(&request);
         assert!(prompt.contains("Trigger Message: Please investigate this alert"));
-        assert!(prompt.contains("Thread Context:\nthread context"));
+        assert!(prompt.contains("Thread Context:"));
+        assert!(prompt.contains("U123: thread context"));
+    }
+
+    #[test]
+    fn builds_investigation_lead_prompt_without_thread_context() {
+        let request = InvestigationRequest {
+            trigger_message: sample_trigger_message(),
+            thread_messages: vec![],
+        };
+        let prompt = build_investigation_lead_prompt(&request);
+        assert!(prompt.contains("Trigger Message: Please investigate this alert"));
+        assert!(!prompt.contains("Thread Context:"));
+    }
+
+    #[test]
+    fn builds_investigation_lead_prompt_with_bot_user_you_annotation() {
+        let mut trigger = sample_trigger_message();
+        trigger.text = "<@U999> investigate this alert".to_string();
+        let request = InvestigationRequest {
+            trigger_message: trigger,
+            thread_messages: vec![SlackThreadMessage {
+                ts: "1710000000.000010".to_string(),
+                user: Some("U999".to_string()),
+                text: "I started investigation".to_string(),
+            }],
+        };
+        let prompt = build_investigation_lead_prompt(&request);
+        assert!(prompt.contains("U999 (You): I started investigation"));
+    }
+
+    #[test]
+    fn formats_thread_messages_as_transcript() {
+        let request = InvestigationRequest {
+            trigger_message: sample_trigger_message(),
+            thread_messages: vec![
+                SlackThreadMessage {
+                    ts: "1710000000.000001".to_string(),
+                    user: Some("U123".to_string()),
+                    text: "First message".to_string(),
+                },
+                SlackThreadMessage {
+                    ts: "1710000000.000002".to_string(),
+                    user: None,
+                    text: " follow-up from bot ".to_string(),
+                },
+            ],
+        };
+        let prompt = build_investigation_lead_prompt(&request);
+        assert!(prompt.contains("[ts: 1710000000.000001 | iso: 2024-03-09T16:00:00.000Z] U123: First message\n---\n[ts: 1710000000.000002 | iso: 2024-03-09T16:00:00.000Z] system: follow-up from bot"));
     }
 
     #[test]

@@ -1,12 +1,11 @@
-pub mod alert_context;
 pub mod context;
 pub mod investigation_lead_runner;
 pub mod job;
 pub mod progress_event;
 pub mod progress_reporting;
+pub mod request;
 pub mod telemetry;
 
-pub use alert_context::AlertContext;
 pub use context::{InvestigationContext, InvestigationResources, InvestigationRuntime};
 pub use investigation_lead_runner::{
     InvestigationLeadRunReport, InvestigationLeadRunnerPort, LlmExecutionMetadata,
@@ -23,6 +22,7 @@ pub use progress_reporting::{
     InvestigationProgressSessionPort, InvestigationProgressUpdate,
     StartInvestigationProgressSessionInput,
 };
+pub use request::InvestigationRequest;
 pub use telemetry::LlmUsageSnapshot;
 
 #[cfg(any(test, feature = "test-support"))]

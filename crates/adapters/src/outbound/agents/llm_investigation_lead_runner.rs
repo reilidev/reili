@@ -52,7 +52,7 @@ where
                 cause_message: error.message,
             })
         })?;
-    let investigation_lead_prompt = build_investigation_lead_prompt(&input.run.alert_context);
+    let investigation_lead_prompt = build_investigation_lead_prompt(&input.run.request);
     let investigation_lead_agent =
         build_investigation_lead_agent(BuildInvestigationLeadAgentInput {
             client: input.client,
