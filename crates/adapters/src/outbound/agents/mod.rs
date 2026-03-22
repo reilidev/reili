@@ -4,7 +4,6 @@ mod datadog_mcp_tools;
 mod llm_provider_settings;
 mod llm_task_runner;
 mod llm_usage_collector;
-mod llm_usage_tracking_hook;
 mod openai_task_runner;
 mod progress_event_hook;
 mod progress_reporting_sub_agent_tool;

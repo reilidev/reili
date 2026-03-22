@@ -116,28 +116,23 @@ where
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use async_trait::async_trait;
-    use reili_core::error::PortError;
-    use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
+    use reili_core::task::{MockTaskProgressEventPort, TaskProgressEvent, TaskProgressEventInput};
     use rig::client::{CompletionClient, ProviderClient};
 
     use super::ProgressReportingSubAgentTool;
 
-    struct MockProgressEventPort {
-        calls: Arc<Mutex<Vec<TaskProgressEventInput>>>,
-    }
-
-    #[async_trait]
-    impl TaskProgressEventPort for MockProgressEventPort {
-        async fn publish(&self, input: TaskProgressEventInput) -> Result<(), PortError> {
-            self.calls.lock().expect("lock calls").push(input);
-            Ok(())
-        }
-    }
-
     #[tokio::test]
     async fn publishes_message_output_created_event() {
         let calls = Arc::new(Mutex::new(Vec::new()));
+        let publish_calls = Arc::clone(&calls);
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port
+            .expect_publish()
+            .times(1)
+            .returning(move |input| {
+                publish_calls.lock().expect("lock calls").push(input);
+                Ok(())
+            });
         let client = rig::providers::openai::Client::from_val("test-key".into());
         let agent = client
             .agent("gpt-5.3-codex")
@@ -146,9 +141,7 @@ mod tests {
         let tool = ProgressReportingSubAgentTool::new(
             agent,
             "investigate_datadog".to_string(),
-            Arc::new(MockProgressEventPort {
-                calls: Arc::clone(&calls),
-            }),
+            Arc::new(progress_event_port),
         );
 
         tool.publish_message_output_created().await;

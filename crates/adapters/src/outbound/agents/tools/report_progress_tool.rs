@@ -98,51 +98,26 @@ impl Tool for ReportProgressTool {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use async_trait::async_trait;
     use reili_core::error::PortError;
-    use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
+    use reili_core::task::{MockTaskProgressEventPort, TaskProgressEvent, TaskProgressEventInput};
     use rig::tool::Tool;
 
     use super::{ReportProgressArgs, ReportProgressTool, ReportProgressToolInput};
 
-    struct MockProgressEventPort {
-        calls: Arc<Mutex<Vec<TaskProgressEventInput>>>,
-        should_fail: bool,
-    }
-
-    impl MockProgressEventPort {
-        fn successful(calls: Arc<Mutex<Vec<TaskProgressEventInput>>>) -> Self {
-            Self {
-                calls,
-                should_fail: false,
-            }
-        }
-
-        fn failing(calls: Arc<Mutex<Vec<TaskProgressEventInput>>>) -> Self {
-            Self {
-                calls,
-                should_fail: true,
-            }
-        }
-    }
-
-    #[async_trait]
-    impl TaskProgressEventPort for MockProgressEventPort {
-        async fn publish(&self, input: TaskProgressEventInput) -> Result<(), PortError> {
-            if self.should_fail {
-                return Err(PortError::new("progress publish failed"));
-            }
-
-            self.calls.lock().expect("lock calls").push(input);
-            Ok(())
-        }
-    }
-
     #[tokio::test]
     async fn publishes_progress_summary_event_with_owner_id() {
         let calls = Arc::new(Mutex::new(Vec::new()));
+        let publish_calls = Arc::clone(&calls);
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port
+            .expect_publish()
+            .times(1)
+            .returning(move |input| {
+                publish_calls.lock().expect("lock calls").push(input);
+                Ok(())
+            });
         let tool = ReportProgressTool::new(ReportProgressToolInput {
-            on_progress_event: Arc::new(MockProgressEventPort::successful(Arc::clone(&calls))),
+            on_progress_event: Arc::new(progress_event_port),
             owner_id: "task_runner".to_string(),
         });
 
@@ -169,9 +144,13 @@ mod tests {
 
     #[tokio::test]
     async fn soft_fails_when_progress_publish_returns_error() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port
+            .expect_publish()
+            .times(1)
+            .returning(|_| Err(PortError::new("progress publish failed")));
         let tool = ReportProgressTool::new(ReportProgressToolInput {
-            on_progress_event: Arc::new(MockProgressEventPort::failing(Arc::clone(&calls))),
+            on_progress_event: Arc::new(progress_event_port),
             owner_id: "task_runner".to_string(),
         });
 
@@ -184,6 +163,5 @@ mod tests {
             .expect("call report_progress");
 
         assert_eq!(output, "{\"ok\":true}");
-        assert!(calls.lock().expect("lock calls").is_empty());
     }
 }
