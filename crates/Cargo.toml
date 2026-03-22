@@ -16,3 +16,6 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
+
+[workspace.dependencies]
+mockall = "0.14.0"

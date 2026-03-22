@@ -41,6 +41,7 @@ pub struct GithubPullRequestSummary {
     pub head_ref: Option<String>,
 }
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait GithubPullRequestPort: Send + Sync {
     async fn get_pull_request(
