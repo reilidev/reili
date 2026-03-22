@@ -42,8 +42,13 @@ where
     let datadog_mcp_toolset = connect_datadog_mcp_toolset(&input.datadog_mcp)
         .await
         .map_err(|error| {
+            let usage = usage_collector.snapshot();
+            if error.is_connection_failed() {
+                return AgentRunFailedError::new_permanent(usage, error.message);
+            }
+
             create_failed_error(CreateInvestigationLeadRunnerFailedErrorInput {
-                usage: usage_collector.snapshot(),
+                usage,
                 cause_message: error.message,
             })
         })?;
@@ -125,12 +130,5 @@ struct CreateInvestigationLeadRunnerFailedErrorInput {
 fn create_failed_error(
     input: CreateInvestigationLeadRunnerFailedErrorInput,
 ) -> AgentRunFailedError {
-    if input
-        .cause_message
-        .contains("Failed to connect to Datadog MCP server")
-    {
-        return AgentRunFailedError::new_permanent(input.usage, input.cause_message);
-    }
-
     AgentRunFailedError::new(input.usage, input.cause_message)
 }

@@ -15,7 +15,6 @@ mod search_github_code_tool;
 mod search_github_issues_and_pull_requests_tool;
 mod search_github_repos_tool;
 mod search_web_tool;
-mod status_code_parser;
 mod tool_json;
 
 pub use aggregate_datadog_logs_by_facet_tool::AggregateDatadogLogsByFacetTool;

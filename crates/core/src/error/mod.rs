@@ -6,4 +6,4 @@ pub use agent_run_failed::{AgentRunFailedError, INVESTIGATION_LEAD_RUN_FAILED_CO
 pub use investigation_execution_failed::{
     INVESTIGATION_EXECUTION_FAILED_CODE, InvestigationExecutionFailedError,
 };
-pub use port_error::PortError;
+pub use port_error::{PortError, PortErrorKind};

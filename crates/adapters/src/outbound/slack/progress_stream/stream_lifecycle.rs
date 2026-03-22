@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use reili_core::error::PortError;
 use reili_core::investigation::StartInvestigationProgressSessionInput;
 
 use super::chunk_rotation::{
@@ -24,7 +25,7 @@ pub(crate) struct SlackProgressStreamLifecycle {
 struct RecoverFromAppendFailureInput {
     chunks: Vec<SlackAnyChunk>,
     failed_stream_ts: String,
-    error_message: String,
+    error: PortError,
 }
 
 impl SlackProgressStreamLifecycle {
@@ -118,9 +119,7 @@ impl SlackProgressStreamLifecycle {
         self.recover_from_append_failure(RecoverFromAppendFailureInput {
             chunks,
             failed_stream_ts: stream_ts,
-            error_message: append_result
-                .expect_err("append_result should be error")
-                .message,
+            error: append_result.expect_err("append_result should be error"),
         })
         .await;
     }
@@ -166,35 +165,35 @@ impl SlackProgressStreamLifecycle {
     }
 
     async fn recover_from_append_failure(&mut self, input: RecoverFromAppendFailureInput) {
-        self.last_error_message = Some(input.error_message.clone());
+        self.last_error_message = Some(input.error.message.clone());
         self.logger.warn(
             "Failed to append Slack progress stream",
             string_log_meta([
                 ("channel", self.route.channel.clone()),
                 ("threadTs", self.route.thread_ts.clone()),
                 ("streamTs", input.failed_stream_ts.clone()),
-                ("error", input.error_message.clone()),
-                ("slack_stream_last_error", input.error_message.clone()),
+                ("error", input.error.message.clone()),
+                ("slack_stream_last_error", input.error.message.clone()),
             ]),
         );
 
-        if is_message_not_in_streaming_state_error(&input.error_message) {
+        if is_message_not_in_streaming_state_error(&input.error) {
             self.restart_stream_with_chunks(
                 input.chunks,
                 Some(input.failed_stream_ts),
-                input.error_message,
+                input.error.message,
             )
             .await;
             return;
         }
 
-        if is_message_too_long_error(&input.error_message) {
+        if is_message_too_long_error(&input.error) {
             self.rotate_stream_with_chunks(input.chunks).await;
             return;
         }
 
-        if is_permanent_stream_append_error(&input.error_message) {
-            self.disable_stream(input.error_message, "append_failed_permanent");
+        if is_permanent_stream_append_error(&input.error) {
+            self.disable_stream(input.error.message, "append_failed_permanent");
         }
     }
 
@@ -386,22 +385,19 @@ impl SlackProgressStreamLifecycle {
     }
 }
 
-fn is_permanent_stream_append_error(error_message: &str) -> bool {
-    let lower_message = error_message.to_lowercase();
-    lower_message.contains("invalid_ts")
-        || lower_message.contains("message_not_found")
-        || lower_message.contains("channel_not_found")
-        || lower_message.contains("invalid_arguments")
+fn is_permanent_stream_append_error(error: &PortError) -> bool {
+    error.is_service_error_code("invalid_ts")
+        || error.is_service_error_code("message_not_found")
+        || error.is_service_error_code("channel_not_found")
+        || error.is_service_error_code("invalid_arguments")
 }
 
-fn is_message_too_long_error(error_message: &str) -> bool {
-    error_message.to_lowercase().contains("msg_too_long")
+fn is_message_too_long_error(error: &PortError) -> bool {
+    error.is_service_error_code("msg_too_long")
 }
 
-fn is_message_not_in_streaming_state_error(error_message: &str) -> bool {
-    error_message
-        .to_lowercase()
-        .contains("message_not_in_streaming_state")
+fn is_message_not_in_streaming_state_error(error: &PortError) -> bool {
+    error.is_service_error_code("message_not_in_streaming_state")
 }
 
 #[cfg(test)]
@@ -564,7 +560,8 @@ mod tests {
         api.push_start_response(Ok(SlackStartStreamOutput {
             stream_ts: "stream-restarted".to_string(),
         }));
-        api.push_append_response(Err(PortError::new(
+        api.push_append_response(Err(PortError::service_error(
+            "message_not_in_streaming_state",
             "Error: An API error occurred: message_not_in_streaming_state",
         )));
         api.push_stop_response(Ok(()));
@@ -635,7 +632,8 @@ mod tests {
         api.push_start_response(Ok(SlackStartStreamOutput {
             stream_ts: "stream-rotated".to_string(),
         }));
-        api.push_append_response(Err(PortError::new(
+        api.push_append_response(Err(PortError::service_error(
+            "msg_too_long",
             "Error: An API error occurred: msg_too_long",
         )));
         api.push_stop_response(Ok(()));
@@ -662,7 +660,8 @@ mod tests {
         api.push_start_response(Ok(SlackStartStreamOutput {
             stream_ts: "stream-initial".to_string(),
         }));
-        api.push_append_response(Err(PortError::new(
+        api.push_append_response(Err(PortError::service_error(
+            "invalid_arguments",
             "Slack API returned error: method=chat.appendStream error=invalid_arguments",
         )));
         let logger = Arc::new(MockLogger::default());
@@ -690,7 +689,8 @@ mod tests {
         api.push_start_response(Ok(SlackStartStreamOutput {
             stream_ts: "stream-initial".to_string(),
         }));
-        api.push_append_response(Err(PortError::new(
+        api.push_append_response(Err(PortError::service_error(
+            "invalid_arguments",
             "Slack API returned error: method=chat.appendStream error=invalid_arguments",
         )));
         let logger = Arc::new(MockLogger::default());
