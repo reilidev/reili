@@ -1,5 +1,6 @@
 use super::{LogEntry, LogFields, LogLevel};
 
+#[cfg_attr(test, mockall::automock)]
 pub trait Logger: Send + Sync {
     fn log(&self, entry: LogEntry);
 

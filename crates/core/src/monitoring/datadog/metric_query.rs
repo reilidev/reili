@@ -27,6 +27,7 @@ pub struct DatadogMetricQueryParams {
     pub to: String,
 }
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait DatadogMetricQueryPort: Send + Sync {
     async fn query_metrics(

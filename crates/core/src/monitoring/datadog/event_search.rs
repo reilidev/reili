@@ -24,6 +24,7 @@ pub struct DatadogEventSearchParams {
     pub limit: u32,
 }
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait DatadogEventSearchPort: Send + Sync {
     async fn search_events(

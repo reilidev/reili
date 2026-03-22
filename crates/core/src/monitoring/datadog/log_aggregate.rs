@@ -20,6 +20,7 @@ pub struct DatadogLogAggregateParams {
     pub limit: u32,
 }
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait DatadogLogAggregatePort: Send + Sync {
     async fn aggregate_by_facet(

@@ -13,7 +13,7 @@ use tokio::time::Instant;
 #[derive(Debug, Clone)]
 struct DelayedJob<TJob>
 where
-    TJob: QueueJob,
+    TJob: QueueJob + Clone,
 {
     job: TJob,
     available_at: Instant,
@@ -23,7 +23,7 @@ where
 #[allow(dead_code)]
 struct DeadLetterJob<TJob>
 where
-    TJob: QueueJob,
+    TJob: QueueJob + Clone,
 {
     job: TJob,
     reason: String,
@@ -33,7 +33,7 @@ where
 #[derive(Debug)]
 struct InnerState<TJob>
 where
-    TJob: QueueJob,
+    TJob: QueueJob + Clone,
 {
     pending_jobs: VecDeque<TJob>,
     delayed_jobs: Vec<DelayedJob<TJob>>,
@@ -43,7 +43,7 @@ where
 
 impl<TJob> Default for InnerState<TJob>
 where
-    TJob: QueueJob,
+    TJob: QueueJob + Clone,
 {
     fn default() -> Self {
         Self {
@@ -58,14 +58,14 @@ where
 #[derive(Debug, Clone)]
 pub struct InMemoryJobQueue<TJob>
 where
-    TJob: QueueJob,
+    TJob: QueueJob + Clone,
 {
     state: Arc<Mutex<InnerState<TJob>>>,
 }
 
 impl<TJob> InMemoryJobQueue<TJob>
 where
-    TJob: QueueJob,
+    TJob: QueueJob + Clone,
 {
     pub fn new() -> Self {
         Self {
@@ -97,7 +97,7 @@ where
 
 impl<TJob> Default for InMemoryJobQueue<TJob>
 where
-    TJob: QueueJob,
+    TJob: QueueJob + Clone,
 {
     fn default() -> Self {
         Self::new()
@@ -107,7 +107,7 @@ where
 #[async_trait]
 impl<TJob> JobQueuePort<TJob> for InMemoryJobQueue<TJob>
 where
-    TJob: QueueJob + 'static,
+    TJob: QueueJob + Clone + 'static,
 {
     async fn enqueue(&self, job: TJob) -> Result<(), PortError> {
         let mut state = self.state.lock().await;

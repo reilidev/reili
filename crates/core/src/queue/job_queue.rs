@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{error::PortError, investigation::InvestigationJob};
 
-pub trait QueueJob: Clone + Send + Sync {
+#[cfg_attr(test, mockall::automock)]
+pub trait QueueJob: Send + Sync {
     fn job_id(&self) -> &str;
     fn retry_count(&self) -> u32;
     fn with_retry_count(&self, retry_count: u32) -> Self;
@@ -58,6 +59,7 @@ where
     pub job: TJob,
 }
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait JobQueuePort<TJob>: Send + Sync
 where

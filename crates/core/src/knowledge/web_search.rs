@@ -38,6 +38,7 @@ pub struct WebSearchExecution {
     pub source_count: u32,
 }
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait WebSearchPort: Send + Sync {
     async fn search(&self, input: WebSearchInput) -> Result<WebSearchResult, PortError>;

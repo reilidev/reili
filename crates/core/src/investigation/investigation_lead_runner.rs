@@ -25,6 +25,7 @@ pub struct RunInvestigationLeadInput {
     pub on_progress_event: Arc<dyn InvestigationProgressEventPort>,
 }
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait InvestigationLeadRunnerPort: Send + Sync {
     async fn run(

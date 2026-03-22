@@ -11,6 +11,7 @@ pub struct DatadogMetricCatalogParams {
     pub limit: u32,
 }
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait DatadogMetricCatalogPort: Send + Sync {
     async fn list_metrics(

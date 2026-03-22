@@ -12,6 +12,7 @@ pub struct FetchSlackThreadHistoryInput {
     pub thread_ts: String,
 }
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait SlackThreadHistoryPort: Send + Sync {
     async fn fetch_thread_history(
