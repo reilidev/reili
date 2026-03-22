@@ -1,4 +1,3 @@
-pub mod alert_intake;
 pub mod enqueue_slack_event;
 pub mod investigation;
 pub mod start_investigation_worker_runner;

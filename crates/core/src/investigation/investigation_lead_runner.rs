@@ -4,7 +4,9 @@ use async_trait::async_trait;
 
 use crate::error::AgentRunFailedError;
 
-use super::{AlertContext, InvestigationContext, InvestigationProgressEventPort, LlmUsageSnapshot};
+use super::{
+    InvestigationContext, InvestigationProgressEventPort, InvestigationRequest, LlmUsageSnapshot,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmExecutionMetadata {
@@ -20,7 +22,7 @@ pub struct InvestigationLeadRunReport {
 }
 
 pub struct RunInvestigationLeadInput {
-    pub alert_context: AlertContext,
+    pub request: InvestigationRequest,
     pub context: InvestigationContext,
     pub on_progress_event: Arc<dyn InvestigationProgressEventPort>,
 }

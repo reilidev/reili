@@ -7,8 +7,8 @@ use reili_core::error::PortError;
 use reili_core::investigation::{
     InvestigationContext, InvestigationJobPayload, InvestigationLeadRunnerPort,
     InvestigationProgressEventInput, InvestigationProgressEventPort,
-    InvestigationProgressSessionFactoryPort, InvestigationResources, InvestigationRuntime,
-    LlmExecutionMetadata, LlmUsageSnapshot, RunInvestigationLeadInput,
+    InvestigationProgressSessionFactoryPort, InvestigationRequest, InvestigationResources,
+    InvestigationRuntime, LlmExecutionMetadata, LlmUsageSnapshot, RunInvestigationLeadInput,
 };
 use reili_core::messaging::slack::{
     SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
@@ -27,7 +27,6 @@ use super::services::{
 use super::slack_thread_context_loader::{
     SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
 };
-use crate::alert_intake::{ExtractAlertContextInput, extract_alert_context};
 
 const FALLBACK_REPORT_TEXT: &str = "Investigation completed but failed to generate a report.";
 
@@ -194,11 +193,10 @@ async fn run_investigation(
         })
         .await;
 
-    let alert_context = extract_alert_context(ExtractAlertContextInput {
-        trigger_message_text: input.payload.message.text.clone(),
+    let request = InvestigationRequest {
+        trigger_message: input.payload.message.clone(),
         thread_messages,
-        bot_user_id: extract_mentioned_user_id(&input.payload.message.text),
-    });
+    };
 
     let runtime = InvestigationRuntime {
         started_at_iso: started_at_iso.to_string(),
@@ -220,7 +218,7 @@ async fn run_investigation(
         .deps
         .investigation_lead_runner
         .run(RunInvestigationLeadInput {
-            alert_context: alert_context.clone(),
+            request,
             context,
             on_progress_event: Arc::clone(&on_progress_event),
         })
@@ -292,25 +290,6 @@ fn merge_log_meta(
     merged
 }
 
-fn extract_mentioned_user_id(text: &str) -> Option<String> {
-    let start_index = text.find("<@")?;
-    let remaining = &text[start_index + 2..];
-    let end_index = remaining.find('>')?;
-    let user_id = &remaining[..end_index];
-    if user_id.is_empty() {
-        return None;
-    }
-
-    if !user_id
-        .chars()
-        .all(|value| value.is_ascii_uppercase() || value.is_ascii_digit())
-    {
-        return None;
-    }
-
-    Some(user_id.to_string())
-}
-
 struct ChannelProgressEventPort {
     sender: mpsc::UnboundedSender<InvestigationProgressEventInput>,
 }
@@ -347,10 +326,10 @@ mod tests {
 
     use reili_core::error::PortError;
     use reili_core::investigation::{
-        AlertContext, InvestigationJobPayload, InvestigationLeadRunReport,
-        InvestigationLeadRunnerPort, InvestigationProgressSessionFactoryPort,
-        InvestigationProgressSessionPort, InvestigationResources, InvestigationRuntime,
-        LlmExecutionMetadata, LlmUsageSnapshot, MockInvestigationLeadRunnerPort,
+        InvestigationJobPayload, InvestigationLeadRunReport, InvestigationLeadRunnerPort,
+        InvestigationProgressSessionFactoryPort, InvestigationProgressSessionPort,
+        InvestigationRequest, InvestigationResources, InvestigationRuntime, LlmExecutionMetadata,
+        LlmUsageSnapshot, MockInvestigationLeadRunnerPort,
         MockInvestigationProgressSessionFactoryPort, MockInvestigationProgressSessionPort,
         RunInvestigationLeadInput,
     };
@@ -386,7 +365,7 @@ mod tests {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct CapturedInvestigationLeadRunInput {
-        alert_context: AlertContext,
+        request: InvestigationRequest,
         runtime: InvestigationRuntime,
     }
 
@@ -515,7 +494,7 @@ mod tests {
             move |input: RunInvestigationLeadInput| {
                 captured_runs.lock().expect("lock captured runs").push(
                     CapturedInvestigationLeadRunInput {
-                        alert_context: input.alert_context,
+                        request: input.request,
                         runtime: input.context.runtime,
                     },
                 );
@@ -594,12 +573,13 @@ mod tests {
             .clone();
         assert_eq!(captured.len(), 1);
         assert_eq!(
-            captured[0].alert_context.trigger_message_text,
+            captured[0].request.trigger_message.text,
             "<@U999> monitor alert"
         );
+        assert_eq!(captured[0].request.thread_messages.len(), 1);
         assert_eq!(
-            captured[0].alert_context.thread_transcript,
-            "[ts: 1710000000.000001 | iso: 2024-03-09T16:00:00.000Z] U999 (You): thread context"
+            captured[0].request.thread_messages[0].text,
+            "thread context"
         );
         assert_eq!(
             slack_reply_calls.lock().expect("lock reply calls").clone(),
@@ -642,7 +622,7 @@ mod tests {
             .expect("lock captured runs")
             .clone();
         assert_eq!(captured.len(), 1);
-        assert!(captured[0].alert_context.thread_transcript.is_empty());
+        assert!(captured[0].request.thread_messages.is_empty());
     }
 
     #[tokio::test]
@@ -669,7 +649,7 @@ mod tests {
             .expect("lock captured runs")
             .clone();
         assert_eq!(captured.len(), 1);
-        assert!(captured[0].alert_context.thread_transcript.is_empty());
+        assert!(captured[0].request.thread_messages.is_empty());
     }
 
     #[test]
