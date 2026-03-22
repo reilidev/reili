@@ -16,3 +16,14 @@ pub use metric_query::{
     DatadogMetricQueryParams, DatadogMetricQueryPoint, DatadogMetricQueryPort,
     DatadogMetricQueryResult,
 };
+
+#[cfg(any(test, feature = "test-support"))]
+pub use event_search::MockDatadogEventSearchPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use log_aggregate::MockDatadogLogAggregatePort;
+#[cfg(any(test, feature = "test-support"))]
+pub use log_search::MockDatadogLogSearchPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use metric_catalog::MockDatadogMetricCatalogPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use metric_query::MockDatadogMetricQueryPort;

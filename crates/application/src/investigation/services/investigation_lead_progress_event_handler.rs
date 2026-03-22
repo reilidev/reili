@@ -22,7 +22,7 @@ pub struct InvestigationLeadProgressEventHandler {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use async_trait::async_trait;
+    use mockall::Sequence;
     use reili_core::investigation::{InvestigationProgressEvent, InvestigationProgressEventInput};
     use tokio::sync::Mutex as TokioMutex;
 
@@ -32,56 +32,72 @@ mod tests {
     use crate::investigation::services::{
         InvestigationProgressStreamSession, RecordMessageOutputCreated, RecordProgressSummary,
         RecordToolCallCompleted, RecordToolCallStarted,
+        investigation_progress_stream_session::MockInvestigationProgressStreamSession,
     };
-
-    struct SessionMock {
-        events: Arc<Mutex<Vec<String>>>,
-    }
-
-    #[async_trait]
-    impl InvestigationProgressStreamSession for SessionMock {
-        async fn start(&mut self) {}
-
-        async fn post_progress_summary(&mut self, input: RecordProgressSummary) {
-            self.events.lock().expect("lock events").push(format!(
-                "progress_summary:{}:{}:{}",
-                input.owner_id, input.title, input.summary
-            ));
-        }
-
-        async fn post_tool_started(&mut self, input: RecordToolCallStarted) {
-            self.events
-                .lock()
-                .expect("lock events")
-                .push(format!("tool_started:{}:{}", input.owner_id, input.task_id));
-        }
-
-        async fn post_tool_completed(&mut self, input: RecordToolCallCompleted) {
-            self.events.lock().expect("lock events").push(format!(
-                "tool_completed:{}:{}",
-                input.owner_id, input.task_id
-            ));
-        }
-
-        async fn post_message_output_created(&mut self, input: RecordMessageOutputCreated) {
-            self.events
-                .lock()
-                .expect("lock events")
-                .push(format!("message_output:{}", input.owner_id));
-        }
-
-        async fn stop_as_succeeded(&mut self) {}
-
-        async fn stop_as_failed(&mut self) {}
-    }
 
     #[tokio::test]
     async fn routes_progress_events_to_session_methods() {
         let events = Arc::new(Mutex::new(Vec::new()));
-        let session = Arc::new(TokioMutex::new(Box::new(SessionMock {
-            events: Arc::clone(&events),
-        })
-            as Box<dyn InvestigationProgressStreamSession>));
+        let mut sequence = Sequence::new();
+        let mut session = MockInvestigationProgressStreamSession::new();
+
+        let progress_summary_events = Arc::clone(&events);
+        session
+            .expect_post_progress_summary()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(move |input: RecordProgressSummary| {
+                progress_summary_events
+                    .lock()
+                    .expect("lock events")
+                    .push(format!(
+                        "progress_summary:{}:{}:{}",
+                        input.owner_id, input.title, input.summary
+                    ));
+            });
+
+        let tool_started_events = Arc::clone(&events);
+        session
+            .expect_post_tool_started()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(move |input: RecordToolCallStarted| {
+                tool_started_events
+                    .lock()
+                    .expect("lock events")
+                    .push(format!("tool_started:{}:{}", input.owner_id, input.task_id));
+            });
+
+        let tool_completed_events = Arc::clone(&events);
+        session
+            .expect_post_tool_completed()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(move |input: RecordToolCallCompleted| {
+                tool_completed_events
+                    .lock()
+                    .expect("lock events")
+                    .push(format!(
+                        "tool_completed:{}:{}",
+                        input.owner_id, input.task_id
+                    ));
+            });
+
+        let message_output_events = Arc::clone(&events);
+        session
+            .expect_post_message_output_created()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(move |input: RecordMessageOutputCreated| {
+                message_output_events
+                    .lock()
+                    .expect("lock events")
+                    .push(format!("message_output:{}", input.owner_id));
+            });
+
+        let session = Arc::new(TokioMutex::new(
+            Box::new(session) as Box<dyn InvestigationProgressStreamSession>
+        ));
         let handler = InvestigationLeadProgressEventHandler::new(
             InvestigationLeadProgressEventHandlerInput {
                 progress_session: Arc::clone(&session),
@@ -135,11 +151,11 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_empty_progress_summary() {
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let session = Arc::new(TokioMutex::new(Box::new(SessionMock {
-            events: Arc::clone(&events),
-        })
-            as Box<dyn InvestigationProgressStreamSession>));
+        let mut session = MockInvestigationProgressStreamSession::new();
+        session.expect_post_progress_summary().times(0);
+        let session = Arc::new(TokioMutex::new(
+            Box::new(session) as Box<dyn InvestigationProgressStreamSession>
+        ));
         let handler = InvestigationLeadProgressEventHandler::new(
             InvestigationLeadProgressEventHandlerInput {
                 progress_session: Arc::clone(&session),
@@ -155,8 +171,6 @@ mod tests {
                 },
             })
             .await;
-
-        assert!(events.lock().expect("lock events").is_empty());
     }
 }
 

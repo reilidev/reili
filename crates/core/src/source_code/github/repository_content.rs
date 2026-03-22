@@ -52,7 +52,7 @@ pub enum GithubRepositoryContent {
     Directory(GithubRepositoryDirectoryContent),
 }
 
-#[cfg_attr(test, mockall::automock)]
+#[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 #[async_trait]
 pub trait GithubRepositoryContentPort: Send + Sync {
     async fn get_repository_content(

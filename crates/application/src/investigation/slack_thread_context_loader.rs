@@ -96,9 +96,10 @@ fn is_thread_reply_message(message: &SlackMessage) -> bool {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use async_trait::async_trait;
     use reili_core::error::PortError;
-    use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
+    use reili_core::messaging::slack::{
+        FetchSlackThreadHistoryInput, MockSlackThreadHistoryPort, SlackThreadHistoryPort,
+    };
     use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
 
     use crate::investigation::{InvestigationLogMeta, LogFieldValue, string_log_meta};
@@ -136,51 +137,23 @@ mod tests {
         }
     }
 
-    struct SlackThreadHistoryPortMock {
-        calls: Mutex<Vec<FetchSlackThreadHistoryInput>>,
-        response: Result<Vec<SlackThreadMessage>, PortError>,
-    }
-
-    impl SlackThreadHistoryPortMock {
-        fn success(messages: Vec<SlackThreadMessage>) -> Self {
-            Self {
-                calls: Mutex::new(Vec::new()),
-                response: Ok(messages),
-            }
-        }
-
-        fn failure(message: &str) -> Self {
-            Self {
-                calls: Mutex::new(Vec::new()),
-                response: Err(PortError::new(message)),
-            }
-        }
-
-        fn calls(&self) -> Vec<FetchSlackThreadHistoryInput> {
-            self.calls.lock().expect("lock calls").clone()
-        }
-    }
-
-    #[async_trait]
-    impl SlackThreadHistoryPort for SlackThreadHistoryPortMock {
-        async fn fetch_thread_history(
-            &self,
-            input: FetchSlackThreadHistoryInput,
-        ) -> Result<Vec<SlackThreadMessage>, PortError> {
-            self.calls.lock().expect("lock calls").push(input);
-            self.response.clone()
-        }
-    }
-
     #[tokio::test]
     async fn fetches_thread_history_only_for_thread_replies() {
-        let thread_history_port = Arc::new(SlackThreadHistoryPortMock::success(vec![
-            SlackThreadMessage {
-                ts: "1710000000.000001".to_string(),
-                user: Some("U001".to_string()),
-                text: "context".to_string(),
-            },
-        ]));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut thread_history_port = MockSlackThreadHistoryPort::new();
+        let fetch_calls = Arc::clone(&calls);
+        thread_history_port
+            .expect_fetch_thread_history()
+            .times(1)
+            .returning(move |input: FetchSlackThreadHistoryInput| {
+                fetch_calls.lock().expect("lock calls").push(input);
+                Ok(vec![SlackThreadMessage {
+                    ts: "1710000000.000001".to_string(),
+                    user: Some("U001".to_string()),
+                    text: "context".to_string(),
+                }])
+            });
+        let thread_history_port = Arc::new(thread_history_port);
         let logger = Arc::new(ThreadContextLoaderLoggerMock::default());
         let loader = SlackThreadContextLoader::new(SlackThreadContextLoaderDeps {
             slack_thread_history_port: Arc::clone(&thread_history_port)
@@ -196,7 +169,7 @@ mod tests {
             .await;
 
         assert_eq!(
-            thread_history_port.calls(),
+            calls.lock().expect("lock calls").clone(),
             vec![FetchSlackThreadHistoryInput {
                 channel: "C001".to_string(),
                 thread_ts: "1710000000.000001".to_string(),
@@ -214,7 +187,9 @@ mod tests {
 
     #[tokio::test]
     async fn returns_empty_context_for_non_thread_messages() {
-        let thread_history_port = Arc::new(SlackThreadHistoryPortMock::success(Vec::new()));
+        let mut thread_history_port = MockSlackThreadHistoryPort::new();
+        thread_history_port.expect_fetch_thread_history().times(0);
+        let thread_history_port = Arc::new(thread_history_port);
         let logger = Arc::new(ThreadContextLoaderLoggerMock::default());
         let loader = SlackThreadContextLoader::new(SlackThreadContextLoaderDeps {
             slack_thread_history_port: Arc::clone(&thread_history_port)
@@ -229,13 +204,22 @@ mod tests {
             })
             .await;
 
-        assert!(thread_history_port.calls().is_empty());
         assert!(result.is_empty());
     }
 
     #[tokio::test]
     async fn falls_back_with_empty_context_when_history_fetch_fails() {
-        let thread_history_port = Arc::new(SlackThreadHistoryPortMock::failure("slack api failed"));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut thread_history_port = MockSlackThreadHistoryPort::new();
+        let fetch_calls = Arc::clone(&calls);
+        thread_history_port
+            .expect_fetch_thread_history()
+            .times(1)
+            .returning(move |input: FetchSlackThreadHistoryInput| {
+                fetch_calls.lock().expect("lock calls").push(input);
+                Err(PortError::new("slack api failed"))
+            });
+        let thread_history_port = Arc::new(thread_history_port);
         let logger = Arc::new(ThreadContextLoaderLoggerMock::default());
         let loader = SlackThreadContextLoader::new(SlackThreadContextLoaderDeps {
             slack_thread_history_port: Arc::clone(&thread_history_port)
@@ -251,6 +235,13 @@ mod tests {
             .await;
 
         assert!(result.is_empty());
+        assert_eq!(
+            calls.lock().expect("lock calls").clone(),
+            vec![FetchSlackThreadHistoryInput {
+                channel: "C001".to_string(),
+                thread_ts: "1710000000.000001".to_string(),
+            }]
+        );
         let errors = logger.errors();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].message, "thread_context_fetch_failed");

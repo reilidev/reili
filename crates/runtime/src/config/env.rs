@@ -91,6 +91,7 @@ pub fn load_app_config() -> Result<AppConfig, EnvConfigError> {
     load_app_config_with_env(&ProcessEnvironment)
 }
 
+#[cfg_attr(test, mockall::automock)]
 trait EnvironmentReader {
     fn get(&self, name: &str) -> Option<String>;
 }
@@ -253,61 +254,52 @@ mod tests {
 
     use super::{
         DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_OPENAI_INVESTIGATION_LEAD_MODEL,
-        DEFAULT_WORKER_CONCURRENCY, EnvironmentReader, LlmProviderConfig, load_app_config_with_env,
+        DEFAULT_WORKER_CONCURRENCY, LlmProviderConfig, MockEnvironmentReader,
+        load_app_config_with_env,
     };
 
-    struct MapEnvironment {
-        values: HashMap<String, String>,
-    }
+    fn environment_reader_mock(overrides: &[(&str, &str)]) -> MockEnvironmentReader {
+        let mut values = HashMap::from([
+            ("SLACK_BOT_TOKEN".to_string(), "xoxb-test".to_string()),
+            (
+                "SLACK_SIGNING_SECRET".to_string(),
+                "signing-secret".to_string(),
+            ),
+            ("DATADOG_API_KEY".to_string(), "dd-api-key".to_string()),
+            ("DATADOG_APP_KEY".to_string(), "dd-app-key".to_string()),
+            ("LLM_PROVIDER".to_string(), "openai".to_string()),
+            (
+                "LLM_OPENAI_API_KEY".to_string(),
+                "openai-api-key".to_string(),
+            ),
+            ("GITHUB_APP_ID".to_string(), "12345".to_string()),
+            (
+                "GITHUB_APP_PRIVATE_KEY".to_string(),
+                "-----BEGIN RSA PRIVATE KEY-----\\nabc\\n-----END RSA PRIVATE KEY-----".to_string(),
+            ),
+            (
+                "GITHUB_APP_INSTALLATION_ID".to_string(),
+                "123456".to_string(),
+            ),
+            (
+                "GITHUB_SEARCH_SCOPE_ORG".to_string(),
+                "example-org".to_string(),
+            ),
+        ]);
 
-    impl MapEnvironment {
-        fn from_overrides(overrides: &[(&str, &str)]) -> Self {
-            let mut values = HashMap::from([
-                ("SLACK_BOT_TOKEN".to_string(), "xoxb-test".to_string()),
-                (
-                    "SLACK_SIGNING_SECRET".to_string(),
-                    "signing-secret".to_string(),
-                ),
-                ("DATADOG_API_KEY".to_string(), "dd-api-key".to_string()),
-                ("DATADOG_APP_KEY".to_string(), "dd-app-key".to_string()),
-                ("LLM_PROVIDER".to_string(), "openai".to_string()),
-                (
-                    "LLM_OPENAI_API_KEY".to_string(),
-                    "openai-api-key".to_string(),
-                ),
-                ("GITHUB_APP_ID".to_string(), "12345".to_string()),
-                (
-                    "GITHUB_APP_PRIVATE_KEY".to_string(),
-                    "-----BEGIN RSA PRIVATE KEY-----\\nabc\\n-----END RSA PRIVATE KEY-----"
-                        .to_string(),
-                ),
-                (
-                    "GITHUB_APP_INSTALLATION_ID".to_string(),
-                    "123456".to_string(),
-                ),
-                (
-                    "GITHUB_SEARCH_SCOPE_ORG".to_string(),
-                    "example-org".to_string(),
-                ),
-            ]);
-
-            for (key, value) in overrides {
-                values.insert((*key).to_string(), (*value).to_string());
-            }
-
-            Self { values }
+        for (key, value) in overrides {
+            values.insert((*key).to_string(), (*value).to_string());
         }
-    }
 
-    impl EnvironmentReader for MapEnvironment {
-        fn get(&self, name: &str) -> Option<String> {
-            self.values.get(name).cloned()
-        }
+        let mut env = MockEnvironmentReader::new();
+        env.expect_get()
+            .returning(move |name| values.get(name).cloned());
+        env
     }
 
     #[test]
     fn uses_fixed_worker_settings_even_when_env_vars_are_set() {
-        let env = MapEnvironment::from_overrides(&[
+        let env = environment_reader_mock(&[
             ("WORKER_CONCURRENCY", "9"),
             ("JOB_MAX_RETRY", "99"),
             ("JOB_BACKOFF_MS", "9999"),
@@ -322,7 +314,7 @@ mod tests {
 
     #[test]
     fn loads_port_from_env() {
-        let env = MapEnvironment::from_overrides(&[("PORT", "3010")]);
+        let env = environment_reader_mock(&[("PORT", "3010")]);
 
         let config = load_app_config_with_env(&env).expect("load app config");
 
@@ -331,7 +323,7 @@ mod tests {
 
     #[test]
     fn converts_multiline_github_private_key() {
-        let env = MapEnvironment::from_overrides(&[]);
+        let env = environment_reader_mock(&[]);
 
         let config = load_app_config_with_env(&env).expect("load app config");
 
@@ -340,10 +332,8 @@ mod tests {
 
     #[test]
     fn loads_openai_llm_config() {
-        let env = MapEnvironment::from_overrides(&[(
-            "LLM_OPENAI_INVESTIGATION_LEAD_MODEL",
-            "custom-model",
-        )]);
+        let env =
+            environment_reader_mock(&[("LLM_OPENAI_INVESTIGATION_LEAD_MODEL", "custom-model")]);
 
         let config = load_app_config_with_env(&env).expect("load app config");
 
@@ -361,7 +351,7 @@ mod tests {
 
     #[test]
     fn loads_bedrock_llm_config() {
-        let env = MapEnvironment::from_overrides(&[
+        let env = environment_reader_mock(&[
             ("LLM_PROVIDER", "bedrock"),
             ("LLM_BEDROCK_REGION", "ap-northeast-1"),
             (
@@ -386,7 +376,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_llm_provider() {
-        let env = MapEnvironment::from_overrides(&[("LLM_PROVIDER", "invalid")]);
+        let env = environment_reader_mock(&[("LLM_PROVIDER", "invalid")]);
 
         let error = load_app_config_with_env(&env).expect_err("reject invalid provider");
 

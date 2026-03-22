@@ -29,6 +29,7 @@ pub struct CreateInvestigationProgressStreamSessionInput {
     pub recipient_team_id: Option<String>,
 }
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait InvestigationProgressStreamSession: Send {
     async fn start(&mut self);
@@ -40,6 +41,7 @@ pub trait InvestigationProgressStreamSession: Send {
     async fn stop_as_failed(&mut self);
 }
 
+#[cfg_attr(test, mockall::automock)]
 pub trait InvestigationProgressStreamSessionFactory: Send + Sync {
     fn create_for_thread(
         &self,
@@ -209,11 +211,12 @@ impl InvestigationProgressStreamSession for InvestigationProgressStreamSessionFa
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use async_trait::async_trait;
+    use mockall::Sequence;
     use reili_core::investigation::{
         CompleteInvestigationProgressSessionInput, InvestigationProgressSessionCompletionStatus,
-        InvestigationProgressSessionFactoryPort, InvestigationProgressSessionPort,
-        InvestigationProgressUpdate, StartInvestigationProgressSessionInput,
+        InvestigationProgressSessionPort, InvestigationProgressUpdate,
+        MockInvestigationProgressSessionFactoryPort, MockInvestigationProgressSessionPort,
+        StartInvestigationProgressSessionInput,
     };
 
     use super::{
@@ -267,62 +270,70 @@ mod tests {
         completions: Vec<InvestigationProgressSessionCompletionStatus>,
     }
 
-    struct MockCoreSessionFactory {
+    fn create_core_session_factory(
         state: Arc<Mutex<MockCoreSessionState>>,
-    }
+        configure_session: impl FnOnce(&mut MockInvestigationProgressSessionPort),
+    ) -> MockInvestigationProgressSessionFactoryPort {
+        let mut session = MockInvestigationProgressSessionPort::new();
+        configure_session(&mut session);
 
-    #[async_trait]
-    impl InvestigationProgressSessionPort for MockCoreSession {
-        async fn start(&mut self) {
-            self.state
-                .lock()
-                .expect("lock state")
-                .events
-                .push("start".to_string());
-        }
-
-        async fn apply(&mut self, update: InvestigationProgressUpdate) {
-            let mut state = self.state.lock().expect("lock state");
-            state.events.push("apply".to_string());
-            state.updates.push(update);
-        }
-
-        async fn complete(&mut self, input: CompleteInvestigationProgressSessionInput) {
-            let mut state = self.state.lock().expect("lock state");
-            state.events.push("complete".to_string());
-            state.completions.push(input.status);
-        }
-    }
-
-    struct MockCoreSession {
-        state: Arc<Mutex<MockCoreSessionState>>,
-    }
-
-    impl InvestigationProgressSessionFactoryPort for MockCoreSessionFactory {
-        fn create_for_thread(
-            &self,
-            input: StartInvestigationProgressSessionInput,
-        ) -> Box<dyn InvestigationProgressSessionPort> {
-            self.state
-                .lock()
-                .expect("lock state")
-                .created_inputs
-                .push(input);
-            Box::new(MockCoreSession {
-                state: Arc::clone(&self.state),
-            })
-        }
+        let mut factory = MockInvestigationProgressSessionFactoryPort::new();
+        factory.expect_create_for_thread().times(1).return_once(
+            move |input: StartInvestigationProgressSessionInput| {
+                state.lock().expect("lock state").created_inputs.push(input);
+                Box::new(session) as Box<dyn InvestigationProgressSessionPort>
+            },
+        );
+        factory
     }
 
     #[tokio::test]
     async fn forwards_semantic_updates_and_completion_to_core_session() {
         let state = Arc::new(Mutex::new(MockCoreSessionState::default()));
         let logger = Arc::new(MockLogger::default());
+        let mut sequence = Sequence::new();
+        let factory_state = Arc::clone(&state);
         let factory = create_investigation_progress_stream_session_factory(
             CreateInvestigationProgressStreamSessionFactoryInput {
-                progress_session_factory_port: Arc::new(MockCoreSessionFactory {
-                    state: Arc::clone(&state),
-                }),
+                progress_session_factory_port: Arc::new(create_core_session_factory(
+                    Arc::clone(&factory_state),
+                    |session: &mut MockInvestigationProgressSessionPort| {
+                        let start_state = Arc::clone(&factory_state);
+                        session
+                            .expect_start()
+                            .times(1)
+                            .in_sequence(&mut sequence)
+                            .returning(move || {
+                                start_state
+                                    .lock()
+                                    .expect("lock state")
+                                    .events
+                                    .push("start".to_string());
+                            });
+
+                        let apply_state = Arc::clone(&factory_state);
+                        session
+                            .expect_apply()
+                            .times(2)
+                            .in_sequence(&mut sequence)
+                            .returning(move |update: InvestigationProgressUpdate| {
+                                let mut state = apply_state.lock().expect("lock state");
+                                state.events.push("apply".to_string());
+                                state.updates.push(update);
+                            });
+
+                        let complete_state = Arc::clone(&factory_state);
+                        session
+                            .expect_complete()
+                            .times(1)
+                            .in_sequence(&mut sequence)
+                            .returning(move |input: CompleteInvestigationProgressSessionInput| {
+                                let mut state = complete_state.lock().expect("lock state");
+                                state.events.push("complete".to_string());
+                                state.completions.push(input.status);
+                            });
+                    },
+                )),
                 logger,
             },
         );
@@ -380,9 +391,19 @@ mod tests {
         let logger = Arc::new(MockLogger::default());
         let factory = create_investigation_progress_stream_session_factory(
             CreateInvestigationProgressStreamSessionFactoryInput {
-                progress_session_factory_port: Arc::new(MockCoreSessionFactory {
-                    state: Arc::clone(&state),
-                }),
+                progress_session_factory_port: Arc::new(create_core_session_factory(
+                    Arc::clone(&state),
+                    |session: &mut MockInvestigationProgressSessionPort| {
+                        let apply_state = Arc::clone(&state);
+                        session.expect_apply().times(3).returning(
+                            move |update: InvestigationProgressUpdate| {
+                                let mut state = apply_state.lock().expect("lock state");
+                                state.events.push("apply".to_string());
+                                state.updates.push(update);
+                            },
+                        );
+                    },
+                )),
                 logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
             },
         );
@@ -428,9 +449,12 @@ mod tests {
         let logger = Arc::new(MockLogger::default());
         let factory = create_investigation_progress_stream_session_factory(
             CreateInvestigationProgressStreamSessionFactoryInput {
-                progress_session_factory_port: Arc::new(MockCoreSessionFactory {
-                    state: Arc::clone(&state),
-                }),
+                progress_session_factory_port: Arc::new(create_core_session_factory(
+                    Arc::clone(&state),
+                    |session: &mut MockInvestigationProgressSessionPort| {
+                        session.expect_apply().times(0);
+                    },
+                )),
                 logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
             },
         );

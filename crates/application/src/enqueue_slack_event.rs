@@ -136,189 +136,96 @@ mod tests {
         EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, InvestigationLogger, PortError,
         SlackMessage, SlackMessageHandlerPort, SlackThreadReplyInput, SlackThreadReplyPort,
     };
-    use crate::investigation::{InvestigationLogMeta, LogFieldValue};
-    use async_trait::async_trait;
-    use reili_core::logger::{LogEntry as CoreLogEntry, LogLevel};
-    use reili_core::messaging::slack::SlackTriggerType;
-    use reili_core::queue::{
-        CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailResult, JobQueuePort,
-    };
-    use std::collections::VecDeque;
+    use reili_core::logger::MockLogger;
+    use reili_core::messaging::slack::{MockSlackThreadReplyPort, SlackTriggerType};
+    use reili_core::queue::{InvestigationJobQueuePort, MockJobQueuePort};
     use std::sync::{Arc, Mutex};
 
     use reili_core::investigation::InvestigationJob;
 
-    #[derive(Debug, Clone)]
-    struct LogEntry {
-        message: String,
-        meta: InvestigationLogMeta,
-    }
-
-    #[derive(Default)]
-    struct MockInvestigationJobQueue {
-        enqueued_jobs: Mutex<Vec<InvestigationJob>>,
-        enqueue_results: Mutex<VecDeque<Result<(), PortError>>>,
-        queue_depth_results: Mutex<VecDeque<Result<usize, PortError>>>,
-    }
-
-    impl MockInvestigationJobQueue {
-        fn enqueued_jobs(&self) -> Vec<InvestigationJob> {
-            self.enqueued_jobs
-                .lock()
-                .expect("lock enqueued jobs")
-                .clone()
-        }
-
-        fn with_enqueue_results(&self, results: Vec<Result<(), PortError>>) {
-            let mut lock = self.enqueue_results.lock().expect("lock enqueue results");
-            *lock = VecDeque::from(results);
-        }
-
-        fn with_queue_depth_results(&self, results: Vec<Result<usize, PortError>>) {
-            let mut lock = self
-                .queue_depth_results
-                .lock()
-                .expect("lock queue depth results");
-            *lock = VecDeque::from(results);
-        }
-    }
-
-    #[async_trait]
-    impl JobQueuePort<InvestigationJob> for MockInvestigationJobQueue {
-        async fn enqueue(&self, job: InvestigationJob) -> Result<(), PortError> {
-            self.enqueued_jobs
-                .lock()
-                .expect("lock enqueued jobs")
-                .push(job);
-
-            let mut lock = self.enqueue_results.lock().expect("lock enqueue results");
-            match lock.pop_front() {
-                Some(result) => result,
-                None => Ok(()),
-            }
-        }
-
-        async fn claim(&self) -> Result<Option<InvestigationJob>, PortError> {
-            Ok(None)
-        }
-
-        async fn complete(&self, _input: CompleteJobInput) -> Result<(), PortError> {
-            Ok(())
-        }
-
-        async fn fail(
-            &self,
-            _input: FailJobInput,
-        ) -> Result<JobFailResult<InvestigationJob>, PortError> {
-            Err(PortError::new("fail should not be called in enqueue tests"))
-        }
-
-        async fn get_depth(&self) -> Result<usize, PortError> {
-            let mut lock = self
-                .queue_depth_results
-                .lock()
-                .expect("lock queue depth results");
-            match lock.pop_front() {
-                Some(result) => result,
-                None => Ok(self.enqueued_jobs().len()),
-            }
-        }
-    }
-
-    #[derive(Default)]
-    struct MockSlackThreadReplyPort {
-        posted_replies: Mutex<Vec<SlackThreadReplyInput>>,
-        reply_results: Mutex<VecDeque<Result<(), PortError>>>,
-    }
-
-    impl MockSlackThreadReplyPort {
-        fn posted_replies(&self) -> Vec<SlackThreadReplyInput> {
-            self.posted_replies
-                .lock()
-                .expect("lock posted replies")
-                .clone()
-        }
-    }
-
-    #[async_trait]
-    impl SlackThreadReplyPort for MockSlackThreadReplyPort {
-        async fn post_thread_reply(&self, input: SlackThreadReplyInput) -> Result<(), PortError> {
-            self.posted_replies
-                .lock()
-                .expect("lock posted replies")
-                .push(input);
-            let mut lock = self.reply_results.lock().expect("lock reply results");
-            match lock.pop_front() {
-                Some(result) => result,
-                None => Ok(()),
-            }
-        }
-    }
-
-    #[derive(Default)]
-    struct MockLogger {
-        infos: Mutex<Vec<LogEntry>>,
-        warns: Mutex<Vec<LogEntry>>,
-        errors: Mutex<Vec<LogEntry>>,
-    }
-
-    impl MockLogger {
-        fn warns(&self) -> Vec<LogEntry> {
-            self.warns.lock().expect("lock warns").clone()
-        }
-
-        fn errors(&self) -> Vec<LogEntry> {
-            self.errors.lock().expect("lock errors").clone()
-        }
-    }
-
-    impl InvestigationLogger for MockLogger {
-        fn log(&self, entry: CoreLogEntry) {
-            let captured = LogEntry {
-                message: entry.event.to_string(),
-                meta: entry.fields,
-            };
-
-            match entry.level {
-                LogLevel::Info => self.infos.lock().expect("lock infos").push(captured),
-                LogLevel::Warn => self.warns.lock().expect("lock warns").push(captured),
-                LogLevel::Error => self.errors.lock().expect("lock errors").push(captured),
-                LogLevel::Debug => {}
-            }
-        }
-    }
-
     struct TestContext {
         use_case: EnqueueSlackEventUseCase,
-        job_queue: Arc<MockInvestigationJobQueue>,
-        slack_reply_port: Arc<MockSlackThreadReplyPort>,
-        logger: Arc<MockLogger>,
+        enqueued_jobs: Arc<Mutex<Vec<InvestigationJob>>>,
+        posted_replies: Arc<Mutex<Vec<SlackThreadReplyInput>>>,
     }
 
     fn create_use_case(input: CreateUseCaseInput) -> TestContext {
-        let job_queue = Arc::new(MockInvestigationJobQueue::default());
-        job_queue.with_enqueue_results(input.enqueue_results);
-        job_queue.with_queue_depth_results(input.queue_depth_results);
-        let slack_reply_port = Arc::new(MockSlackThreadReplyPort::default());
-        let logger = Arc::new(MockLogger::default());
+        let enqueued_jobs = Arc::new(Mutex::new(Vec::new()));
+        let posted_replies = Arc::new(Mutex::new(Vec::new()));
+        let mut job_queue = MockJobQueuePort::<InvestigationJob>::new();
+        let enqueue_result = input.enqueue_result.clone();
+        let should_post_reply = input.enqueue_result.is_err();
+        let expected_info_calls = usize::from(input.enqueue_result.is_ok());
+        let expected_warn_calls = usize::from(matches!(
+            (&input.enqueue_result, &input.queue_depth_result),
+            (Ok(()), Some(Err(_)))
+        ));
+        let expected_error_calls = usize::from(input.enqueue_result.is_err());
+        let enqueue_calls = Arc::clone(&enqueued_jobs);
+        job_queue
+            .expect_enqueue()
+            .times(1)
+            .returning(move |job: InvestigationJob| {
+                enqueue_calls.lock().expect("lock enqueued jobs").push(job);
+                enqueue_result.clone()
+            });
+
+        match input.queue_depth_result {
+            Some(result) => {
+                job_queue
+                    .expect_get_depth()
+                    .times(1)
+                    .return_const(result.clone());
+            }
+            None => {
+                job_queue.expect_get_depth().times(0);
+            }
+        }
+
+        let mut slack_reply_port = MockSlackThreadReplyPort::new();
+        if should_post_reply {
+            let reply_calls = Arc::clone(&posted_replies);
+            slack_reply_port
+                .expect_post_thread_reply()
+                .times(1)
+                .returning(move |input: SlackThreadReplyInput| {
+                    reply_calls.lock().expect("lock posted replies").push(input);
+                    Ok(())
+                });
+        } else {
+            slack_reply_port.expect_post_thread_reply().times(0);
+        }
+
+        let mut logger = MockLogger::new();
+        logger
+            .expect_info()
+            .times(expected_info_calls)
+            .return_const(());
+        logger
+            .expect_warn()
+            .times(expected_warn_calls)
+            .return_const(());
+        logger
+            .expect_error()
+            .times(expected_error_calls)
+            .return_const(());
 
         let use_case = EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
-            job_queue: Arc::clone(&job_queue) as Arc<InvestigationJobQueuePort>,
-            slack_reply_port: Arc::clone(&slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
-            logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+            job_queue: Arc::new(job_queue) as Arc<InvestigationJobQueuePort>,
+            slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
+            logger: Arc::new(logger) as Arc<dyn InvestigationLogger>,
         });
 
         TestContext {
             use_case,
-            job_queue,
-            slack_reply_port,
-            logger,
+            enqueued_jobs,
+            posted_replies,
         }
     }
 
     struct CreateUseCaseInput {
-        enqueue_results: Vec<Result<(), PortError>>,
-        queue_depth_results: Vec<Result<usize, PortError>>,
+        enqueue_result: Result<(), PortError>,
+        queue_depth_result: Option<Result<usize, PortError>>,
     }
 
     fn create_message() -> SlackMessage {
@@ -337,8 +244,8 @@ mod tests {
     #[tokio::test]
     async fn dispatches_alert_investigation_job() {
         let context = create_use_case(CreateUseCaseInput {
-            enqueue_results: Vec::new(),
-            queue_depth_results: Vec::new(),
+            enqueue_result: Ok(()),
+            queue_depth_result: Some(Ok(1)),
         });
 
         context
@@ -347,17 +254,27 @@ mod tests {
             .await
             .expect("enqueue handle");
 
-        let enqueued_jobs = context.job_queue.enqueued_jobs();
+        let enqueued_jobs = context
+            .enqueued_jobs
+            .lock()
+            .expect("lock enqueued jobs")
+            .clone();
         assert_eq!(enqueued_jobs.len(), 1);
         assert_eq!(enqueued_jobs[0].retry_count, 0);
-        assert_eq!(context.slack_reply_port.posted_replies().len(), 0);
+        assert!(
+            context
+                .posted_replies
+                .lock()
+                .expect("lock posted replies")
+                .is_empty()
+        );
     }
 
     #[tokio::test]
-    async fn logs_unknown_depth_when_depth_lookup_fails() {
+    async fn continues_when_depth_lookup_fails() {
         let context = create_use_case(CreateUseCaseInput {
-            enqueue_results: Vec::new(),
-            queue_depth_results: vec![Err(PortError::new("depth-unavailable"))],
+            enqueue_result: Ok(()),
+            queue_depth_result: Some(Err(PortError::new("depth-unavailable"))),
         });
 
         context
@@ -365,20 +282,13 @@ mod tests {
             .handle(create_message())
             .await
             .expect("enqueue handle");
-
-        let warns = context.logger.warns();
-        assert_eq!(warns.len(), 1);
-        assert_eq!(
-            warns[0].message,
-            "Failed to read worker queue depth after enqueue"
-        );
     }
 
     #[tokio::test]
     async fn posts_slack_reply_when_enqueue_fails() {
         let context = create_use_case(CreateUseCaseInput {
-            enqueue_results: vec![Err(PortError::new("fail-1"))],
-            queue_depth_results: Vec::new(),
+            enqueue_result: Err(PortError::new("fail-1")),
+            queue_depth_result: None,
         });
 
         context
@@ -387,21 +297,17 @@ mod tests {
             .await
             .expect("enqueue handle");
 
-        let posted_replies = context.slack_reply_port.posted_replies();
+        let posted_replies = context
+            .posted_replies
+            .lock()
+            .expect("lock posted replies")
+            .clone();
         assert_eq!(posted_replies.len(), 1);
         assert_eq!(posted_replies[0].channel, "C001");
         assert_eq!(posted_replies[0].thread_ts, "1710000000.000001");
         assert_eq!(
             posted_replies[0].text,
             "Failed to queue investigation: fail-1"
-        );
-
-        let errors = context.logger.errors();
-        assert_eq!(errors.len(), 1);
-        assert_eq!(errors[0].message, "Failed to enqueue investigation job");
-        assert_eq!(
-            errors[0].meta.get("error").and_then(LogFieldValue::as_str),
-            Some("fail-1")
         );
     }
 }

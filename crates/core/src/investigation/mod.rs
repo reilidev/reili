@@ -24,3 +24,12 @@ pub use progress_reporting::{
     StartInvestigationProgressSessionInput,
 };
 pub use telemetry::LlmUsageSnapshot;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use investigation_lead_runner::MockInvestigationLeadRunnerPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use progress_event::MockInvestigationProgressEventPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use progress_reporting::{
+    MockInvestigationProgressSessionFactoryPort, MockInvestigationProgressSessionPort,
+};
