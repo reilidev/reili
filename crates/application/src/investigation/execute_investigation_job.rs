@@ -425,7 +425,6 @@ mod tests {
             github_repository_content_port,
             github_pull_request_port,
             web_search_port,
-
         }
     }
 
