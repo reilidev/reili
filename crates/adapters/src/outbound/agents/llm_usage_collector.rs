@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-use reili_core::investigation::LlmUsageSnapshot;
+use reili_core::task::LlmUsageSnapshot;
 use rig::completion::Usage;
 
 #[derive(Clone, Default)]
@@ -50,7 +50,7 @@ fn total_tokens_from_usage(usage: &Usage) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use reili_core::investigation::LlmUsageSnapshot;
+    use reili_core::task::LlmUsageSnapshot;
     use rig::completion::Usage;
 
     use super::LlmUsageCollector;

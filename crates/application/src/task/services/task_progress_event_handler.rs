@@ -1,20 +1,20 @@
 use std::sync::Arc;
 
-use reili_core::investigation::{InvestigationProgressEvent, InvestigationProgressEventInput};
+use reili_core::task::{TaskProgressEvent, TaskProgressEventInput};
 use tokio::sync::Mutex;
 
-use super::investigation_progress_stream_session::InvestigationProgressStreamSession;
 use super::progress_update_commands::{
     RecordMessageOutputCreated, RecordProgressSummary, RecordToolCallCompleted,
     RecordToolCallStarted,
 };
+use super::task_progress_stream_session::TaskProgressStreamSession;
 
-pub struct InvestigationLeadProgressEventHandlerInput {
-    pub progress_session: Arc<Mutex<Box<dyn InvestigationProgressStreamSession>>>,
+pub struct TaskProgressEventHandlerInput {
+    pub progress_session: Arc<Mutex<Box<dyn TaskProgressStreamSession>>>,
 }
 
-pub struct InvestigationLeadProgressEventHandler {
-    progress_session: Arc<Mutex<Box<dyn InvestigationProgressStreamSession>>>,
+pub struct TaskProgressEventHandler {
+    progress_session: Arc<Mutex<Box<dyn TaskProgressStreamSession>>>,
 }
 
 #[cfg(test)]
@@ -23,23 +23,21 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use mockall::Sequence;
-    use reili_core::investigation::{InvestigationProgressEvent, InvestigationProgressEventInput};
+    use reili_core::task::{TaskProgressEvent, TaskProgressEventInput};
     use tokio::sync::Mutex as TokioMutex;
 
-    use super::{
-        InvestigationLeadProgressEventHandler, InvestigationLeadProgressEventHandlerInput,
-    };
-    use crate::investigation::services::{
-        InvestigationProgressStreamSession, RecordMessageOutputCreated, RecordProgressSummary,
-        RecordToolCallCompleted, RecordToolCallStarted,
-        investigation_progress_stream_session::MockInvestigationProgressStreamSession,
+    use super::{TaskProgressEventHandler, TaskProgressEventHandlerInput};
+    use crate::task::services::{
+        RecordMessageOutputCreated, RecordProgressSummary, RecordToolCallCompleted,
+        RecordToolCallStarted, TaskProgressStreamSession,
+        task_progress_stream_session::MockTaskProgressStreamSession,
     };
 
     #[tokio::test]
     async fn routes_progress_events_to_session_methods() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut sequence = Sequence::new();
-        let mut session = MockInvestigationProgressStreamSession::new();
+        let mut session = MockTaskProgressStreamSession::new();
 
         let progress_summary_events = Arc::clone(&events);
         session
@@ -96,76 +94,72 @@ mod tests {
             });
 
         let session = Arc::new(TokioMutex::new(
-            Box::new(session) as Box<dyn InvestigationProgressStreamSession>
+            Box::new(session) as Box<dyn TaskProgressStreamSession>
         ));
-        let handler = InvestigationLeadProgressEventHandler::new(
-            InvestigationLeadProgressEventHandlerInput {
-                progress_session: Arc::clone(&session),
-            },
-        );
+        let handler = TaskProgressEventHandler::new(TaskProgressEventHandlerInput {
+            progress_session: Arc::clone(&session),
+        });
 
         handler
-            .handle(InvestigationProgressEventInput {
-                owner_id: "investigation_lead".to_string(),
-                event: InvestigationProgressEvent::ProgressSummaryCreated {
+            .handle(TaskProgressEventInput {
+                owner_id: "task_runner".to_string(),
+                event: TaskProgressEvent::ProgressSummaryCreated {
                     title: "Collect evidence".to_string(),
                     summary: "Inspect logs".to_string(),
                 },
             })
             .await;
         handler
-            .handle(InvestigationProgressEventInput {
-                owner_id: "investigation_lead".to_string(),
-                event: InvestigationProgressEvent::ToolCallStarted {
+            .handle(TaskProgressEventInput {
+                owner_id: "task_runner".to_string(),
+                event: TaskProgressEvent::ToolCallStarted {
                     task_id: "task-1".to_string(),
                     title: "logs".to_string(),
                 },
             })
             .await;
         handler
-            .handle(InvestigationProgressEventInput {
-                owner_id: "investigation_lead".to_string(),
-                event: InvestigationProgressEvent::ToolCallCompleted {
+            .handle(TaskProgressEventInput {
+                owner_id: "task_runner".to_string(),
+                event: TaskProgressEvent::ToolCallCompleted {
                     task_id: "task-1".to_string(),
                     title: "logs".to_string(),
                 },
             })
             .await;
         handler
-            .handle(InvestigationProgressEventInput {
-                owner_id: "investigation_lead".to_string(),
-                event: InvestigationProgressEvent::MessageOutputCreated,
+            .handle(TaskProgressEventInput {
+                owner_id: "task_runner".to_string(),
+                event: TaskProgressEvent::MessageOutputCreated,
             })
             .await;
 
         assert_eq!(
             events.lock().expect("lock events").clone(),
             vec![
-                "progress_summary:investigation_lead:Collect evidence:Inspect logs".to_string(),
-                "tool_started:investigation_lead:task-1".to_string(),
-                "tool_completed:investigation_lead:task-1".to_string(),
-                "message_output:investigation_lead".to_string(),
+                "progress_summary:task_runner:Collect evidence:Inspect logs".to_string(),
+                "tool_started:task_runner:task-1".to_string(),
+                "tool_completed:task_runner:task-1".to_string(),
+                "message_output:task_runner".to_string(),
             ]
         );
     }
 
     #[tokio::test]
     async fn ignores_empty_progress_summary() {
-        let mut session = MockInvestigationProgressStreamSession::new();
+        let mut session = MockTaskProgressStreamSession::new();
         session.expect_post_progress_summary().times(0);
         let session = Arc::new(TokioMutex::new(
-            Box::new(session) as Box<dyn InvestigationProgressStreamSession>
+            Box::new(session) as Box<dyn TaskProgressStreamSession>
         ));
-        let handler = InvestigationLeadProgressEventHandler::new(
-            InvestigationLeadProgressEventHandlerInput {
-                progress_session: Arc::clone(&session),
-            },
-        );
+        let handler = TaskProgressEventHandler::new(TaskProgressEventHandlerInput {
+            progress_session: Arc::clone(&session),
+        });
 
         handler
-            .handle(InvestigationProgressEventInput {
-                owner_id: "investigation_lead".to_string(),
-                event: InvestigationProgressEvent::ProgressSummaryCreated {
+            .handle(TaskProgressEventInput {
+                owner_id: "task_runner".to_string(),
+                event: TaskProgressEvent::ProgressSummaryCreated {
                     title: "  ".to_string(),
                     summary: "Inspect logs".to_string(),
                 },
@@ -174,16 +168,16 @@ mod tests {
     }
 }
 
-impl InvestigationLeadProgressEventHandler {
-    pub fn new(input: InvestigationLeadProgressEventHandlerInput) -> Self {
+impl TaskProgressEventHandler {
+    pub fn new(input: TaskProgressEventHandlerInput) -> Self {
         Self {
             progress_session: input.progress_session,
         }
     }
 
-    pub async fn handle(&self, input: InvestigationProgressEventInput) {
+    pub async fn handle(&self, input: TaskProgressEventInput) {
         match input.event {
-            InvestigationProgressEvent::ProgressSummaryCreated { title, summary } => {
+            TaskProgressEvent::ProgressSummaryCreated { title, summary } => {
                 self.post_progress_summary(RecordProgressSummary {
                     owner_id: input.owner_id,
                     title,
@@ -191,7 +185,7 @@ impl InvestigationLeadProgressEventHandler {
                 })
                 .await;
             }
-            InvestigationProgressEvent::ToolCallStarted { task_id, title } => {
+            TaskProgressEvent::ToolCallStarted { task_id, title } => {
                 self.post_tool_started(RecordToolCallStarted {
                     owner_id: input.owner_id,
                     task_id,
@@ -199,7 +193,7 @@ impl InvestigationLeadProgressEventHandler {
                 })
                 .await;
             }
-            InvestigationProgressEvent::ToolCallCompleted { task_id, title } => {
+            TaskProgressEvent::ToolCallCompleted { task_id, title } => {
                 self.post_tool_completed(RecordToolCallCompleted {
                     owner_id: input.owner_id,
                     task_id,
@@ -207,7 +201,7 @@ impl InvestigationLeadProgressEventHandler {
                 })
                 .await;
             }
-            InvestigationProgressEvent::MessageOutputCreated => {
+            TaskProgressEvent::MessageOutputCreated => {
                 self.post_message_output_created(RecordMessageOutputCreated {
                     owner_id: input.owner_id,
                 })

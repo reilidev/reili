@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use reili_core::investigation::{
-    CompleteInvestigationProgressSessionInput, InvestigationProgressSessionFactoryPort,
-    InvestigationProgressSessionPort, InvestigationProgressUpdate,
-    StartInvestigationProgressSessionInput,
-};
 use reili_core::logger::Logger;
+use reili_core::task::{
+    CompleteTaskProgressSessionInput, StartTaskProgressSessionInput,
+    TaskProgressSessionFactoryPort, TaskProgressSessionPort, TaskProgressUpdate,
+};
 
 use super::{
     SlackProgressStreamApiPort, SlackProgressStreamLifecycle, build_progress_chunks,
@@ -47,11 +46,11 @@ impl SlackProgressReporter {
     }
 }
 
-impl InvestigationProgressSessionFactoryPort for SlackProgressReporter {
+impl TaskProgressSessionFactoryPort for SlackProgressReporter {
     fn create_for_thread(
         &self,
-        input: StartInvestigationProgressSessionInput,
-    ) -> Box<dyn InvestigationProgressSessionPort> {
+        input: StartTaskProgressSessionInput,
+    ) -> Box<dyn TaskProgressSessionPort> {
         Box::new(SlackProgressReporterSession {
             lifecycle: SlackProgressStreamLifecycle::new(
                 Arc::clone(&self.api),
@@ -67,16 +66,16 @@ struct SlackProgressReporterSession {
 }
 
 #[async_trait]
-impl InvestigationProgressSessionPort for SlackProgressReporterSession {
+impl TaskProgressSessionPort for SlackProgressReporterSession {
     async fn start(&mut self) {
         self.lifecycle.start(build_stream_start_chunks()).await;
     }
 
-    async fn apply(&mut self, update: InvestigationProgressUpdate) {
+    async fn apply(&mut self, update: TaskProgressUpdate) {
         self.lifecycle.append(build_progress_chunks(update)).await;
     }
 
-    async fn complete(&mut self, _input: CompleteInvestigationProgressSessionInput) {
+    async fn complete(&mut self, _input: CompleteTaskProgressSessionInput) {
         self.lifecycle.stop().await;
     }
 }
@@ -88,11 +87,11 @@ mod tests {
 
     use async_trait::async_trait;
     use reili_core::error::PortError;
-    use reili_core::investigation::{
-        CompleteInvestigationProgressSessionInput, InvestigationProgressSessionFactoryPort,
-        InvestigationProgressUpdate, StartInvestigationProgressSessionInput,
-    };
     use reili_core::logger::{LogEntry, Logger};
+    use reili_core::task::{
+        CompleteTaskProgressSessionInput, StartTaskProgressSessionInput,
+        TaskProgressSessionFactoryPort, TaskProgressUpdate,
+    };
 
     use super::{SlackProgressReporter, SlackProgressReporterDeps, SlackProgressStreamApiPort};
     use crate::outbound::slack::progress_stream::{
@@ -168,7 +167,7 @@ mod tests {
             api: Arc::clone(&api) as Arc<dyn SlackProgressStreamApiPort>,
             logger: Arc::new(MockLogger),
         });
-        let mut session = factory.create_for_thread(StartInvestigationProgressSessionInput {
+        let mut session = factory.create_for_thread(StartTaskProgressSessionInput {
             channel: "C123".to_string(),
             thread_ts: "123.456".to_string(),
             recipient_user_id: "U123".to_string(),
@@ -177,16 +176,16 @@ mod tests {
 
         session.start().await;
         session
-            .apply(InvestigationProgressUpdate::ScopeStarted {
+            .apply(TaskProgressUpdate::ScopeStarted {
                 step_id: "progress-step-1".to_string(),
-                owner_id: "investigation_lead".to_string(),
+                owner_id: "task_runner".to_string(),
                 title: "Collect evidence".to_string(),
                 detail: Some("Inspect logs\n".to_string()),
             })
             .await;
         session
-            .complete(CompleteInvestigationProgressSessionInput {
-                status: reili_core::investigation::InvestigationProgressSessionCompletionStatus::Succeeded,
+            .complete(CompleteTaskProgressSessionInput {
+                status: reili_core::task::TaskProgressSessionCompletionStatus::Succeeded,
             })
             .await;
 

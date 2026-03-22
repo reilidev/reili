@@ -49,7 +49,7 @@ impl Logger for TracingLogger {
 }
 
 pub fn init_json_logger() -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
-    let subscriber = build_json_subscriber(std::io::stderr);
+    let subscriber = build_json_subscriber(std::io::stdout);
     tracing::subscriber::set_global_default(subscriber)
 }
 
@@ -234,9 +234,9 @@ mod tests {
         let subscriber = build_json_subscriber(buffer.clone());
 
         tracing::subscriber::with_default(subscriber, || {
-            tracing::info!(job_id = "job-1", "investigation started");
-            tracing::warn!(retry_count = 2, "investigation retried");
-            tracing::error!(job_id = "job-1", "investigation failed");
+            tracing::info!(job_id = "job-1", "task started");
+            tracing::warn!(retry_count = 2, "task retried");
+            tracing::error!(job_id = "job-1", "task failed");
         });
 
         let output = String::from_utf8(buffer.snapshot()).expect("decode buffered logs");
@@ -247,13 +247,13 @@ mod tests {
 
         assert_eq!(logs.len(), 3);
         assert_eq!(logs[0]["level"], "INFO");
-        assert_eq!(logs[0]["message"], "investigation started");
+        assert_eq!(logs[0]["message"], "task started");
         assert_eq!(logs[0]["job_id"], "job-1");
         assert_eq!(logs[1]["level"], "WARN");
-        assert_eq!(logs[1]["message"], "investigation retried");
+        assert_eq!(logs[1]["message"], "task retried");
         assert_eq!(logs[1]["retry_count"], 2);
         assert_eq!(logs[2]["level"], "ERROR");
-        assert_eq!(logs[2]["message"], "investigation failed");
+        assert_eq!(logs[2]["message"], "task failed");
         assert_eq!(logs[2]["job_id"], "job-1");
     }
 
@@ -264,7 +264,7 @@ mod tests {
 
         tracing::subscriber::with_default(subscriber, || {
             tracing::info!(
-                message = "investigation started",
+                message = "task started",
                 meta = tracing::field::display(serde_json::json!({
                     "jobId": "job-1",
                     "attempt": "1"
@@ -275,7 +275,7 @@ mod tests {
         let output = String::from_utf8(buffer.snapshot()).expect("decode buffered logs");
         let log: Value = serde_json::from_str(output.trim()).expect("parse json log line");
 
-        assert_eq!(log["message"], "investigation started");
+        assert_eq!(log["message"], "task started");
         assert_eq!(log["meta"]["jobId"], "job-1");
         assert_eq!(log["meta"]["attempt"], "1");
         assert!(log["meta"].is_object());

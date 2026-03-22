@@ -3,34 +3,31 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use reili_core::error::PortError;
-use reili_core::investigation::InvestigationJob;
 use reili_core::messaging::slack::{SlackThreadReplyInput, SlackThreadReplyPort};
-use reili_core::queue::{CompleteJobInput, FailJobInput, InvestigationJobQueuePort, JobFailStatus};
+use reili_core::queue::{CompleteJobInput, FailJobInput, JobFailStatus, TaskJobQueuePort};
+use reili_core::task::TaskJob;
 use tokio::task::spawn;
 use tokio::time::sleep;
 
-use crate::investigation::{
-    ExecuteInvestigationJobInput, InvestigationExecutionDeps, execute_investigation_job,
-    string_log_meta,
-};
+use crate::task::{ExecuteTaskJobInput, TaskExecutionDeps, execute_task_job, string_log_meta};
 
 const IDLE_WAIT_MS: u64 = 150;
 
-pub struct StartInvestigationWorkerRunnerUseCaseDeps {
-    pub job_queue: Arc<InvestigationJobQueuePort>,
-    pub investigation_execution_deps: InvestigationExecutionDeps,
+pub struct StartTaskWorkerRunnerUseCaseDeps {
+    pub job_queue: Arc<TaskJobQueuePort>,
+    pub task_execution_deps: TaskExecutionDeps,
     pub worker_concurrency: u32,
     pub job_max_retry: u32,
     pub job_backoff_ms: u64,
 }
 
-pub struct StartInvestigationWorkerRunnerUseCase {
-    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+pub struct StartTaskWorkerRunnerUseCase {
+    deps: Arc<StartTaskWorkerRunnerUseCaseDeps>,
     is_running: Arc<AtomicBool>,
 }
 
-impl StartInvestigationWorkerRunnerUseCase {
-    pub fn new(deps: StartInvestigationWorkerRunnerUseCaseDeps) -> Self {
+impl StartTaskWorkerRunnerUseCase {
+    pub fn new(deps: StartTaskWorkerRunnerUseCaseDeps) -> Self {
         Self {
             deps: Arc::new(deps),
             is_running: Arc::new(AtomicBool::new(false)),
@@ -48,7 +45,7 @@ impl StartInvestigationWorkerRunnerUseCase {
         }
 
         for worker_index in 0..self.deps.worker_concurrency {
-            spawn(run_investigation_worker_loop(WorkerLoopInput {
+            spawn(run_task_worker_loop(WorkerLoopInput {
                 deps: Arc::clone(&self.deps),
                 is_running: Arc::clone(&self.is_running),
                 worker_index,
@@ -62,12 +59,12 @@ impl StartInvestigationWorkerRunnerUseCase {
 }
 
 struct WorkerLoopInput {
-    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+    deps: Arc<StartTaskWorkerRunnerUseCaseDeps>,
     is_running: Arc<AtomicBool>,
     worker_index: u32,
 }
 
-async fn run_investigation_worker_loop(input: WorkerLoopInput) {
+async fn run_task_worker_loop(input: WorkerLoopInput) {
     while input.is_running.load(Ordering::SeqCst) {
         run_worker_iteration(RunWorkerIterationInput {
             deps: Arc::clone(&input.deps),
@@ -78,7 +75,7 @@ async fn run_investigation_worker_loop(input: WorkerLoopInput) {
 }
 
 struct RunWorkerIterationInput {
-    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+    deps: Arc<StartTaskWorkerRunnerUseCaseDeps>,
     worker_index: u32,
 }
 
@@ -96,7 +93,7 @@ async fn run_worker_iteration(input: RunWorkerIterationInput) {
             sleep(Duration::from_millis(IDLE_WAIT_MS)).await;
         }
         Err(error) => {
-            input.deps.investigation_execution_deps.logger.error(
+            input.deps.task_execution_deps.logger.error(
                 "Failed to claim worker job",
                 string_log_meta([
                     ("workerIndex", input.worker_index.to_string()),
@@ -109,19 +106,19 @@ async fn run_worker_iteration(input: RunWorkerIterationInput) {
 }
 
 struct ProcessClaimedJobInput {
-    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+    deps: Arc<StartTaskWorkerRunnerUseCaseDeps>,
     worker_index: u32,
-    job: InvestigationJob,
+    job: TaskJob,
 }
 
 async fn process_claimed_job(input: ProcessClaimedJobInput) {
     let started_at = Instant::now();
 
-    match execute_investigation_job(ExecuteInvestigationJobInput {
+    match execute_task_job(ExecuteTaskJobInput {
         job_id: input.job.job_id.clone(),
         retry_count: input.job.retry_count,
         payload: input.job.payload.clone(),
-        deps: input.deps.investigation_execution_deps.clone(),
+        deps: input.deps.task_execution_deps.clone(),
     })
     .await
     {
@@ -141,7 +138,7 @@ async fn process_claimed_job(input: ProcessClaimedJobInput) {
                     })
                     .await;
 
-                    input.deps.investigation_execution_deps.logger.info(
+                    input.deps.task_execution_deps.logger.info(
                         "Completed worker job",
                         string_log_meta([
                             ("workerIndex", input.worker_index.to_string()),
@@ -202,9 +199,9 @@ enum FailureDisposition {
 }
 
 struct HandleFailedClaimedJobInput {
-    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+    deps: Arc<StartTaskWorkerRunnerUseCaseDeps>,
     worker_index: u32,
-    job: InvestigationJob,
+    job: TaskJob,
     started_at: Instant,
     error_message: String,
     failure_disposition: FailureDisposition,
@@ -229,7 +226,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
     let fail_result = match fail_result {
         Ok(value) => value,
         Err(queue_fail_error) => {
-            input.deps.investigation_execution_deps.logger.error(
+            input.deps.task_execution_deps.logger.error(
                 "Failed worker job",
                 string_log_meta([
                     ("workerIndex", input.worker_index.to_string()),
@@ -262,7 +259,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
     })
     .await;
 
-    input.deps.investigation_execution_deps.logger.error(
+    input.deps.task_execution_deps.logger.error(
         "Failed worker job",
         string_log_meta([
             ("workerIndex", input.worker_index.to_string()),
@@ -291,9 +288,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
     if fail_result.status == JobFailStatus::DeadLetter
         && let Err(dead_letter_error) =
             post_dead_letter_failure_message(PostDeadLetterFailureMessageInput {
-                slack_reply_port: Arc::clone(
-                    &input.deps.investigation_execution_deps.slack_reply_port,
-                ),
+                slack_reply_port: Arc::clone(&input.deps.task_execution_deps.slack_reply_port),
                 job: fail_result.job.clone(),
                 error_message: input.error_message.clone(),
                 exhausted_retries: matches!(
@@ -303,7 +298,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
             })
             .await
     {
-        input.deps.investigation_execution_deps.logger.error(
+        input.deps.task_execution_deps.logger.error(
             "Failed dead-letter notification",
             string_log_meta([
                 ("slackEventId", fail_result.job.payload.slack_event_id),
@@ -325,7 +320,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
 }
 
 struct ReadWorkerQueueDepthInput {
-    deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+    deps: Arc<StartTaskWorkerRunnerUseCaseDeps>,
     worker_index: u32,
 }
 
@@ -333,7 +328,7 @@ async fn read_worker_queue_depth(input: ReadWorkerQueueDepthInput) -> String {
     match input.deps.job_queue.get_depth().await {
         Ok(value) => value.to_string(),
         Err(error) => {
-            input.deps.investigation_execution_deps.logger.error(
+            input.deps.task_execution_deps.logger.error(
                 "Failed to read worker queue depth",
                 string_log_meta([
                     ("workerIndex", input.worker_index.to_string()),
@@ -347,7 +342,7 @@ async fn read_worker_queue_depth(input: ReadWorkerQueueDepthInput) -> String {
 
 struct PostDeadLetterFailureMessageInput {
     slack_reply_port: Arc<dyn SlackThreadReplyPort>,
-    job: InvestigationJob,
+    job: TaskJob,
     error_message: String,
     exhausted_retries: bool,
 }
@@ -361,12 +356,9 @@ async fn post_dead_letter_failure_message(
             channel: input.job.payload.message.channel.clone(),
             thread_ts: input.job.payload.message.thread_ts_or_ts().to_string(),
             text: if input.exhausted_retries {
-                format!(
-                    "Investigation failed after retries: {}",
-                    input.error_message
-                )
+                format!("Task failed after retries: {}", input.error_message)
             } else {
-                format!("Investigation failed: {}", input.error_message)
+                format!("Task failed: {}", input.error_message)
             },
         })
         .await
@@ -382,19 +374,11 @@ fn job_fail_status_to_string(value: &JobFailStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Arc, InvestigationExecutionDeps, InvestigationJob, InvestigationJobQueuePort,
-        JobFailStatus, PortError, ProcessClaimedJobInput, SlackThreadReplyInput,
-        SlackThreadReplyPort, StartInvestigationWorkerRunnerUseCaseDeps, handle_failed_claimed_job,
-        process_claimed_job,
+        Arc, JobFailStatus, PortError, ProcessClaimedJobInput, SlackThreadReplyInput,
+        SlackThreadReplyPort, StartTaskWorkerRunnerUseCaseDeps, TaskExecutionDeps, TaskJob,
+        TaskJobQueuePort, handle_failed_claimed_job, process_claimed_job,
     };
-    use crate::investigation::InvestigationLogMeta;
-    use reili_core::investigation::{
-        InvestigationJobPayload, InvestigationLeadRunReport, InvestigationLeadRunnerPort,
-        InvestigationProgressSessionFactoryPort, InvestigationProgressSessionPort,
-        InvestigationResources, LlmExecutionMetadata, LlmUsageSnapshot,
-        MockInvestigationLeadRunnerPort, MockInvestigationProgressSessionFactoryPort,
-        MockInvestigationProgressSessionPort, RunInvestigationLeadInput,
-    };
+    use crate::task::TaskLogMeta;
     use reili_core::knowledge::{MockWebSearchPort, WebSearchPort};
     use reili_core::logger::{LogEntry as CoreLogEntry, LogLevel};
     use reili_core::messaging::slack::{
@@ -412,9 +396,15 @@ mod tests {
         GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
         MockGithubCodeSearchPort, MockGithubPullRequestPort, MockGithubRepositoryContentPort,
     };
+    use reili_core::task::{
+        LlmExecutionMetadata, LlmUsageSnapshot, MockTaskProgressSessionFactoryPort,
+        MockTaskProgressSessionPort, MockTaskRunnerPort, RunTaskInput, TaskJobPayload,
+        TaskProgressSessionFactoryPort, TaskProgressSessionPort, TaskResources, TaskRunReport,
+        TaskRunnerPort,
+    };
     use std::sync::Mutex;
 
-    use crate::investigation::{InvestigationLogger, LogFieldValue};
+    use crate::task::{LogFieldValue, TaskLogger};
 
     const USAGE_SNAPSHOT: LlmUsageSnapshot = LlmUsageSnapshot {
         requests: 1,
@@ -426,7 +416,7 @@ mod tests {
     #[derive(Debug, Clone)]
     struct LogEntry {
         message: String,
-        meta: InvestigationLogMeta,
+        meta: TaskLogMeta,
     }
 
     #[derive(Default)]
@@ -445,7 +435,7 @@ mod tests {
         }
     }
 
-    impl InvestigationLogger for MockLogger {
+    impl TaskLogger for MockLogger {
         fn log(&self, entry: CoreLogEntry) {
             let captured = LogEntry {
                 message: entry.event.to_string(),
@@ -460,7 +450,7 @@ mod tests {
         }
     }
 
-    fn create_resources() -> InvestigationResources {
+    fn create_resources() -> TaskResources {
         let log_aggregate_port: Arc<dyn DatadogLogAggregatePort> =
             Arc::new(MockDatadogLogAggregatePort::new());
         let log_search_port: Arc<dyn DatadogLogSearchPort> =
@@ -479,7 +469,7 @@ mod tests {
             Arc::new(MockGithubPullRequestPort::new());
         let web_search_port: Arc<dyn WebSearchPort> = Arc::new(MockWebSearchPort::new());
 
-        InvestigationResources {
+        TaskResources {
             log_aggregate_port,
             log_search_port,
             metric_catalog_port,
@@ -492,24 +482,23 @@ mod tests {
         }
     }
 
-    fn create_progress_session_factory_for_execution()
-    -> Arc<dyn InvestigationProgressSessionFactoryPort> {
-        let mut session = MockInvestigationProgressSessionPort::new();
+    fn create_progress_session_factory_for_execution() -> Arc<dyn TaskProgressSessionFactoryPort> {
+        let mut session = MockTaskProgressSessionPort::new();
         session.expect_start().times(1).returning(|| ());
         session.expect_apply().times(0);
         session.expect_complete().times(1).returning(|_| ());
 
-        let mut factory = MockInvestigationProgressSessionFactoryPort::new();
+        let mut factory = MockTaskProgressSessionFactoryPort::new();
         factory
             .expect_create_for_thread()
             .times(1)
-            .return_once(move |_| Box::new(session) as Box<dyn InvestigationProgressSessionPort>);
+            .return_once(move |_| Box::new(session) as Box<dyn TaskProgressSessionPort>);
 
-        Arc::new(factory) as Arc<dyn InvestigationProgressSessionFactoryPort>
+        Arc::new(factory) as Arc<dyn TaskProgressSessionFactoryPort>
     }
 
     struct TestContext {
-        deps: Arc<StartInvestigationWorkerRunnerUseCaseDeps>,
+        deps: Arc<StartTaskWorkerRunnerUseCaseDeps>,
         complete_inputs: Arc<Mutex<Vec<CompleteJobInput>>>,
         fail_inputs: Arc<Mutex<Vec<FailJobInput>>>,
         posted_replies: Arc<Mutex<Vec<SlackThreadReplyInput>>>,
@@ -521,7 +510,7 @@ mod tests {
         let fail_inputs = Arc::new(Mutex::new(Vec::new()));
         let posted_replies = Arc::new(Mutex::new(Vec::new()));
         let logger = Arc::new(MockLogger::default());
-        let mut job_queue = MockJobQueuePort::<InvestigationJob>::new();
+        let mut job_queue = MockJobQueuePort::<TaskJob>::new();
         let complete_calls = Arc::clone(&complete_inputs);
         job_queue
             .expect_complete()
@@ -551,32 +540,31 @@ mod tests {
             .expect_fetch_thread_history()
             .times(0);
 
-        let mut investigation_lead_runner = MockInvestigationLeadRunnerPort::new();
-        investigation_lead_runner.expect_run().times(1).returning(
-            |_: RunInvestigationLeadInput| {
-                Ok(InvestigationLeadRunReport {
-                    result_text: "investigation_lead result".to_string(),
+        let mut task_runner = MockTaskRunnerPort::new();
+        task_runner
+            .expect_run()
+            .times(1)
+            .returning(|_: RunTaskInput| {
+                Ok(TaskRunReport {
+                    result_text: "task_runner result".to_string(),
                     usage: USAGE_SNAPSHOT,
                     execution: LlmExecutionMetadata {
                         provider: "openai".to_string(),
                         model: "gpt-test".to_string(),
                     },
                 })
-            },
-        );
+            });
 
-        let deps = Arc::new(StartInvestigationWorkerRunnerUseCaseDeps {
-            job_queue: Arc::new(job_queue) as Arc<InvestigationJobQueuePort>,
-            investigation_execution_deps: InvestigationExecutionDeps {
+        let deps = Arc::new(StartTaskWorkerRunnerUseCaseDeps {
+            job_queue: Arc::new(job_queue) as Arc<TaskJobQueuePort>,
+            task_execution_deps: TaskExecutionDeps {
                 slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
-                investigation_progress_session_factory_port:
-                    create_progress_session_factory_for_execution(),
+                task_progress_session_factory_port: create_progress_session_factory_for_execution(),
                 slack_thread_history_port: Arc::new(slack_thread_history_port)
                     as Arc<dyn SlackThreadHistoryPort>,
-                investigation_resources: create_resources(),
-                investigation_lead_runner: Arc::new(investigation_lead_runner)
-                    as Arc<dyn InvestigationLeadRunnerPort>,
-                logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+                task_resources: create_resources(),
+                task_runner: Arc::new(task_runner) as Arc<dyn TaskRunnerPort>,
+                logger: Arc::clone(&logger) as Arc<dyn TaskLogger>,
             },
             worker_concurrency: 1,
             job_max_retry: 2,
@@ -593,7 +581,7 @@ mod tests {
     }
 
     fn create_failure_context(
-        fail_result: JobFailResult<InvestigationJob>,
+        fail_result: JobFailResult<TaskJob>,
         queue_depth_result: Result<usize, PortError>,
         expected_reply_calls: usize,
     ) -> TestContext {
@@ -601,7 +589,7 @@ mod tests {
         let fail_inputs = Arc::new(Mutex::new(Vec::new()));
         let posted_replies = Arc::new(Mutex::new(Vec::new()));
         let logger = Arc::new(MockLogger::default());
-        let mut job_queue = MockJobQueuePort::<InvestigationJob>::new();
+        let mut job_queue = MockJobQueuePort::<TaskJob>::new();
         job_queue.expect_complete().times(0);
         let fail_calls = Arc::clone(&fail_inputs);
         job_queue
@@ -630,20 +618,19 @@ mod tests {
                 });
         }
 
-        let deps = Arc::new(StartInvestigationWorkerRunnerUseCaseDeps {
-            job_queue: Arc::new(job_queue) as Arc<InvestigationJobQueuePort>,
-            investigation_execution_deps: InvestigationExecutionDeps {
+        let deps = Arc::new(StartTaskWorkerRunnerUseCaseDeps {
+            job_queue: Arc::new(job_queue) as Arc<TaskJobQueuePort>,
+            task_execution_deps: TaskExecutionDeps {
                 slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
-                investigation_progress_session_factory_port: Arc::new(
-                    MockInvestigationProgressSessionFactoryPort::new(),
+                task_progress_session_factory_port: Arc::new(
+                    MockTaskProgressSessionFactoryPort::new(),
                 )
-                    as Arc<dyn InvestigationProgressSessionFactoryPort>,
+                    as Arc<dyn TaskProgressSessionFactoryPort>,
                 slack_thread_history_port: Arc::new(MockSlackThreadHistoryPort::new())
                     as Arc<dyn SlackThreadHistoryPort>,
-                investigation_resources: create_resources(),
-                investigation_lead_runner: Arc::new(MockInvestigationLeadRunnerPort::new())
-                    as Arc<dyn InvestigationLeadRunnerPort>,
-                logger: Arc::clone(&logger) as Arc<dyn InvestigationLogger>,
+                task_resources: create_resources(),
+                task_runner: Arc::new(MockTaskRunnerPort::new()) as Arc<dyn TaskRunnerPort>,
+                logger: Arc::clone(&logger) as Arc<dyn TaskLogger>,
             },
             worker_concurrency: 1,
             job_max_retry: 2,
@@ -659,11 +646,11 @@ mod tests {
         }
     }
 
-    fn create_job(input: CreateJobInput) -> InvestigationJob {
-        InvestigationJob {
+    fn create_job(input: CreateJobInput) -> TaskJob {
+        TaskJob {
             job_id: input.job_id,
             received_at: "2026-03-04T00:00:00.000Z".to_string(),
-            payload: InvestigationJobPayload {
+            payload: TaskJobPayload {
                 slack_event_id: "Ev001".to_string(),
                 message: SlackMessage {
                     slack_event_id: "Ev001".to_string(),
@@ -835,7 +822,7 @@ mod tests {
         assert_eq!(posted_replies.len(), 1);
         assert_eq!(
             posted_replies[0].text,
-            "Investigation failed after retries: fatal failure"
+            "Task failed after retries: fatal failure"
         );
         assert_eq!(posted_replies[0].thread_ts, "1710000000.000001");
     }
@@ -883,9 +870,6 @@ mod tests {
             .expect("lock posted replies")
             .clone();
         assert_eq!(posted_replies.len(), 1);
-        assert_eq!(
-            posted_replies[0].text,
-            "Investigation failed: mcp connect failed"
-        );
+        assert_eq!(posted_replies[0].text, "Task failed: mcp connect failed");
     }
 }

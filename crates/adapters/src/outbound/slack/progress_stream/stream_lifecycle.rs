@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use reili_core::error::PortError;
-use reili_core::investigation::StartInvestigationProgressSessionInput;
+use reili_core::task::StartTaskProgressSessionInput;
 
 use super::chunk_rotation::{
     STREAM_ROTATION_CHARACTER_LIMIT, count_chunk_characters, should_rotate_stream,
@@ -14,7 +14,7 @@ use super::{
 pub(crate) struct SlackProgressStreamLifecycle {
     api: Arc<dyn SlackProgressStreamApiPort>,
     logger: Arc<dyn SlackProgressStreamLogger>,
-    route: StartInvestigationProgressSessionInput,
+    route: StartTaskProgressSessionInput,
     stream_ts: Option<String>,
     current_stream_character_count: usize,
     stream_stopped: bool,
@@ -32,7 +32,7 @@ impl SlackProgressStreamLifecycle {
     pub(crate) fn new(
         api: Arc<dyn SlackProgressStreamApiPort>,
         logger: Arc<dyn SlackProgressStreamLogger>,
-        route: StartInvestigationProgressSessionInput,
+        route: StartTaskProgressSessionInput,
     ) -> Self {
         Self {
             api,
@@ -407,8 +407,8 @@ mod tests {
 
     use async_trait::async_trait;
     use reili_core::error::PortError;
-    use reili_core::investigation::StartInvestigationProgressSessionInput;
     use reili_core::logger::{LogEntry, LogFields, LogLevel};
+    use reili_core::task::StartTaskProgressSessionInput;
 
     use crate::outbound::slack::progress_stream::{
         LogFieldValue, SlackAnyChunk, SlackAppendStreamInput, SlackMarkdownTextChunk,
@@ -536,8 +536,8 @@ mod tests {
         }
     }
 
-    fn create_route() -> StartInvestigationProgressSessionInput {
-        StartInvestigationProgressSessionInput {
+    fn create_route() -> StartTaskProgressSessionInput {
+        StartTaskProgressSessionInput {
             channel: "C123".to_string(),
             thread_ts: "123.456".to_string(),
             recipient_user_id: "U123".to_string(),

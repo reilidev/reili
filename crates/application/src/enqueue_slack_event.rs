@@ -4,19 +4,19 @@ use std::time::Instant;
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use reili_core::error::PortError;
-use reili_core::investigation::{InvestigationJob, InvestigationJobPayload};
 use reili_core::messaging::slack::SlackMessage;
 use reili_core::messaging::slack::SlackMessageHandlerPort;
 use reili_core::messaging::slack::{SlackThreadReplyInput, SlackThreadReplyPort};
-use reili_core::queue::InvestigationJobQueuePort;
+use reili_core::queue::TaskJobQueuePort;
+use reili_core::task::{TaskJob, TaskJobPayload};
 use uuid::Uuid;
 
-use crate::investigation::{InvestigationLogger, string_log_meta};
+use crate::task::{TaskLogger, string_log_meta};
 
 pub struct EnqueueSlackEventUseCaseDeps {
-    pub job_queue: Arc<InvestigationJobQueuePort>,
+    pub job_queue: Arc<TaskJobQueuePort>,
     pub slack_reply_port: Arc<dyn SlackThreadReplyPort>,
-    pub logger: Arc<dyn InvestigationLogger>,
+    pub logger: Arc<dyn TaskLogger>,
 }
 
 pub struct EnqueueSlackEventUseCase {
@@ -34,7 +34,7 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
     async fn handle(&self, message: SlackMessage) -> Result<(), PortError> {
         let event_started_at = Instant::now();
         let thread_ts = message.thread_ts_or_ts().to_string();
-        let job = build_investigation_job(BuildInvestigationJobInput {
+        let job = build_task_job(BuildTaskJobInput {
             message: message.clone(),
             received_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
         });
@@ -48,7 +48,7 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
                 .await;
 
                 self.deps.logger.info(
-                    "Queued investigation job",
+                    "Queued task job",
                     string_log_meta([
                         ("slackEventId", message.slack_event_id),
                         ("jobId", job.job_id),
@@ -66,7 +66,7 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
             }
             Err(enqueue_error) => {
                 self.deps.logger.error(
-                    "Failed to enqueue investigation job",
+                    "Failed to enqueue task job",
                     string_log_meta([
                         ("slackEventId", message.slack_event_id),
                         ("jobId", job.job_id),
@@ -85,7 +85,7 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
                     .post_thread_reply(SlackThreadReplyInput {
                         channel: message.channel,
                         thread_ts,
-                        text: format!("Failed to queue investigation: {}", enqueue_error.message),
+                        text: format!("Failed to queue task: {}", enqueue_error.message),
                     })
                     .await
             }
@@ -94,8 +94,8 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
 }
 
 struct ReadWorkerQueueDepthInput {
-    job_queue: Arc<InvestigationJobQueuePort>,
-    logger: Arc<dyn InvestigationLogger>,
+    job_queue: Arc<TaskJobQueuePort>,
+    logger: Arc<dyn TaskLogger>,
 }
 
 async fn read_worker_queue_depth(input: ReadWorkerQueueDepthInput) -> String {
@@ -111,18 +111,18 @@ async fn read_worker_queue_depth(input: ReadWorkerQueueDepthInput) -> String {
     }
 }
 
-struct BuildInvestigationJobInput {
+struct BuildTaskJobInput {
     message: SlackMessage,
     received_at: String,
 }
 
-fn build_investigation_job(input: BuildInvestigationJobInput) -> InvestigationJob {
+fn build_task_job(input: BuildTaskJobInput) -> TaskJob {
     let slack_event_id = input.message.slack_event_id.clone();
 
-    InvestigationJob {
+    TaskJob {
         job_id: Uuid::new_v4().to_string(),
         received_at: input.received_at,
-        payload: InvestigationJobPayload {
+        payload: TaskJobPayload {
             slack_event_id,
             message: input.message,
         },
@@ -133,26 +133,26 @@ fn build_investigation_job(input: BuildInvestigationJobInput) -> InvestigationJo
 #[cfg(test)]
 mod tests {
     use super::{
-        EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, InvestigationLogger, PortError,
-        SlackMessage, SlackMessageHandlerPort, SlackThreadReplyInput, SlackThreadReplyPort,
+        EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, PortError, SlackMessage,
+        SlackMessageHandlerPort, SlackThreadReplyInput, SlackThreadReplyPort, TaskLogger,
     };
     use reili_core::logger::MockLogger;
     use reili_core::messaging::slack::{MockSlackThreadReplyPort, SlackTriggerType};
-    use reili_core::queue::{InvestigationJobQueuePort, MockJobQueuePort};
+    use reili_core::queue::{MockJobQueuePort, TaskJobQueuePort};
     use std::sync::{Arc, Mutex};
 
-    use reili_core::investigation::InvestigationJob;
+    use reili_core::task::TaskJob;
 
     struct TestContext {
         use_case: EnqueueSlackEventUseCase,
-        enqueued_jobs: Arc<Mutex<Vec<InvestigationJob>>>,
+        enqueued_jobs: Arc<Mutex<Vec<TaskJob>>>,
         posted_replies: Arc<Mutex<Vec<SlackThreadReplyInput>>>,
     }
 
     fn create_use_case(input: CreateUseCaseInput) -> TestContext {
         let enqueued_jobs = Arc::new(Mutex::new(Vec::new()));
         let posted_replies = Arc::new(Mutex::new(Vec::new()));
-        let mut job_queue = MockJobQueuePort::<InvestigationJob>::new();
+        let mut job_queue = MockJobQueuePort::<TaskJob>::new();
         let enqueue_result = input.enqueue_result.clone();
         let should_post_reply = input.enqueue_result.is_err();
         let expected_info_calls = usize::from(input.enqueue_result.is_ok());
@@ -165,7 +165,7 @@ mod tests {
         job_queue
             .expect_enqueue()
             .times(1)
-            .returning(move |job: InvestigationJob| {
+            .returning(move |job: TaskJob| {
                 enqueue_calls.lock().expect("lock enqueued jobs").push(job);
                 enqueue_result.clone()
             });
@@ -211,9 +211,9 @@ mod tests {
             .return_const(());
 
         let use_case = EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
-            job_queue: Arc::new(job_queue) as Arc<InvestigationJobQueuePort>,
+            job_queue: Arc::new(job_queue) as Arc<TaskJobQueuePort>,
             slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
-            logger: Arc::new(logger) as Arc<dyn InvestigationLogger>,
+            logger: Arc::new(logger) as Arc<dyn TaskLogger>,
         });
 
         TestContext {
@@ -242,7 +242,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatches_alert_investigation_job() {
+    async fn dispatches_alert_task_job() {
         let context = create_use_case(CreateUseCaseInput {
             enqueue_result: Ok(()),
             queue_depth_result: Some(Ok(1)),
@@ -305,9 +305,6 @@ mod tests {
         assert_eq!(posted_replies.len(), 1);
         assert_eq!(posted_replies[0].channel, "C001");
         assert_eq!(posted_replies[0].thread_ts, "1710000000.000001");
-        assert_eq!(
-            posted_replies[0].text,
-            "Failed to queue investigation: fail-1"
-        );
+        assert_eq!(posted_replies[0].text, "Failed to queue task: fail-1");
     }
 }

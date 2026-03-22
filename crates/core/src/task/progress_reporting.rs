@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StartInvestigationProgressSessionInput {
+pub struct StartTaskProgressSessionInput {
     pub channel: String,
     pub thread_ts: String,
     pub recipient_user_id: String,
@@ -9,13 +9,13 @@ pub struct StartInvestigationProgressSessionInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InvestigationProgressScopeStatus {
+pub enum TaskProgressScopeStatus {
     InProgress,
     Complete,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InvestigationProgressUpdate {
+pub enum TaskProgressUpdate {
     ScopeStarted {
         step_id: String,
         owner_id: String,
@@ -26,7 +26,7 @@ pub enum InvestigationProgressUpdate {
         step_id: String,
         owner_id: String,
         title: String,
-        status: InvestigationProgressScopeStatus,
+        status: TaskProgressScopeStatus,
         detail: Option<String>,
     },
     ScopeCompleted {
@@ -37,28 +37,28 @@ pub enum InvestigationProgressUpdate {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InvestigationProgressSessionCompletionStatus {
+pub enum TaskProgressSessionCompletionStatus {
     Succeeded,
     Failed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CompleteInvestigationProgressSessionInput {
-    pub status: InvestigationProgressSessionCompletionStatus,
+pub struct CompleteTaskProgressSessionInput {
+    pub status: TaskProgressSessionCompletionStatus,
 }
 
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 #[async_trait]
-pub trait InvestigationProgressSessionPort: Send {
+pub trait TaskProgressSessionPort: Send {
     async fn start(&mut self);
-    async fn apply(&mut self, update: InvestigationProgressUpdate);
-    async fn complete(&mut self, input: CompleteInvestigationProgressSessionInput);
+    async fn apply(&mut self, update: TaskProgressUpdate);
+    async fn complete(&mut self, input: CompleteTaskProgressSessionInput);
 }
 
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
-pub trait InvestigationProgressSessionFactoryPort: Send + Sync {
+pub trait TaskProgressSessionFactoryPort: Send + Sync {
     fn create_for_thread(
         &self,
-        input: StartInvestigationProgressSessionInput,
-    ) -> Box<dyn InvestigationProgressSessionPort>;
+        input: StartTaskProgressSessionInput,
+    ) -> Box<dyn TaskProgressSessionPort>;
 }

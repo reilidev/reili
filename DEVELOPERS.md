@@ -87,7 +87,7 @@ Dependency direction:
 
 ## Behavior Notes
 
-- The runtime receives Slack events at `/slack/events` and enqueues investigation jobs directly into `InMemoryJobQueue`.
+- The runtime receives Slack events at `/slack/events` and enqueues task jobs directly into `InMemoryJobQueue`.
 - Worker tasks run in the same process and claim jobs from that queue.
 - Pending jobs are not durable across app restarts.
 

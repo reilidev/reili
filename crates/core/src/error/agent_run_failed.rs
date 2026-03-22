@@ -1,11 +1,11 @@
 use thiserror::Error;
 
-use crate::investigation::LlmUsageSnapshot;
+use crate::task::LlmUsageSnapshot;
 
-pub const INVESTIGATION_LEAD_RUN_FAILED_CODE: &str = "INVESTIGATION_LEAD_RUN_FAILED";
+pub const TASK_RUNNER_RUN_FAILED_CODE: &str = "TASK_RUNNER_RUN_FAILED";
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("InvestigationLead run failed: {cause_message}")]
+#[error("TaskRunner run failed: {cause_message}")]
 pub struct AgentRunFailedError {
     pub usage: LlmUsageSnapshot,
     pub cause_message: String,
@@ -14,7 +14,7 @@ pub struct AgentRunFailedError {
 
 impl AgentRunFailedError {
     pub fn code(&self) -> &'static str {
-        INVESTIGATION_LEAD_RUN_FAILED_CODE
+        TASK_RUNNER_RUN_FAILED_CODE
     }
 
     pub fn new(usage: LlmUsageSnapshot, cause_message: impl Into<String>) -> Self {

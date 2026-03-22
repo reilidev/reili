@@ -1,8 +1,8 @@
 pub mod enqueue_slack_event;
-pub mod investigation;
-pub mod start_investigation_worker_runner;
+pub mod start_task_worker_runner;
+pub mod task;
 
 pub use enqueue_slack_event::{EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps};
-pub use start_investigation_worker_runner::{
-    StartInvestigationWorkerRunnerUseCase, StartInvestigationWorkerRunnerUseCaseDeps,
+pub use start_task_worker_runner::{
+    StartTaskWorkerRunnerUseCase, StartTaskWorkerRunnerUseCaseDeps,
 };

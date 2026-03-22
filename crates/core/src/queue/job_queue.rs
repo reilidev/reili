@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::{error::PortError, investigation::InvestigationJob};
+use crate::{error::PortError, task::TaskJob};
 
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 pub trait QueueJob: Send + Sync {
@@ -10,7 +10,7 @@ pub trait QueueJob: Send + Sync {
     fn with_retry_count(&self, retry_count: u32) -> Self;
 }
 
-impl QueueJob for InvestigationJob {
+impl QueueJob for TaskJob {
     fn job_id(&self) -> &str {
         &self.job_id
     }

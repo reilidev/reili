@@ -3,8 +3,8 @@ use std::sync::Arc;
 use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::logger::TracingLogger;
 use reili_adapters::outbound::agents::{
-    BedrockInvestigationLeadRunner, BedrockInvestigationLeadRunnerInput, DatadogMcpToolConfig,
-    OpenAiInvestigationLeadRunner, OpenAiInvestigationLeadRunnerInput,
+    BedrockTaskRunner, BedrockTaskRunnerInput, DatadogMcpToolConfig, OpenAiTaskRunner,
+    OpenAiTaskRunnerInput,
 };
 use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
 use reili_adapters::outbound::datadog::DatadogEventSearchAdapter;
@@ -19,19 +19,15 @@ use reili_adapters::outbound::slack::{
     SlackThreadReplyAdapter, SlackWebApiClient, SlackWebApiClientConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
-use reili_application::investigation::{
-    InvestigationExecutionDeps, InvestigationLogger, ScopedGithubCodeSearchPort,
-    ScopedGithubPullRequestPort, ScopedGithubRepositoryContentPort,
+use reili_application::task::{
+    ScopedGithubCodeSearchPort, ScopedGithubPullRequestPort, ScopedGithubRepositoryContentPort,
+    TaskExecutionDeps, TaskLogger,
 };
 use reili_application::{
-    EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, StartInvestigationWorkerRunnerUseCase,
-    StartInvestigationWorkerRunnerUseCaseDeps,
+    EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, StartTaskWorkerRunnerUseCase,
+    StartTaskWorkerRunnerUseCaseDeps,
 };
 use reili_core::error::PortError;
-use reili_core::investigation::InvestigationJob;
-use reili_core::investigation::{
-    InvestigationLeadRunnerPort, InvestigationProgressSessionFactoryPort, InvestigationResources,
-};
 use reili_core::knowledge::WebSearchPort;
 use reili_core::messaging::slack::SlackMessageHandlerPort;
 use reili_core::messaging::slack::{SlackThreadHistoryPort, SlackThreadReplyPort};
@@ -39,10 +35,12 @@ use reili_core::monitoring::datadog::{
     DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
     DatadogMetricCatalogPort, DatadogMetricQueryPort,
 };
-use reili_core::queue::InvestigationJobQueuePort;
+use reili_core::queue::TaskJobQueuePort;
 use reili_core::source_code::github::{
     GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort, GithubScopePolicy,
 };
+use reili_core::task::TaskJob;
+use reili_core::task::{TaskProgressSessionFactoryPort, TaskResources, TaskRunnerPort};
 use serde_json::{Value, json};
 use thiserror::Error;
 
@@ -59,8 +57,8 @@ pub struct RuntimeDeps {
     pub slack_signature_verifier: Arc<SlackSignatureVerifier>,
     pub bot_user_id: String,
     pub slack_message_handler: Arc<dyn SlackMessageHandlerPort>,
-    pub worker_runner: StartInvestigationWorkerRunnerUseCase,
-    pub logger: Arc<dyn InvestigationLogger>,
+    pub worker_runner: StartTaskWorkerRunnerUseCase,
+    pub logger: Arc<dyn TaskLogger>,
 }
 
 #[derive(Debug, Error)]
@@ -73,7 +71,7 @@ pub enum RuntimeBootstrapError {
 
 struct ProviderPorts {
     web_search_port: Arc<dyn WebSearchPort>,
-    investigation_lead_runner: Arc<dyn InvestigationLeadRunnerPort>,
+    task_runner: Arc<dyn TaskRunnerPort>,
 }
 
 struct CreateProviderPortsInput<'a> {
@@ -86,7 +84,7 @@ struct CreateProviderPortsInput<'a> {
 }
 
 pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, RuntimeBootstrapError> {
-    let logger = create_investigation_logger();
+    let logger = create_task_logger();
     let slack_web_api_client = Arc::new(SlackWebApiClient::new(SlackWebApiClientConfig {
         bot_token: config.slack_bot_token.clone(),
         base_url: None,
@@ -95,17 +93,15 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let slack_reply_port: Arc<dyn SlackThreadReplyPort> = Arc::new(SlackThreadReplyAdapter::new(
         Arc::clone(&slack_web_api_client),
     ));
-    let investigation_progress_session_factory_port: Arc<
-        dyn InvestigationProgressSessionFactoryPort,
-    > = Arc::new(SlackProgressReporter::new(SlackProgressReporterInput {
-        client: Arc::clone(&slack_web_api_client),
-        logger: Arc::clone(&logger),
-    }));
+    let task_progress_session_factory_port: Arc<dyn TaskProgressSessionFactoryPort> =
+        Arc::new(SlackProgressReporter::new(SlackProgressReporterInput {
+            client: Arc::clone(&slack_web_api_client),
+            logger: Arc::clone(&logger),
+        }));
     let slack_thread_history_port: Arc<dyn SlackThreadHistoryPort> = Arc::new(
         SlackThreadHistoryAdapter::new(Arc::clone(&slack_web_api_client)),
     );
-    let job_queue: Arc<InvestigationJobQueuePort> =
-        Arc::new(InMemoryJobQueue::<InvestigationJob>::new());
+    let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
 
     let datadog_http_client = Arc::new(DatadogHttpClient::new(DatadogHttpClientConfig {
         api_key: config.datadog_api_key.clone(),
@@ -158,7 +154,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     })
     .await?;
 
-    let investigation_resources = InvestigationResources {
+    let task_resources = TaskResources {
         log_aggregate_port,
         log_search_port,
         metric_catalog_port,
@@ -169,7 +165,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         github_pull_request_port,
         web_search_port: provider_ports.web_search_port,
     };
-    let investigation_lead_runner = provider_ports.investigation_lead_runner;
+    let task_runner = provider_ports.task_runner;
     let slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
@@ -177,21 +173,20 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
             logger: Arc::clone(&logger),
         }),
     );
-    let worker_runner =
-        StartInvestigationWorkerRunnerUseCase::new(StartInvestigationWorkerRunnerUseCaseDeps {
-            job_queue,
-            investigation_execution_deps: InvestigationExecutionDeps {
-                slack_reply_port,
-                investigation_progress_session_factory_port,
-                slack_thread_history_port,
-                investigation_resources,
-                investigation_lead_runner,
-                logger: Arc::clone(&logger),
-            },
-            worker_concurrency: config.worker_concurrency,
-            job_max_retry: config.job_max_retry,
-            job_backoff_ms: config.job_backoff_ms,
-        });
+    let worker_runner = StartTaskWorkerRunnerUseCase::new(StartTaskWorkerRunnerUseCaseDeps {
+        job_queue,
+        task_execution_deps: TaskExecutionDeps {
+            slack_reply_port,
+            task_progress_session_factory_port,
+            slack_thread_history_port,
+            task_resources,
+            task_runner,
+            logger: Arc::clone(&logger),
+        },
+        worker_concurrency: config.worker_concurrency,
+        job_max_retry: config.job_max_retry,
+        job_backoff_ms: config.job_backoff_ms,
+    });
     let slack_signature_verifier = Arc::new(SlackSignatureVerifier::new(
         config.slack_signing_secret.clone(),
     )?);
@@ -213,19 +208,17 @@ async fn create_provider_ports(
             web_search_port: Arc::new(OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
                 api_key: config.api_key.clone(),
             })),
-            investigation_lead_runner: Arc::new(OpenAiInvestigationLeadRunner::new(
-                OpenAiInvestigationLeadRunnerInput {
-                    api_key: config.api_key.clone(),
-                    investigation_lead_model: config.investigation_lead_model.clone(),
-                    datadog_mcp: DatadogMcpToolConfig {
-                        api_key: input.datadog_api_key,
-                        app_key: input.datadog_app_key,
-                        site: input.datadog_site,
-                    },
-                    github_scope_org: input.github_scope_org,
-                    language: input.language,
+            task_runner: Arc::new(OpenAiTaskRunner::new(OpenAiTaskRunnerInput {
+                api_key: config.api_key.clone(),
+                task_runner_model: config.task_runner_model.clone(),
+                datadog_mcp: DatadogMcpToolConfig {
+                    api_key: input.datadog_api_key,
+                    app_key: input.datadog_app_key,
+                    site: input.datadog_site,
                 },
-            )),
+                github_scope_org: input.github_scope_org,
+                language: input.language,
+            })),
         }),
         LlmProviderConfig::Bedrock(config) => Ok(ProviderPorts {
             web_search_port: Arc::new(BedrockWebSearchAdapter::new(
@@ -233,24 +226,22 @@ async fn create_provider_ports(
                     model_id: config.model_id.clone(),
                 },
             )),
-            investigation_lead_runner: Arc::new(BedrockInvestigationLeadRunner::new(
-                BedrockInvestigationLeadRunnerInput {
-                    region: config.region.clone(),
-                    model_id: config.model_id.clone(),
-                    datadog_mcp: DatadogMcpToolConfig {
-                        api_key: input.datadog_api_key,
-                        app_key: input.datadog_app_key,
-                        site: input.datadog_site,
-                    },
-                    github_scope_org: input.github_scope_org,
-                    language: input.language,
+            task_runner: Arc::new(BedrockTaskRunner::new(BedrockTaskRunnerInput {
+                region: config.region.clone(),
+                model_id: config.model_id.clone(),
+                datadog_mcp: DatadogMcpToolConfig {
+                    api_key: input.datadog_api_key,
+                    app_key: input.datadog_app_key,
+                    site: input.datadog_site,
                 },
-            )),
+                github_scope_org: input.github_scope_org,
+                language: input.language,
+            })),
         }),
     }
 }
 
-pub fn create_investigation_logger() -> Arc<dyn InvestigationLogger> {
+pub fn create_task_logger() -> Arc<dyn TaskLogger> {
     Arc::new(TracingLogger)
 }
 

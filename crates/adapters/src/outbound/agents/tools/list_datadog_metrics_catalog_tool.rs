@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use reili_core::error::PortError;
-use reili_core::investigation::InvestigationResources;
 use reili_core::monitoring::datadog::DatadogMetricCatalogParams;
+use reili_core::task::TaskResources;
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
@@ -14,11 +14,11 @@ use super::tool_json::to_json_string;
 
 #[derive(Clone)]
 pub struct ListDatadogMetricsCatalogTool {
-    resources: Arc<InvestigationResources>,
+    resources: Arc<TaskResources>,
 }
 
 impl ListDatadogMetricsCatalogTool {
-    pub fn new(resources: Arc<InvestigationResources>) -> Self {
+    pub fn new(resources: Arc<TaskResources>) -> Self {
         Self { resources }
     }
 }

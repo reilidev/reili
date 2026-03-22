@@ -4,53 +4,47 @@ use std::time::Instant;
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use reili_core::error::PortError;
-use reili_core::investigation::{
-    InvestigationContext, InvestigationJobPayload, InvestigationLeadRunnerPort,
-    InvestigationProgressEventInput, InvestigationProgressEventPort,
-    InvestigationProgressSessionFactoryPort, InvestigationRequest, InvestigationResources,
-    InvestigationRuntime, LlmExecutionMetadata, LlmUsageSnapshot, RunInvestigationLeadInput,
-};
 use reili_core::messaging::slack::{
     SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
 };
+use reili_core::task::{
+    LlmExecutionMetadata, LlmUsageSnapshot, RunTaskInput, TaskContext, TaskJobPayload,
+    TaskProgressEventInput, TaskProgressEventPort, TaskProgressSessionFactoryPort, TaskRequest,
+    TaskResources, TaskRunnerPort, TaskRuntime,
+};
 use tokio::sync::{Mutex, mpsc};
 
-use super::execution_errors::{ExecuteInvestigationJobError, resolve_investigation_failure_error};
-use super::logger::{InvestigationLogMeta, InvestigationLogger, LogFieldValue, string_log_meta};
+use super::execution_errors::{ExecuteTaskJobError, resolve_task_failure_error};
+use super::logger::{LogFieldValue, TaskLogMeta, TaskLogger, string_log_meta};
 use super::services::{
-    CreateInvestigationProgressStreamSessionFactoryInput,
-    CreateInvestigationProgressStreamSessionInput, InvestigationLeadProgressEventHandler,
-    InvestigationLeadProgressEventHandlerInput, InvestigationProgressStreamSession,
-    InvestigationProgressStreamSessionFactory,
-    create_investigation_progress_stream_session_factory,
+    CreateTaskProgressStreamSessionFactoryInput, CreateTaskProgressStreamSessionInput,
+    TaskProgressEventHandler, TaskProgressEventHandlerInput, TaskProgressStreamSession,
+    TaskProgressStreamSessionFactory, create_task_progress_stream_session_factory,
 };
 use super::slack_thread_context_loader::{
     SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
 };
 
-const FALLBACK_REPORT_TEXT: &str = "Investigation completed but failed to generate a report.";
+const FALLBACK_REPORT_TEXT: &str = "Task completed but failed to generate a report.";
 
 #[derive(Clone)]
-pub struct InvestigationExecutionDeps {
+pub struct TaskExecutionDeps {
     pub slack_reply_port: Arc<dyn SlackThreadReplyPort>,
-    pub investigation_progress_session_factory_port:
-        Arc<dyn InvestigationProgressSessionFactoryPort>,
+    pub task_progress_session_factory_port: Arc<dyn TaskProgressSessionFactoryPort>,
     pub slack_thread_history_port: Arc<dyn SlackThreadHistoryPort>,
-    pub investigation_resources: InvestigationResources,
-    pub investigation_lead_runner: Arc<dyn InvestigationLeadRunnerPort>,
-    pub logger: Arc<dyn InvestigationLogger>,
+    pub task_resources: TaskResources,
+    pub task_runner: Arc<dyn TaskRunnerPort>,
+    pub logger: Arc<dyn TaskLogger>,
 }
 
-pub struct ExecuteInvestigationJobInput {
+pub struct ExecuteTaskJobInput {
     pub job_id: String,
     pub retry_count: u32,
-    pub payload: InvestigationJobPayload,
-    pub deps: InvestigationExecutionDeps,
+    pub payload: TaskJobPayload,
+    pub deps: TaskExecutionDeps,
 }
 
-pub async fn execute_investigation_job(
-    input: ExecuteInvestigationJobInput,
-) -> Result<(), ExecuteInvestigationJobError> {
+pub async fn execute_task_job(input: ExecuteTaskJobInput) -> Result<(), ExecuteTaskJobError> {
     let thread_ts = input.payload.message.thread_ts_or_ts().to_string();
     let started_at = Instant::now();
     let started_at_iso = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
@@ -63,31 +57,28 @@ pub async fn execute_investigation_job(
         ("attempt", (input.retry_count + 1).to_string()),
     ]);
 
-    let progress_session_factory = create_investigation_progress_stream_session_factory(
-        CreateInvestigationProgressStreamSessionFactoryInput {
+    let progress_session_factory =
+        create_task_progress_stream_session_factory(CreateTaskProgressStreamSessionFactoryInput {
             progress_session_factory_port: Arc::clone(
-                &input.deps.investigation_progress_session_factory_port,
+                &input.deps.task_progress_session_factory_port,
             ),
             logger: Arc::clone(&input.deps.logger),
-        },
-    );
-    let progress_session: Arc<Mutex<Box<dyn InvestigationProgressStreamSession>>> =
-        Arc::new(Mutex::new(progress_session_factory.create_for_thread(
-            CreateInvestigationProgressStreamSessionInput {
-                channel: input.payload.message.channel.clone(),
-                thread_ts: thread_ts.clone(),
-                recipient_user_id: input.payload.message.user.clone(),
-                recipient_team_id: input.payload.message.team_id.clone(),
-            },
-        )));
-
-    let progress_event_handler =
-        InvestigationLeadProgressEventHandler::new(InvestigationLeadProgressEventHandlerInput {
-            progress_session: Arc::clone(&progress_session),
         });
+    let progress_session: Arc<Mutex<Box<dyn TaskProgressStreamSession>>> = Arc::new(Mutex::new(
+        progress_session_factory.create_for_thread(CreateTaskProgressStreamSessionInput {
+            channel: input.payload.message.channel.clone(),
+            thread_ts: thread_ts.clone(),
+            recipient_user_id: input.payload.message.user.clone(),
+            recipient_team_id: input.payload.message.team_id.clone(),
+        }),
+    ));
+
+    let progress_event_handler = TaskProgressEventHandler::new(TaskProgressEventHandlerInput {
+        progress_session: Arc::clone(&progress_session),
+    });
     let (progress_event_sender, progress_event_receiver) =
-        mpsc::unbounded_channel::<InvestigationProgressEventInput>();
-    let on_progress_event: Arc<dyn InvestigationProgressEventPort> =
+        mpsc::unbounded_channel::<TaskProgressEventInput>();
+    let on_progress_event: Arc<dyn TaskProgressEventPort> =
         Arc::new(ChannelProgressEventPort::new(progress_event_sender));
     let progress_event_task = tokio::spawn(run_progress_event_loop(
         progress_event_receiver,
@@ -99,7 +90,7 @@ pub async fn execute_investigation_job(
         logger: Arc::clone(&input.deps.logger),
     });
 
-    let execution_result = run_investigation(
+    let execution_result = run_task(
         &input,
         &thread_ts,
         &started_at_iso,
@@ -140,7 +131,7 @@ pub async fn execute_investigation_job(
                 LogFieldValue::from(duration_ms),
             );
             meta.insert("latencyMs".to_string(), LogFieldValue::from(duration_ms));
-            input.deps.logger.info("Processed investigation job", meta);
+            input.deps.logger.info("Processed task job", meta);
             Ok(())
         }
         Err(error) => {
@@ -149,7 +140,7 @@ pub async fn execute_investigation_job(
                 session.stop_as_failed().await;
             }
 
-            let failure_error = resolve_investigation_failure_error(&error);
+            let failure_error = resolve_task_failure_error(&error);
 
             let duration_ms = started_at.elapsed().as_millis();
             let mut meta = merge_log_meta(
@@ -165,27 +156,27 @@ pub async fn execute_investigation_job(
                 "error".to_string(),
                 LogFieldValue::from(failure_error.error_message),
             );
-            input.deps.logger.error("Failed investigation job", meta);
+            input.deps.logger.error("Failed task job", meta);
             Err(error)
         }
     }
 }
 
-struct InvestigationExecutionSuccess {
+struct TaskExecutionSuccess {
     report_text: String,
     llm_usage: LlmUsageSnapshot,
     llm_execution: LlmExecutionMetadata,
 }
 
-async fn run_investigation(
-    input: &ExecuteInvestigationJobInput,
+async fn run_task(
+    input: &ExecuteTaskJobInput,
     thread_ts: &str,
     started_at_iso: &str,
-    base_log_meta: &InvestigationLogMeta,
-    progress_session: Arc<Mutex<Box<dyn InvestigationProgressStreamSession>>>,
-    on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+    base_log_meta: &TaskLogMeta,
+    progress_session: Arc<Mutex<Box<dyn TaskProgressStreamSession>>>,
+    on_progress_event: Arc<dyn TaskProgressEventPort>,
     thread_context_loader: SlackThreadContextLoader,
-) -> Result<InvestigationExecutionSuccess, ExecuteInvestigationJobError> {
+) -> Result<TaskExecutionSuccess, ExecuteTaskJobError> {
     let thread_messages = thread_context_loader
         .load_for_message(SlackThreadContextLoaderInput {
             message: input.payload.message.clone(),
@@ -193,19 +184,19 @@ async fn run_investigation(
         })
         .await;
 
-    let request = InvestigationRequest {
+    let request = TaskRequest {
         trigger_message: input.payload.message.clone(),
         thread_messages,
     };
 
-    let runtime = InvestigationRuntime {
+    let runtime = TaskRuntime {
         started_at_iso: started_at_iso.to_string(),
         channel: input.payload.message.channel.clone(),
         thread_ts: thread_ts.to_string(),
         retry_count: input.retry_count,
     };
-    let context = InvestigationContext {
-        resources: input.deps.investigation_resources.clone(),
+    let context = TaskContext {
+        resources: input.deps.task_resources.clone(),
         runtime,
     };
 
@@ -214,31 +205,31 @@ async fn run_investigation(
         session.start().await;
     }
 
-    let investigation_lead_report = input
+    let task_report = input
         .deps
-        .investigation_lead_runner
-        .run(RunInvestigationLeadInput {
+        .task_runner
+        .run(RunTaskInput {
             request,
             context,
             on_progress_event: Arc::clone(&on_progress_event),
         })
         .await
-        .map_err(ExecuteInvestigationJobError::from)?;
+        .map_err(ExecuteTaskJobError::from)?;
 
-    let report_text = if investigation_lead_report.result_text.is_empty() {
+    let report_text = if task_report.result_text.is_empty() {
         FALLBACK_REPORT_TEXT.to_string()
     } else {
-        investigation_lead_report.result_text
+        task_report.result_text
     };
 
-    Ok(InvestigationExecutionSuccess {
+    Ok(TaskExecutionSuccess {
         report_text,
-        llm_usage: investigation_lead_report.usage,
-        llm_execution: investigation_lead_report.execution,
+        llm_usage: task_report.usage,
+        llm_execution: task_report.execution,
     })
 }
 
-fn build_llm_execution_log_meta(execution: &LlmExecutionMetadata) -> InvestigationLogMeta {
+fn build_llm_execution_log_meta(execution: &LlmExecutionMetadata) -> TaskLogMeta {
     string_log_meta([
         ("llm_provider", execution.provider.clone()),
         ("llm_model", execution.model.clone()),
@@ -251,7 +242,7 @@ async fn post_slack_reply_stage(
     thread_ts: String,
     report_text: String,
     llm_usage: LlmUsageSnapshot,
-) -> Result<(), ExecuteInvestigationJobError> {
+) -> Result<(), ExecuteTaskJobError> {
     slack_reply_port
         .post_thread_reply(SlackThreadReplyInput {
             channel,
@@ -260,13 +251,13 @@ async fn post_slack_reply_stage(
         })
         .await
         .map_err(|error| {
-            ExecuteInvestigationJobError::InvestigationExecutionFailed(
-                reili_core::error::InvestigationExecutionFailedError::new(error.message, llm_usage),
+            ExecuteTaskJobError::TaskExecutionFailed(
+                reili_core::error::TaskExecutionFailedError::new(error.message, llm_usage),
             )
         })
 }
 
-fn build_llm_token_log_meta(usage: &LlmUsageSnapshot) -> InvestigationLogMeta {
+fn build_llm_token_log_meta(usage: &LlmUsageSnapshot) -> TaskLogMeta {
     string_log_meta([
         (
             "llm_tokens_input_total",
@@ -281,28 +272,25 @@ fn build_llm_token_log_meta(usage: &LlmUsageSnapshot) -> InvestigationLogMeta {
     ])
 }
 
-fn merge_log_meta(
-    base: &InvestigationLogMeta,
-    append: &InvestigationLogMeta,
-) -> InvestigationLogMeta {
+fn merge_log_meta(base: &TaskLogMeta, append: &TaskLogMeta) -> TaskLogMeta {
     let mut merged = base.clone();
     merged.extend(append.clone());
     merged
 }
 
 struct ChannelProgressEventPort {
-    sender: mpsc::UnboundedSender<InvestigationProgressEventInput>,
+    sender: mpsc::UnboundedSender<TaskProgressEventInput>,
 }
 
 impl ChannelProgressEventPort {
-    fn new(sender: mpsc::UnboundedSender<InvestigationProgressEventInput>) -> Self {
+    fn new(sender: mpsc::UnboundedSender<TaskProgressEventInput>) -> Self {
         Self { sender }
     }
 }
 
 #[async_trait]
-impl InvestigationProgressEventPort for ChannelProgressEventPort {
-    async fn publish(&self, input: InvestigationProgressEventInput) -> Result<(), PortError> {
+impl TaskProgressEventPort for ChannelProgressEventPort {
+    async fn publish(&self, input: TaskProgressEventInput) -> Result<(), PortError> {
         self.sender.send(input).map_err(|send_error| {
             PortError::new(format!(
                 "Failed to enqueue progress event for handling: {send_error}"
@@ -312,8 +300,8 @@ impl InvestigationProgressEventPort for ChannelProgressEventPort {
 }
 
 async fn run_progress_event_loop(
-    mut receiver: mpsc::UnboundedReceiver<InvestigationProgressEventInput>,
-    handler: InvestigationLeadProgressEventHandler,
+    mut receiver: mpsc::UnboundedReceiver<TaskProgressEventInput>,
+    handler: TaskProgressEventHandler,
 ) {
     while let Some(event) = receiver.recv().await {
         handler.handle(event).await;
@@ -325,14 +313,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use reili_core::error::PortError;
-    use reili_core::investigation::{
-        InvestigationJobPayload, InvestigationLeadRunReport, InvestigationLeadRunnerPort,
-        InvestigationProgressSessionFactoryPort, InvestigationProgressSessionPort,
-        InvestigationRequest, InvestigationResources, InvestigationRuntime, LlmExecutionMetadata,
-        LlmUsageSnapshot, MockInvestigationLeadRunnerPort,
-        MockInvestigationProgressSessionFactoryPort, MockInvestigationProgressSessionPort,
-        RunInvestigationLeadInput,
-    };
     use reili_core::knowledge::{MockWebSearchPort, WebSearchPort};
     use reili_core::logger::LogEntry;
     use reili_core::messaging::slack::{
@@ -350,11 +330,15 @@ mod tests {
         GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
         MockGithubCodeSearchPort, MockGithubPullRequestPort, MockGithubRepositoryContentPort,
     };
-
-    use super::{
-        ExecuteInvestigationJobInput, InvestigationExecutionDeps, execute_investigation_job,
+    use reili_core::task::{
+        LlmExecutionMetadata, LlmUsageSnapshot, MockTaskProgressSessionFactoryPort,
+        MockTaskProgressSessionPort, MockTaskRunnerPort, RunTaskInput, TaskJobPayload,
+        TaskProgressSessionFactoryPort, TaskProgressSessionPort, TaskRequest, TaskResources,
+        TaskRunReport, TaskRunnerPort, TaskRuntime,
     };
-    use crate::investigation::logger::{InvestigationLogger, LogFieldValue};
+
+    use super::{ExecuteTaskJobInput, TaskExecutionDeps, execute_task_job};
+    use crate::task::logger::{LogFieldValue, TaskLogger};
 
     const USAGE_SNAPSHOT: LlmUsageSnapshot = LlmUsageSnapshot {
         requests: 1,
@@ -364,18 +348,18 @@ mod tests {
     };
 
     #[derive(Debug, Clone, PartialEq, Eq)]
-    struct CapturedInvestigationLeadRunInput {
-        request: InvestigationRequest,
-        runtime: InvestigationRuntime,
+    struct CapturedTaskRunInput {
+        request: TaskRequest,
+        runtime: TaskRuntime,
     }
 
     struct NoopLogger;
 
-    impl InvestigationLogger for NoopLogger {
+    impl TaskLogger for NoopLogger {
         fn log(&self, _entry: LogEntry) {}
     }
 
-    fn create_resources() -> InvestigationResources {
+    fn create_resources() -> TaskResources {
         let log_aggregate_port: Arc<dyn DatadogLogAggregatePort> =
             Arc::new(MockDatadogLogAggregatePort::new());
         let log_search_port: Arc<dyn DatadogLogSearchPort> =
@@ -394,7 +378,7 @@ mod tests {
             Arc::new(MockGithubPullRequestPort::new());
         let web_search_port: Arc<dyn WebSearchPort> = Arc::new(MockWebSearchPort::new());
 
-        InvestigationResources {
+        TaskResources {
             log_aggregate_port,
             log_search_port,
             metric_catalog_port,
@@ -407,27 +391,23 @@ mod tests {
         }
     }
 
-    fn create_progress_session_factory() -> Arc<dyn InvestigationProgressSessionFactoryPort> {
-        let mut session = MockInvestigationProgressSessionPort::new();
+    fn create_progress_session_factory() -> Arc<dyn TaskProgressSessionFactoryPort> {
+        let mut session = MockTaskProgressSessionPort::new();
         session.expect_start().times(1).returning(|| ());
         session.expect_apply().times(0);
         session.expect_complete().times(1).returning(|_| ());
 
-        let mut factory = MockInvestigationProgressSessionFactoryPort::new();
+        let mut factory = MockTaskProgressSessionFactoryPort::new();
         factory
             .expect_create_for_thread()
             .times(1)
-            .return_once(move |_| Box::new(session) as Box<dyn InvestigationProgressSessionPort>);
+            .return_once(move |_| Box::new(session) as Box<dyn TaskProgressSessionPort>);
 
-        Arc::new(factory) as Arc<dyn InvestigationProgressSessionFactoryPort>
+        Arc::new(factory) as Arc<dyn TaskProgressSessionFactoryPort>
     }
 
-    fn create_payload(
-        ts: &str,
-        thread_ts: Option<&str>,
-        text: Option<&str>,
-    ) -> InvestigationJobPayload {
-        InvestigationJobPayload {
+    fn create_payload(ts: &str, thread_ts: Option<&str>, text: Option<&str>) -> TaskJobPayload {
+        TaskJobPayload {
             slack_event_id: "Ev001".to_string(),
             message: SlackMessage {
                 slack_event_id: "Ev001".to_string(),
@@ -443,10 +423,10 @@ mod tests {
     }
 
     struct ExecutionFixtures {
-        deps: InvestigationExecutionDeps,
+        deps: TaskExecutionDeps,
         slack_reply_calls: Arc<Mutex<Vec<SlackThreadReplyInput>>>,
         slack_thread_history_calls: Arc<Mutex<Vec<FetchSlackThreadHistoryInput>>>,
-        investigation_lead_runs: Arc<Mutex<Vec<CapturedInvestigationLeadRunInput>>>,
+        task_runs: Arc<Mutex<Vec<CapturedTaskRunInput>>>,
     }
 
     fn create_execution_fixtures(
@@ -454,7 +434,7 @@ mod tests {
     ) -> ExecutionFixtures {
         let slack_reply_calls = Arc::new(Mutex::new(Vec::new()));
         let slack_thread_history_calls = Arc::new(Mutex::new(Vec::new()));
-        let investigation_lead_runs = Arc::new(Mutex::new(Vec::new()));
+        let task_runs = Arc::new(Mutex::new(Vec::new()));
 
         let mut slack_reply_port = MockSlackThreadReplyPort::new();
         let reply_calls = Arc::clone(&slack_reply_calls);
@@ -488,44 +468,45 @@ mod tests {
             }
         }
 
-        let mut investigation_lead_runner = MockInvestigationLeadRunnerPort::new();
-        let captured_runs = Arc::clone(&investigation_lead_runs);
-        investigation_lead_runner.expect_run().times(1).returning(
-            move |input: RunInvestigationLeadInput| {
-                captured_runs.lock().expect("lock captured runs").push(
-                    CapturedInvestigationLeadRunInput {
+        let mut task_runner = MockTaskRunnerPort::new();
+        let captured_runs = Arc::clone(&task_runs);
+        task_runner
+            .expect_run()
+            .times(1)
+            .returning(move |input: RunTaskInput| {
+                captured_runs
+                    .lock()
+                    .expect("lock captured runs")
+                    .push(CapturedTaskRunInput {
                         request: input.request,
                         runtime: input.context.runtime,
-                    },
-                );
+                    });
 
-                Ok(InvestigationLeadRunReport {
-                    result_text: "investigation_lead result".to_string(),
+                Ok(TaskRunReport {
+                    result_text: "task_runner result".to_string(),
                     usage: USAGE_SNAPSHOT,
                     execution: LlmExecutionMetadata {
                         provider: "openai".to_string(),
                         model: "gpt-test".to_string(),
                     },
                 })
-            },
-        );
+            });
 
-        let deps = InvestigationExecutionDeps {
+        let deps = TaskExecutionDeps {
             slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
-            investigation_progress_session_factory_port: create_progress_session_factory(),
+            task_progress_session_factory_port: create_progress_session_factory(),
             slack_thread_history_port: Arc::new(slack_thread_history_port)
                 as Arc<dyn SlackThreadHistoryPort>,
-            investigation_resources: create_resources(),
-            investigation_lead_runner: Arc::new(investigation_lead_runner)
-                as Arc<dyn InvestigationLeadRunnerPort>,
-            logger: Arc::new(NoopLogger) as Arc<dyn InvestigationLogger>,
+            task_resources: create_resources(),
+            task_runner: Arc::new(task_runner) as Arc<dyn TaskRunnerPort>,
+            logger: Arc::new(NoopLogger) as Arc<dyn TaskLogger>,
         };
 
         ExecutionFixtures {
             deps,
             slack_reply_calls,
             slack_thread_history_calls,
-            investigation_lead_runs,
+            task_runs,
         }
     }
 
@@ -540,10 +521,10 @@ mod tests {
             deps,
             slack_reply_calls,
             slack_thread_history_calls,
-            investigation_lead_runs,
+            task_runs,
         } = fixtures;
 
-        let result = execute_investigation_job(ExecuteInvestigationJobInput {
+        let result = execute_task_job(ExecuteTaskJobInput {
             job_id: "job-1".to_string(),
             retry_count: 0,
             payload: create_payload(
@@ -567,10 +548,7 @@ mod tests {
             }]
         );
 
-        let captured = investigation_lead_runs
-            .lock()
-            .expect("lock captured runs")
-            .clone();
+        let captured = task_runs.lock().expect("lock captured runs").clone();
         assert_eq!(captured.len(), 1);
         assert_eq!(
             captured[0].request.trigger_message.text,
@@ -586,7 +564,7 @@ mod tests {
             vec![SlackThreadReplyInput {
                 channel: "C001".to_string(),
                 thread_ts: "1710000000.000001".to_string(),
-                text: "investigation_lead result".to_string(),
+                text: "task_runner result".to_string(),
             }]
         );
     }
@@ -597,11 +575,11 @@ mod tests {
         let ExecutionFixtures {
             deps,
             slack_thread_history_calls,
-            investigation_lead_runs,
+            task_runs,
             ..
         } = fixtures;
 
-        let result = execute_investigation_job(ExecuteInvestigationJobInput {
+        let result = execute_task_job(ExecuteTaskJobInput {
             job_id: "job-2".to_string(),
             retry_count: 0,
             payload: create_payload("1710000000.000100", None, None),
@@ -617,10 +595,7 @@ mod tests {
                 .is_empty()
         );
 
-        let captured = investigation_lead_runs
-            .lock()
-            .expect("lock captured runs")
-            .clone();
+        let captured = task_runs.lock().expect("lock captured runs").clone();
         assert_eq!(captured.len(), 1);
         assert!(captured[0].request.thread_messages.is_empty());
     }
@@ -629,12 +604,10 @@ mod tests {
     async fn falls_back_when_thread_history_fetch_fails() {
         let fixtures = create_execution_fixtures(Some(Err(PortError::new("slack api failed"))));
         let ExecutionFixtures {
-            deps,
-            investigation_lead_runs,
-            ..
+            deps, task_runs, ..
         } = fixtures;
 
-        let result = execute_investigation_job(ExecuteInvestigationJobInput {
+        let result = execute_task_job(ExecuteTaskJobInput {
             job_id: "job-3".to_string(),
             retry_count: 0,
             payload: create_payload("1710000000.000200", Some("1710000000.000150"), None),
@@ -644,16 +617,13 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let captured = investigation_lead_runs
-            .lock()
-            .expect("lock captured runs")
-            .clone();
+        let captured = task_runs.lock().expect("lock captured runs").clone();
         assert_eq!(captured.len(), 1);
         assert!(captured[0].request.thread_messages.is_empty());
     }
 
     #[test]
-    fn token_log_meta_omits_investigation_lead_total_tokens() {
+    fn token_log_meta_omits_task_runner_specific_total_tokens() {
         let meta = super::build_llm_token_log_meta(&LlmUsageSnapshot {
             requests: 2,
             input_tokens: 40,
@@ -665,6 +635,6 @@ mod tests {
             meta.get("llm_tokens_total"),
             Some(&LogFieldValue::from(100_u64))
         );
-        assert!(!meta.contains_key("llm_tokens_total_investigation_lead"));
+        assert!(!meta.contains_key("llm_tokens_total_task_runner"));
     }
 }

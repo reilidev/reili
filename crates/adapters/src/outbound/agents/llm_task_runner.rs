@@ -1,24 +1,20 @@
 use std::sync::Arc;
 
 use reili_core::error::AgentRunFailedError;
-use reili_core::investigation::{
-    INVESTIGATION_LEAD_PROGRESS_OWNER_ID, InvestigationLeadRunReport, InvestigationProgressEvent,
-    InvestigationProgressEventInput, InvestigationProgressEventPort, LlmExecutionMetadata,
-    LlmUsageSnapshot, RunInvestigationLeadInput,
+use reili_core::task::{
+    LlmExecutionMetadata, LlmUsageSnapshot, RunTaskInput, TASK_RUNNER_PROGRESS_OWNER_ID,
+    TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort, TaskRunReport,
 };
 use rig::completion::Prompt;
 use rig::prelude::CompletionClient;
 
 use super::datadog_mcp_tools::{DatadogMcpToolConfig, connect_datadog_mcp_toolset};
-use super::investigation_agents::{
-    BuildInvestigationLeadAgentInput, build_investigation_lead_agent,
-    build_investigation_lead_prompt,
-};
 use super::llm_provider_settings::LlmProviderSettings;
 use super::llm_usage_collector::LlmUsageCollector;
 use super::llm_usage_tracking_hook::LlmUsageTrackingHook;
+use super::task_agents::{BuildTaskAgentInput, build_task_agent, build_task_prompt};
 
-pub struct RunLlmInvestigationLeadInput<C>
+pub struct RunLlmTaskInput<C>
 where
     C: CompletionClient,
 {
@@ -27,12 +23,12 @@ where
     pub datadog_mcp: DatadogMcpToolConfig,
     pub github_scope_org: String,
     pub language: String,
-    pub run: RunInvestigationLeadInput,
+    pub run: RunTaskInput,
 }
 
-pub async fn run_llm_investigation_lead<C>(
-    input: RunLlmInvestigationLeadInput<C>,
-) -> Result<InvestigationLeadRunReport, AgentRunFailedError>
+pub async fn run_llm_task<C>(
+    input: RunLlmTaskInput<C>,
+) -> Result<TaskRunReport, AgentRunFailedError>
 where
     C: CompletionClient + Clone,
     C::CompletionModel: 'static,
@@ -47,35 +43,34 @@ where
                 return AgentRunFailedError::new_permanent(usage, error.message);
             }
 
-            create_failed_error(CreateInvestigationLeadRunnerFailedErrorInput {
+            create_failed_error(CreateTaskRunnerFailedErrorInput {
                 usage,
                 cause_message: error.message,
             })
         })?;
-    let investigation_lead_prompt = build_investigation_lead_prompt(&input.run.request);
-    let investigation_lead_agent =
-        build_investigation_lead_agent(BuildInvestigationLeadAgentInput {
-            client: input.client,
-            settings: input.settings.clone(),
-            resources: Arc::new(input.run.context.resources),
-            datadog_site: input.datadog_mcp.site.clone(),
-            datadog_mcp_toolset,
-            github_scope_org: input.github_scope_org,
-            runtime: input.run.context.runtime,
-            on_progress_event: Arc::clone(&input.run.on_progress_event),
-            language: input.language,
-            usage_collector: usage_collector.clone(),
-        });
+    let task_prompt = build_task_prompt(&input.run.request);
+    let task_agent = build_task_agent(BuildTaskAgentInput {
+        client: input.client,
+        settings: input.settings.clone(),
+        resources: Arc::new(input.run.context.resources),
+        datadog_site: input.datadog_mcp.site.clone(),
+        datadog_mcp_toolset,
+        github_scope_org: input.github_scope_org,
+        runtime: input.run.context.runtime,
+        on_progress_event: Arc::clone(&input.run.on_progress_event),
+        language: input.language,
+        usage_collector: usage_collector.clone(),
+    });
 
-    let prompt_response = investigation_lead_agent
-        .prompt(investigation_lead_prompt)
-        .max_turns(input.settings.investigation_lead_max_turns)
+    let prompt_response = task_agent
+        .prompt(task_prompt)
+        .max_turns(input.settings.task_runner_max_turns)
         .with_tool_concurrency(input.settings.tool_concurrency)
         .with_hook(usage_tracking_hook)
         .extended_details()
         .await
         .map_err(|error| {
-            create_failed_error(CreateInvestigationLeadRunnerFailedErrorInput {
+            create_failed_error(CreateTaskRunnerFailedErrorInput {
                 usage: usage_collector.snapshot(),
                 cause_message: error.to_string(),
             })
@@ -87,18 +82,18 @@ where
     })
     .await?;
 
-    Ok(InvestigationLeadRunReport {
+    Ok(TaskRunReport {
         result_text: prompt_response.output,
         usage: usage_collector.snapshot(),
         execution: LlmExecutionMetadata {
             provider: input.settings.provider,
-            model: input.settings.investigation_lead_model,
+            model: input.settings.task_runner_model,
         },
     })
 }
 
 struct PublishMessageOutputCreatedEventInput {
-    on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+    on_progress_event: Arc<dyn TaskProgressEventPort>,
     usage: LlmUsageSnapshot,
 }
 
@@ -107,13 +102,13 @@ async fn publish_message_output_created_event(
 ) -> Result<(), AgentRunFailedError> {
     input
         .on_progress_event
-        .publish(InvestigationProgressEventInput {
-            owner_id: INVESTIGATION_LEAD_PROGRESS_OWNER_ID.to_string(),
-            event: InvestigationProgressEvent::MessageOutputCreated,
+        .publish(TaskProgressEventInput {
+            owner_id: TASK_RUNNER_PROGRESS_OWNER_ID.to_string(),
+            event: TaskProgressEvent::MessageOutputCreated,
         })
         .await
         .map_err(|error| {
-            create_failed_error(CreateInvestigationLeadRunnerFailedErrorInput {
+            create_failed_error(CreateTaskRunnerFailedErrorInput {
                 usage: input.usage,
                 cause_message: format!("Failed to publish progress event: {error}"),
             })
@@ -122,13 +117,11 @@ async fn publish_message_output_created_event(
     Ok(())
 }
 
-struct CreateInvestigationLeadRunnerFailedErrorInput {
+struct CreateTaskRunnerFailedErrorInput {
     usage: LlmUsageSnapshot,
     cause_message: String,
 }
 
-fn create_failed_error(
-    input: CreateInvestigationLeadRunnerFailedErrorInput,
-) -> AgentRunFailedError {
+fn create_failed_error(input: CreateTaskRunnerFailedErrorInput) -> AgentRunFailedError {
     AgentRunFailedError::new(input.usage, input.cause_message)
 }

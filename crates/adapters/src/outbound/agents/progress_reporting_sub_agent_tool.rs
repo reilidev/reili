@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use reili_core::investigation::{
-    InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
-};
+use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
 use rig::agent::Agent;
 use rig::completion::{CompletionModel, Prompt, PromptError, ToolDefinition};
 use rig::tool::Tool;
@@ -22,7 +20,7 @@ where
 {
     agent: Agent<M, P>,
     owner_id: String,
-    on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+    on_progress_event: Arc<dyn TaskProgressEventPort>,
 }
 
 impl<M, P> ProgressReportingSubAgentTool<M, P>
@@ -33,7 +31,7 @@ where
     pub fn new(
         agent: Agent<M, P>,
         owner_id: String,
-        on_progress_event: Arc<dyn InvestigationProgressEventPort>,
+        on_progress_event: Arc<dyn TaskProgressEventPort>,
     ) -> Self {
         Self {
             agent,
@@ -45,9 +43,9 @@ where
     async fn publish_message_output_created(&self) {
         let publish_result = self
             .on_progress_event
-            .publish(InvestigationProgressEventInput {
+            .publish(TaskProgressEventInput {
                 owner_id: self.owner_id.clone(),
-                event: InvestigationProgressEvent::MessageOutputCreated,
+                event: TaskProgressEvent::MessageOutputCreated,
             })
             .await;
         if let Err(error) = publish_result {
@@ -120,20 +118,18 @@ mod tests {
 
     use async_trait::async_trait;
     use reili_core::error::PortError;
-    use reili_core::investigation::{
-        InvestigationProgressEvent, InvestigationProgressEventInput, InvestigationProgressEventPort,
-    };
+    use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
     use rig::client::{CompletionClient, ProviderClient};
 
     use super::ProgressReportingSubAgentTool;
 
     struct MockProgressEventPort {
-        calls: Arc<Mutex<Vec<InvestigationProgressEventInput>>>,
+        calls: Arc<Mutex<Vec<TaskProgressEventInput>>>,
     }
 
     #[async_trait]
-    impl InvestigationProgressEventPort for MockProgressEventPort {
-        async fn publish(&self, input: InvestigationProgressEventInput) -> Result<(), PortError> {
+    impl TaskProgressEventPort for MockProgressEventPort {
+        async fn publish(&self, input: TaskProgressEventInput) -> Result<(), PortError> {
             self.calls.lock().expect("lock calls").push(input);
             Ok(())
         }
@@ -159,9 +155,9 @@ mod tests {
 
         assert_eq!(
             calls.lock().expect("lock calls").as_slice(),
-            &[InvestigationProgressEventInput {
+            &[TaskProgressEventInput {
                 owner_id: "investigate_datadog".to_string(),
-                event: InvestigationProgressEvent::MessageOutputCreated,
+                event: TaskProgressEvent::MessageOutputCreated,
             }]
         );
     }
