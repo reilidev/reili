@@ -202,18 +202,15 @@ where
             Arc::clone(&input.resources.github_code_search_port),
             input.github_scope_org.clone(),
         ))
-        .tool(GetRepositoryContentTool::new(
-            Arc::clone(&input.resources.github_repository_content_port),
-            input.github_scope_org.clone(),
-        ))
-        .tool(GetPullRequestTool::new(
-            Arc::clone(&input.resources.github_pull_request_port),
-            input.github_scope_org.clone(),
-        ))
-        .tool(GetPullRequestDiffTool::new(
-            Arc::clone(&input.resources.github_pull_request_port),
-            input.github_scope_org,
-        ))
+        .tool(GetRepositoryContentTool::new(Arc::clone(
+            &input.resources.github_repository_content_port,
+        )))
+        .tool(GetPullRequestTool::new(Arc::clone(
+            &input.resources.github_pull_request_port,
+        )))
+        .tool(GetPullRequestDiffTool::new(Arc::clone(
+            &input.resources.github_pull_request_port,
+        )))
         .tool(SearchWebTool::new(input.resources))
         .build()
 }

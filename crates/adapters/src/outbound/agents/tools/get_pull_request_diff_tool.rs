@@ -7,24 +7,18 @@ use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::assert_github_owner_in_scope::assert_github_owner_in_scope;
 use super::github_tool_soft_error::to_github_tool_soft_error;
 use super::tool_json::to_json_string;
 
 #[derive(Clone)]
 pub struct GetPullRequestDiffTool {
     github_pull_request_port: Arc<dyn GithubPullRequestPort>,
-    github_scope_org: String,
 }
 
 impl GetPullRequestDiffTool {
-    pub fn new(
-        github_pull_request_port: Arc<dyn GithubPullRequestPort>,
-        github_scope_org: String,
-    ) -> Self {
+    pub fn new(github_pull_request_port: Arc<dyn GithubPullRequestPort>) -> Self {
         Self {
             github_pull_request_port,
-            github_scope_org,
         }
     }
 }
@@ -73,13 +67,6 @@ impl Tool for GetPullRequestDiffTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        if let Err(error) = assert_github_owner_in_scope(&args.owner, &self.github_scope_org) {
-            if let Some(soft_error) = to_github_tool_soft_error(&error) {
-                return to_json_string(&soft_error);
-            }
-            return Err(error);
-        }
-
         match self
             .github_pull_request_port
             .get_pull_request_diff(GithubPullRequestParams {
@@ -98,5 +85,55 @@ impl Tool for GetPullRequestDiffTool {
                 Err(error)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use reili_core::source_code::github::{GithubPullRequestPort, MockGithubPullRequestPort};
+    use rig::tool::Tool;
+    use serde_json::json;
+
+    use super::{GetPullRequestDiffArgs, GetPullRequestDiffTool};
+    use reili_core::error::PortError;
+
+    #[tokio::test]
+    async fn converts_invalid_input_from_port_into_soft_error_json() {
+        let mut github_pull_request_port = MockGithubPullRequestPort::new();
+        github_pull_request_port
+            .expect_get_pull_request_diff()
+            .once()
+            .return_once(|_| {
+                Err(PortError::invalid_input(
+                    "owner is out of scope. allowed owner: acme",
+                ))
+            });
+
+        let tool = GetPullRequestDiffTool::new(
+            Arc::new(github_pull_request_port) as Arc<dyn GithubPullRequestPort>
+        );
+
+        let result = tool
+            .call(GetPullRequestDiffArgs {
+                owner: "other-org".to_string(),
+                repo: "service".to_string(),
+                pull_number: 42,
+            })
+            .await
+            .expect("tool should return soft error");
+
+        let actual: serde_json::Value =
+            serde_json::from_str(&result).expect("deserialize tool result");
+
+        assert_eq!(
+            actual,
+            json!({
+                "ok": false,
+                "kind": "client_error",
+                "message": "owner is out of scope. allowed owner: acme"
+            })
+        );
     }
 }

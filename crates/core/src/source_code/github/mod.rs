@@ -1,5 +1,6 @@
 pub mod pull_request;
 pub mod repository_content;
+pub mod scope_policy;
 pub mod search;
 
 pub use pull_request::{
@@ -10,6 +11,7 @@ pub use repository_content::{
     GithubRepositoryDirectoryContent, GithubRepositoryDirectoryEntry, GithubRepositoryFileContent,
     GithubRepositoryFileEncoding,
 };
+pub use scope_policy::GithubScopePolicy;
 pub use search::{
     GithubCodeSearchPort, GithubCodeSearchResultItem, GithubIssueSearchResultItem,
     GithubRepoSearchResultItem, GithubSearchParams,

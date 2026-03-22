@@ -1,5 +1,4 @@
 mod aggregate_datadog_logs_by_facet_tool;
-mod assert_github_owner_in_scope;
 mod datadog_tool_result_size_guard;
 mod datadog_tool_soft_error;
 mod get_pull_request_diff_tool;

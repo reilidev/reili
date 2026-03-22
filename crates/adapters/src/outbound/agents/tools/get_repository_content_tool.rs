@@ -7,24 +7,18 @@ use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::assert_github_owner_in_scope::assert_github_owner_in_scope;
 use super::github_tool_soft_error::to_github_tool_soft_error;
 use super::tool_json::to_json_string;
 
 #[derive(Clone)]
 pub struct GetRepositoryContentTool {
     github_repository_content_port: Arc<dyn GithubRepositoryContentPort>,
-    github_scope_org: String,
 }
 
 impl GetRepositoryContentTool {
-    pub fn new(
-        github_repository_content_port: Arc<dyn GithubRepositoryContentPort>,
-        github_scope_org: String,
-    ) -> Self {
+    pub fn new(github_repository_content_port: Arc<dyn GithubRepositoryContentPort>) -> Self {
         Self {
             github_repository_content_port,
-            github_scope_org,
         }
     }
 }
@@ -79,13 +73,6 @@ impl Tool for GetRepositoryContentTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        if let Err(error) = assert_github_owner_in_scope(&args.owner, &self.github_scope_org) {
-            if let Some(soft_error) = to_github_tool_soft_error(&error) {
-                return to_json_string(&soft_error);
-            }
-            return Err(error);
-        }
-
         match self
             .github_repository_content_port
             .get_repository_content(GithubRepositoryContentParams {
@@ -105,5 +92,58 @@ impl Tool for GetRepositoryContentTool {
                 Err(error)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use reili_core::source_code::github::{
+        GithubRepositoryContentPort, MockGithubRepositoryContentPort,
+    };
+    use rig::tool::Tool;
+    use serde_json::json;
+
+    use super::{GetRepositoryContentArgs, GetRepositoryContentTool};
+    use reili_core::error::PortError;
+
+    #[tokio::test]
+    async fn converts_invalid_input_from_port_into_soft_error_json() {
+        let mut github_repository_content_port = MockGithubRepositoryContentPort::new();
+        github_repository_content_port
+            .expect_get_repository_content()
+            .once()
+            .return_once(|_| {
+                Err(PortError::invalid_input(
+                    "owner is out of scope. allowed owner: acme",
+                ))
+            });
+
+        let tool = GetRepositoryContentTool::new(
+            Arc::new(github_repository_content_port) as Arc<dyn GithubRepositoryContentPort>
+        );
+
+        let result = tool
+            .call(GetRepositoryContentArgs {
+                owner: "other-org".to_string(),
+                repo: "service".to_string(),
+                path: "src/lib.rs".to_string(),
+                git_ref: None,
+            })
+            .await
+            .expect("tool should return soft error");
+
+        let actual: serde_json::Value =
+            serde_json::from_str(&result).expect("deserialize tool result");
+
+        assert_eq!(
+            actual,
+            json!({
+                "ok": false,
+                "kind": "client_error",
+                "message": "owner is out of scope. allowed owner: acme"
+            })
+        );
     }
 }
