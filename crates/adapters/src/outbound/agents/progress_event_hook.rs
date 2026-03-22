@@ -161,33 +161,26 @@ where
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use async_trait::async_trait;
-    use reili_core::error::PortError;
-    use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
+    use reili_core::task::{MockTaskProgressEventPort, TaskProgressEvent, TaskProgressEventInput};
 
     use super::ProgressEventHook;
     use crate::outbound::agents::llm_usage_collector::LlmUsageCollector;
 
-    struct MockProgressEventPort {
-        calls: Arc<Mutex<Vec<TaskProgressEventInput>>>,
-    }
-
-    #[async_trait]
-    impl TaskProgressEventPort for MockProgressEventPort {
-        async fn publish(&self, input: TaskProgressEventInput) -> Result<(), PortError> {
-            self.calls.lock().expect("lock calls").push(input);
-            Ok(())
-        }
-    }
-
     #[tokio::test]
     async fn publishes_tool_started_event() {
         let calls = Arc::new(Mutex::new(Vec::new()));
+        let publish_calls = Arc::clone(&calls);
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port
+            .expect_publish()
+            .times(1)
+            .returning(move |input| {
+                publish_calls.lock().expect("lock calls").push(input);
+                Ok(())
+            });
         let hook = ProgressEventHook::new(
             "investigate_datadog".to_string(),
-            Arc::new(MockProgressEventPort {
-                calls: Arc::clone(&calls),
-            }),
+            Arc::new(progress_event_port),
             LlmUsageCollector::new(),
         );
 
@@ -209,11 +202,18 @@ mod tests {
     #[tokio::test]
     async fn publishes_tool_completed_event() {
         let calls = Arc::new(Mutex::new(Vec::new()));
+        let publish_calls = Arc::clone(&calls);
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port
+            .expect_publish()
+            .times(1)
+            .returning(move |input| {
+                publish_calls.lock().expect("lock calls").push(input);
+                Ok(())
+            });
         let hook = ProgressEventHook::new(
             "investigate_datadog".to_string(),
-            Arc::new(MockProgressEventPort {
-                calls: Arc::clone(&calls),
-            }),
+            Arc::new(progress_event_port),
             LlmUsageCollector::new(),
         );
 
@@ -234,30 +234,27 @@ mod tests {
 
     #[tokio::test]
     async fn ignores_report_progress_tool_events() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port.expect_publish().times(0);
         let hook = ProgressEventHook::new(
             "investigate_github".to_string(),
-            Arc::new(MockProgressEventPort {
-                calls: Arc::clone(&calls),
-            }),
+            Arc::new(progress_event_port),
             LlmUsageCollector::new(),
         );
 
         hook.publish_tool_started("report_progress", "task-3").await;
         hook.publish_tool_completed("report_progress", "task-3")
             .await;
-
-        assert!(calls.lock().expect("lock calls").is_empty());
     }
 
     #[test]
     fn tracks_requests_and_usage() {
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port.expect_publish().times(0);
         let collector = LlmUsageCollector::new();
         let hook = ProgressEventHook::new(
             "investigate_datadog".to_string(),
-            Arc::new(MockProgressEventPort {
-                calls: Arc::new(Mutex::new(Vec::new())),
-            }),
+            Arc::new(progress_event_port),
             collector.clone(),
         );
 

@@ -47,14 +47,14 @@ Run the unified runtime in one terminal.
 
 ```bash
 cd crates
-bash -lc 'set -a; source ../.env; set +a; cargo run -p reili_runtime'
+bash -lc 'set -a; source ../.env; set +a; cargo run -p reili_runtime' 2>&1 | tee -a ../tmp/reili.log
 ```
 
 If you use `cargo-watch`:
 
 ```bash
 cd crates
-bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p reili_runtime"'
+bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p reili_runtime"' 2>&1 | tee -a ../tmp/reili.log
 ```
 
 ## Validation Commands

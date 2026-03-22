@@ -11,7 +11,7 @@ use rig::prelude::CompletionClient;
 use super::datadog_mcp_tools::{DatadogMcpToolConfig, connect_datadog_mcp_toolset};
 use super::llm_provider_settings::LlmProviderSettings;
 use super::llm_usage_collector::LlmUsageCollector;
-use super::llm_usage_tracking_hook::LlmUsageTrackingHook;
+use super::progress_event_hook::ProgressEventHook;
 use super::task_agents::{BuildTaskAgentInput, build_task_agent, build_task_prompt};
 
 pub struct RunLlmTaskInput<C>
@@ -34,7 +34,10 @@ where
     C::CompletionModel: 'static,
 {
     let usage_collector = LlmUsageCollector::new();
-    let usage_tracking_hook = LlmUsageTrackingHook::new(usage_collector.clone());
+    let task_runner_prompt_hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
+        on_progress_event: Arc::clone(&input.run.on_progress_event),
+        usage_collector: usage_collector.clone(),
+    });
     let datadog_mcp_toolset = connect_datadog_mcp_toolset(&input.datadog_mcp)
         .await
         .map_err(|error| {
@@ -66,7 +69,7 @@ where
         .prompt(task_prompt)
         .max_turns(input.settings.task_runner_max_turns)
         .with_tool_concurrency(input.settings.tool_concurrency)
-        .with_hook(usage_tracking_hook)
+        .with_hook(task_runner_prompt_hook)
         .extended_details()
         .await
         .map_err(|error| {
@@ -97,6 +100,19 @@ struct PublishMessageOutputCreatedEventInput {
     usage: LlmUsageSnapshot,
 }
 
+struct CreateTaskRunnerPromptHookInput {
+    on_progress_event: Arc<dyn TaskProgressEventPort>,
+    usage_collector: LlmUsageCollector,
+}
+
+fn create_task_runner_prompt_hook(input: CreateTaskRunnerPromptHookInput) -> ProgressEventHook {
+    ProgressEventHook::new(
+        TASK_RUNNER_PROGRESS_OWNER_ID.to_string(),
+        input.on_progress_event,
+        input.usage_collector,
+    )
+}
+
 async fn publish_message_output_created_event(
     input: PublishMessageOutputCreatedEventInput,
 ) -> Result<(), AgentRunFailedError> {
@@ -124,4 +140,79 @@ struct CreateTaskRunnerFailedErrorInput {
 
 fn create_failed_error(input: CreateTaskRunnerFailedErrorInput) -> AgentRunFailedError {
     AgentRunFailedError::new(input.usage, input.cause_message)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use reili_core::task::{
+        MockTaskProgressEventPort, TASK_RUNNER_PROGRESS_OWNER_ID, TaskProgressEvent,
+        TaskProgressEventInput,
+    };
+    use rig::agent::{PromptHook, ToolCallHookAction};
+    use rig::providers::openai;
+
+    use super::{CreateTaskRunnerPromptHookInput, create_task_runner_prompt_hook};
+    use crate::outbound::agents::llm_usage_collector::LlmUsageCollector;
+
+    #[tokio::test]
+    async fn task_runner_prompt_hook_publishes_direct_datadog_tool_calls() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let publish_calls = Arc::clone(&calls);
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port
+            .expect_publish()
+            .times(1)
+            .returning(move |input| {
+                publish_calls.lock().expect("lock calls").push(input);
+                Ok(())
+            });
+        let hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
+            on_progress_event: Arc::new(progress_event_port),
+            usage_collector: LlmUsageCollector::new(),
+        });
+
+        let action = <_ as PromptHook<openai::CompletionModel>>::on_tool_call(
+            &hook,
+            "search_datadog_services",
+            Some("task-1".to_string()),
+            "internal-1",
+            "{}",
+        )
+        .await;
+
+        assert_eq!(action, ToolCallHookAction::Continue);
+        assert_eq!(
+            calls.lock().expect("lock calls").as_slice(),
+            &[TaskProgressEventInput {
+                owner_id: TASK_RUNNER_PROGRESS_OWNER_ID.to_string(),
+                event: TaskProgressEvent::ToolCallStarted {
+                    task_id: "task-1".to_string(),
+                    title: "search_datadog_services".to_string(),
+                },
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn task_runner_prompt_hook_ignores_report_progress_tool_calls() {
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port.expect_publish().times(0);
+        let hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
+            on_progress_event: Arc::new(progress_event_port),
+            usage_collector: LlmUsageCollector::new(),
+        });
+
+        let action = <_ as PromptHook<openai::CompletionModel>>::on_tool_call(
+            &hook,
+            "report_progress",
+            Some("task-1".to_string()),
+            "internal-1",
+            "{}",
+        )
+        .await;
+
+        assert_eq!(action, ToolCallHookAction::Continue);
+    }
 }
