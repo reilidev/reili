@@ -355,11 +355,11 @@ fn create_datadog_mcp_connect_error(
     diagnostic: Result<DatadogMcpInitializeDiagnostic, PortError>,
 ) -> PortError {
     match diagnostic {
-        Ok(diagnostic) => PortError::new(format!(
+        Ok(diagnostic) => PortError::connection_failed(format!(
             "Failed to connect to Datadog MCP server: {base_error}. Diagnostic initialize response: status={} content_type={} body={}",
             diagnostic.status, diagnostic.content_type, diagnostic.body
         )),
-        Err(diagnostic_error) => PortError::new(format!(
+        Err(diagnostic_error) => PortError::connection_failed(format!(
             "Failed to connect to Datadog MCP server: {base_error}. Diagnostic request also failed: {}",
             diagnostic_error.message
         )),

@@ -81,7 +81,7 @@ impl DatadogHttpClient {
                         continue;
                     }
 
-                    return Err(PortError::new(error.message));
+                    return Err(error.error);
                 }
             }
         }
@@ -107,33 +107,38 @@ impl DatadogHttpClient {
             .send()
             .await
             .map_err(|error| RequestFailure {
-                message: format!("Datadog API request failed: {error}"),
+                error: PortError::connection_failed(format!("Datadog API request failed: {error}")),
                 retriable: true,
             })?;
 
         let status = response.status();
         let bytes = response.bytes().await.map_err(|error| RequestFailure {
-            message: format!("Failed to read Datadog API response body: {error}"),
+            error: PortError::invalid_response(format!(
+                "Failed to read Datadog API response body: {error}"
+            )),
             retriable: true,
         })?;
 
         if bytes.len() > self.max_response_bytes {
             return Err(RequestFailure {
-                message: format!(
+                error: PortError::invalid_response(format!(
                     "Datadog API response exceeded size limit: {} bytes (limit: {} bytes)",
                     bytes.len(),
                     self.max_response_bytes
-                ),
+                )),
                 retriable: false,
             });
         }
 
         if !status.is_success() {
             return Err(RequestFailure {
-                message: format!(
-                    "Datadog API request failed: status={} body={}",
+                error: PortError::http_status(
                     status.as_u16(),
-                    truncate_for_error(String::from_utf8_lossy(&bytes).as_ref())
+                    format!(
+                        "Datadog API request failed: status={} body={}",
+                        status.as_u16(),
+                        truncate_for_error(String::from_utf8_lossy(&bytes).as_ref())
+                    ),
                 ),
                 retriable: status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error(),
             });
@@ -144,7 +149,9 @@ impl DatadogHttpClient {
         }
 
         serde_json::from_slice(&bytes).map_err(|error| RequestFailure {
-            message: format!("Failed to parse Datadog API response JSON: {error}"),
+            error: PortError::invalid_response(format!(
+                "Failed to parse Datadog API response JSON: {error}"
+            )),
             retriable: false,
         })
     }
@@ -174,7 +181,7 @@ impl DatadogHttpClient {
 
 #[derive(Debug)]
 struct RequestFailure {
-    message: String,
+    error: PortError,
     retriable: bool,
 }
 
@@ -185,7 +192,7 @@ fn resolve_base_url(config: &DatadogHttpClientConfig) -> Result<String, PortErro
 
     let normalized_site = config.site.trim();
     if normalized_site.is_empty() {
-        return Err(PortError::new("Datadog site must not be empty"));
+        return Err(PortError::invalid_input("Datadog site must not be empty"));
     }
 
     normalize_base_url(format!("https://api.{normalized_site}").as_str())
@@ -194,7 +201,9 @@ fn resolve_base_url(config: &DatadogHttpClientConfig) -> Result<String, PortErro
 fn normalize_base_url(value: &str) -> Result<String, PortError> {
     let normalized = value.trim().trim_end_matches('/').to_string();
     if normalized.is_empty() {
-        return Err(PortError::new("Datadog base URL must not be empty"));
+        return Err(PortError::invalid_input(
+            "Datadog base URL must not be empty",
+        ));
     }
 
     Ok(normalized)
@@ -278,6 +287,7 @@ mod tests {
 
         let error = result.expect_err("all attempts fail");
         assert!(error.message.contains("status=500"));
+        assert_eq!(error.status_code(), Some(500));
     }
 
     #[tokio::test]
@@ -311,6 +321,10 @@ mod tests {
 
         let error = result.expect_err("response is too large");
         assert!(error.message.contains("exceeded size limit"));
+        assert!(matches!(
+            error.kind,
+            reili_core::error::PortErrorKind::InvalidResponse
+        ));
     }
 
     fn create_client(base_url: &str, retry: DatadogApiRetryConfig) -> DatadogHttpClient {

@@ -38,7 +38,9 @@ impl GitHubSearchAdapter {
     pub fn new(config: GitHubSearchAdapterConfig) -> Result<Self, PortError> {
         let app_id = parse_app_id(&config.app_id)?;
         let key = jsonwebtoken::EncodingKey::from_rsa_pem(config.private_key.as_bytes()).map_err(
-            |error| PortError::new(format!("Failed to parse GitHub App private key: {error}")),
+            |error| {
+                PortError::invalid_input(format!("Failed to parse GitHub App private key: {error}"))
+            },
         )?;
 
         let mut builder = Octocrab::builder().app(AppId(app_id), key);
@@ -314,9 +316,9 @@ impl GithubPullRequestPort for GitHubSearchAdapter {
 }
 
 fn parse_app_id(app_id: &str) -> Result<u64, PortError> {
-    app_id
-        .parse::<u64>()
-        .map_err(|error| PortError::new(format!("Invalid GitHub App ID `{app_id}`: {error}")))
+    app_id.parse::<u64>().map_err(|error| {
+        PortError::invalid_input(format!("Invalid GitHub App ID `{app_id}`: {error}"))
+    })
 }
 
 fn map_repo_language(language: Option<Value>) -> Option<String> {
@@ -341,7 +343,16 @@ fn to_per_page(limit: u32) -> u8 {
 }
 
 fn map_octocrab_error(error: octocrab::Error) -> PortError {
-    PortError::new(format!("GitHub API request failed: {error}"))
+    match error {
+        octocrab::Error::GitHub { source, .. } => PortError::http_status(
+            source.status_code.as_u16(),
+            format!(
+                "GitHub API request failed: status={} error={source}",
+                source.status_code.as_u16()
+            ),
+        ),
+        other => PortError::new(format!("GitHub API request failed: {other}")),
+    }
 }
 
 fn normalize_org_name(value: &str) -> String {
@@ -353,13 +364,13 @@ fn ensure_org_scoped_query(query: &str, scope_org: &str) -> Result<(), PortError
     let org_qualifiers = extract_org_qualifiers(query);
 
     if org_qualifiers.is_empty() {
-        return Err(PortError::new(format!(
+        return Err(PortError::invalid_input(format!(
             "org qualifier is required. include org:{scope_org}"
         )));
     }
 
     if org_qualifiers.iter().any(|org| org != &target_org) {
-        return Err(PortError::new(format!(
+        return Err(PortError::invalid_input(format!(
             "org qualifier is out of scope. allowed org: {scope_org}"
         )));
     }
@@ -369,7 +380,7 @@ fn ensure_org_scoped_query(query: &str, scope_org: &str) -> Result<(), PortError
 
 fn ensure_owner_in_scope(owner: &str, scope_org: &str) -> Result<(), PortError> {
     if !owner.eq_ignore_ascii_case(scope_org) {
-        return Err(PortError::new(format!(
+        return Err(PortError::invalid_input(format!(
             "owner is out of scope. allowed owner: {scope_org}"
         )));
     }

@@ -1,8 +1,6 @@
 use reili_core::error::PortError;
 use serde::Serialize;
 
-use super::status_code_parser::extract_http_status_code;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatadogToolSoftError {
@@ -13,10 +11,10 @@ pub struct DatadogToolSoftError {
 }
 
 pub fn to_datadog_tool_soft_error(error: &PortError) -> Option<DatadogToolSoftError> {
-    let status_code = extract_http_status_code(&error.message)?;
-    if !(400..=499).contains(&status_code) {
+    if !error.is_client_error() {
         return None;
     }
+    let status_code = error.status_code()?;
 
     Some(DatadogToolSoftError {
         ok: false,
@@ -34,7 +32,10 @@ mod tests {
 
     #[test]
     fn returns_soft_error_for_datadog_client_error() {
-        let error = PortError::new("Datadog API request failed: status=400 body=bad request");
+        let error = PortError::http_status(
+            400,
+            "Datadog API request failed: status=400 body=bad request",
+        );
 
         let actual = to_datadog_tool_soft_error(&error);
 
@@ -51,7 +52,8 @@ mod tests {
 
     #[test]
     fn returns_none_for_server_error() {
-        let error = PortError::new("Datadog API request failed: status=500 body=failed");
+        let error =
+            PortError::http_status(500, "Datadog API request failed: status=500 body=failed");
 
         let actual = to_datadog_tool_soft_error(&error);
 

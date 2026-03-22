@@ -5,7 +5,7 @@ pub fn assert_github_owner_in_scope(owner: &str, scope_org: &str) -> Result<(), 
         return Ok(());
     }
 
-    Err(PortError::new(format!(
+    Err(PortError::invalid_input(format!(
         "owner is out of scope. allowed owner: {scope_org}"
     )))
 }

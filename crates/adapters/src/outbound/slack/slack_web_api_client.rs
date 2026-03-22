@@ -23,7 +23,9 @@ impl SlackWebApiClient {
     pub fn new(config: SlackWebApiClientConfig) -> Result<Self, PortError> {
         let base_url = normalize_base_url(config.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL))?;
         if config.bot_token.trim().is_empty() {
-            return Err(PortError::new("Slack bot token must not be empty"));
+            return Err(PortError::invalid_input(
+                "Slack bot token must not be empty",
+            ));
         }
 
         let client = reqwest::Client::builder().build().map_err(|error| {
@@ -52,24 +54,27 @@ impl SlackWebApiClient {
             .send()
             .await
             .map_err(|error| {
-                PortError::new(format!(
+                PortError::connection_failed(format!(
                     "Slack API request failed: method={method_path} error={error}"
                 ))
             })?;
 
         let status = response.status();
         let bytes = response.bytes().await.map_err(|error| {
-            PortError::new(format!(
+            PortError::invalid_response(format!(
                 "Failed to read Slack API response body: method={method_path} error={error}"
             ))
         })?;
 
         if !status.is_success() {
-            return Err(PortError::new(format!(
-                "Slack API request failed: method={method_path} status={} body={}",
+            return Err(PortError::http_status(
                 status.as_u16(),
-                truncate_for_error(String::from_utf8_lossy(&bytes).as_ref())
-            )));
+                format!(
+                    "Slack API request failed: method={method_path} status={} body={}",
+                    status.as_u16(),
+                    truncate_for_error(String::from_utf8_lossy(&bytes).as_ref())
+                ),
+            ));
         }
 
         if bytes.is_empty() {
@@ -77,7 +82,7 @@ impl SlackWebApiClient {
         }
 
         let json: Value = serde_json::from_slice(&bytes).map_err(|error| {
-            PortError::new(format!(
+            PortError::invalid_response(format!(
                 "Failed to parse Slack API response JSON: method={method_path} error={error}"
             ))
         })?;
@@ -85,9 +90,10 @@ impl SlackWebApiClient {
         if json.get("ok").and_then(Value::as_bool) == Some(false) {
             let error_code = read_non_empty_json_string(json.get("error"))
                 .unwrap_or_else(|| "unknown_error".to_string());
-            return Err(PortError::new(format!(
-                "Slack API returned error: method={method_path} error={error_code}"
-            )));
+            return Err(PortError::service_error(
+                error_code.clone(),
+                format!("Slack API returned error: method={method_path} error={error_code}"),
+            ));
         }
 
         Ok(json)
@@ -97,7 +103,7 @@ impl SlackWebApiClient {
 fn normalize_base_url(value: &str) -> Result<String, PortError> {
     let normalized = value.trim().trim_end_matches('/').to_string();
     if normalized.is_empty() {
-        return Err(PortError::new("Slack base URL must not be empty"));
+        return Err(PortError::invalid_input("Slack base URL must not be empty"));
     }
 
     Ok(normalized)
@@ -168,6 +174,7 @@ mod tests {
             .expect_err("request should fail");
 
         assert!(error.message.contains("invalid_auth"));
+        assert_eq!(error.service_error_code(), Some("invalid_auth"));
     }
 
     #[tokio::test]
@@ -189,6 +196,7 @@ mod tests {
             .expect_err("request should fail");
 
         assert!(error.message.contains("status=500"));
+        assert_eq!(error.status_code(), Some(500));
     }
 
     fn create_client(base_url: &str) -> SlackWebApiClient {
