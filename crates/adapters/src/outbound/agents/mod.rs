@@ -1,4 +1,5 @@
 mod bedrock_task_runner;
+mod datadog_mcp_client;
 mod datadog_mcp_tools;
 mod llm_provider_settings;
 mod llm_task_runner;
