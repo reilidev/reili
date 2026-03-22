@@ -19,7 +19,10 @@ use reili_adapters::outbound::slack::{
     SlackThreadReplyAdapter, SlackWebApiClient, SlackWebApiClientConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
-use reili_application::investigation::{InvestigationExecutionDeps, InvestigationLogger};
+use reili_application::investigation::{
+    InvestigationExecutionDeps, InvestigationLogger, ScopedGithubCodeSearchPort,
+    ScopedGithubPullRequestPort, ScopedGithubRepositoryContentPort,
+};
 use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, StartInvestigationWorkerRunnerUseCase,
     StartInvestigationWorkerRunnerUseCaseDeps,
@@ -38,7 +41,7 @@ use reili_core::monitoring::datadog::{
 };
 use reili_core::queue::InvestigationJobQueuePort;
 use reili_core::source_code::github::{
-    GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
+    GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort, GithubScopePolicy,
 };
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -127,17 +130,24 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let event_search_port: Arc<dyn DatadogEventSearchPort> = Arc::new(
         DatadogEventSearchAdapter::new(Arc::clone(&datadog_http_client)),
     );
+    let github_scope_policy = Arc::new(GithubScopePolicy::new(config.github.scope_org.clone())?);
     let github_adapter = Arc::new(GitHubSearchAdapter::new(GitHubSearchAdapterConfig {
         app_id: config.github.app_id.clone(),
         private_key: config.github.private_key.clone(),
         installation_id: config.github.installation_id,
-        scope_org: config.github.scope_org.clone(),
         base_url: None,
     })?);
-    let github_code_search_port: Arc<dyn GithubCodeSearchPort> = github_adapter.clone();
+    let github_code_search_port: Arc<dyn GithubCodeSearchPort> = Arc::new(
+        ScopedGithubCodeSearchPort::new(github_adapter.clone(), Arc::clone(&github_scope_policy)),
+    );
     let github_repository_content_port: Arc<dyn GithubRepositoryContentPort> =
-        github_adapter.clone();
-    let github_pull_request_port: Arc<dyn GithubPullRequestPort> = github_adapter;
+        Arc::new(ScopedGithubRepositoryContentPort::new(
+            github_adapter.clone(),
+            Arc::clone(&github_scope_policy),
+        ));
+    let github_pull_request_port: Arc<dyn GithubPullRequestPort> = Arc::new(
+        ScopedGithubPullRequestPort::new(github_adapter, github_scope_policy),
+    );
     let provider_ports = create_provider_ports(CreateProviderPortsInput {
         llm_provider: &config.llm.provider,
         datadog_api_key: config.datadog_api_key.clone(),

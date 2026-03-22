@@ -24,13 +24,11 @@ pub struct GitHubSearchAdapterConfig {
     pub app_id: String,
     pub private_key: String,
     pub installation_id: u32,
-    pub scope_org: String,
     pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct GitHubSearchAdapter {
-    config: GitHubSearchAdapterConfig,
     client: Octocrab,
 }
 
@@ -53,17 +51,8 @@ impl GitHubSearchAdapter {
             app_client.installation(InstallationId(u64::from(config.installation_id)));
 
         Ok(Self {
-            config,
             client: installation_client,
         })
-    }
-
-    fn require_org_scoped_query(&self, query: &str) -> Result<(), PortError> {
-        ensure_org_scoped_query(query, &self.config.scope_org)
-    }
-
-    fn require_owner_in_scope(&self, owner: &str) -> Result<(), PortError> {
-        ensure_owner_in_scope(owner, &self.config.scope_org)
     }
 }
 
@@ -73,8 +62,6 @@ impl GithubCodeSearchPort for GitHubSearchAdapter {
         &self,
         params: GithubSearchParams,
     ) -> Result<Vec<GithubCodeSearchResultItem>, PortError> {
-        self.require_org_scoped_query(&params.query)?;
-
         let page = self
             .client
             .search()
@@ -103,8 +90,6 @@ impl GithubCodeSearchPort for GitHubSearchAdapter {
         &self,
         params: GithubSearchParams,
     ) -> Result<Vec<GithubRepoSearchResultItem>, PortError> {
-        self.require_org_scoped_query(&params.query)?;
-
         let page = self
             .client
             .search()
@@ -138,8 +123,6 @@ impl GithubCodeSearchPort for GitHubSearchAdapter {
         &self,
         params: GithubSearchParams,
     ) -> Result<Vec<GithubIssueSearchResultItem>, PortError> {
-        self.require_org_scoped_query(&params.query)?;
-
         let page = self
             .client
             .search()
@@ -177,8 +160,6 @@ impl GithubRepositoryContentPort for GitHubSearchAdapter {
         &self,
         params: GithubRepositoryContentParams,
     ) -> Result<GithubRepositoryContent, PortError> {
-        self.require_owner_in_scope(&params.owner)?;
-
         let repo_handler = self.client.repos(params.owner.clone(), params.repo);
         let mut request = repo_handler.get_content().path(params.path.clone());
 
@@ -241,8 +222,6 @@ impl GithubPullRequestPort for GitHubSearchAdapter {
         &self,
         params: GithubPullRequestParams,
     ) -> Result<GithubPullRequestSummary, PortError> {
-        self.require_owner_in_scope(&params.owner)?;
-
         let pr = self
             .client
             .pulls(params.owner.clone(), params.repo.clone())
@@ -285,8 +264,6 @@ impl GithubPullRequestPort for GitHubSearchAdapter {
         &self,
         params: GithubPullRequestParams,
     ) -> Result<GithubPullRequestDiff, PortError> {
-        self.require_owner_in_scope(&params.owner)?;
-
         let raw_diff = self
             .client
             .pulls(params.owner.clone(), params.repo.clone())
@@ -355,69 +332,6 @@ fn map_octocrab_error(error: octocrab::Error) -> PortError {
     }
 }
 
-fn normalize_org_name(value: &str) -> String {
-    value.trim().to_ascii_lowercase()
-}
-
-fn ensure_org_scoped_query(query: &str, scope_org: &str) -> Result<(), PortError> {
-    let target_org = normalize_org_name(scope_org);
-    let org_qualifiers = extract_org_qualifiers(query);
-
-    if org_qualifiers.is_empty() {
-        return Err(PortError::invalid_input(format!(
-            "org qualifier is required. include org:{scope_org}"
-        )));
-    }
-
-    if org_qualifiers.iter().any(|org| org != &target_org) {
-        return Err(PortError::invalid_input(format!(
-            "org qualifier is out of scope. allowed org: {scope_org}"
-        )));
-    }
-
-    Ok(())
-}
-
-fn ensure_owner_in_scope(owner: &str, scope_org: &str) -> Result<(), PortError> {
-    if !owner.eq_ignore_ascii_case(scope_org) {
-        return Err(PortError::invalid_input(format!(
-            "owner is out of scope. allowed owner: {scope_org}"
-        )));
-    }
-
-    Ok(())
-}
-
-fn extract_org_qualifiers(query: &str) -> Vec<String> {
-    query
-        .split_whitespace()
-        .filter_map(read_org_qualifier)
-        .collect()
-}
-
-fn read_org_qualifier(token: &str) -> Option<String> {
-    let cleaned = token.trim().trim_matches(|ch: char| {
-        matches!(ch, '(' | ')' | '[' | ']' | '{' | '}' | '"' | '\'' | ',')
-    });
-
-    let (key, value) = cleaned.split_once(':')?;
-
-    if !key.eq_ignore_ascii_case("org") {
-        return None;
-    }
-
-    let normalized = value
-        .trim()
-        .trim_matches(|ch: char| matches!(ch, '(' | ')' | '[' | ']' | '{' | '}' | '"' | '\'' | ','))
-        .to_ascii_lowercase();
-
-    if normalized.is_empty() {
-        return None;
-    }
-
-    Some(normalized)
-}
-
 fn decode_base64(value: &str) -> Result<Vec<u8>, PortError> {
     use base64::Engine;
 
@@ -448,21 +362,8 @@ fn count_chars(value: &str) -> usize {
 mod tests {
     use super::{
         MAX_CONTENT_BYTES, MAX_CONTENT_CHARS, MAX_DIFF_CHARS, count_chars, decode_base64,
-        ensure_org_scoped_query, ensure_owner_in_scope, extract_org_qualifiers, read_org_qualifier,
         truncate_to_char_limit,
     };
-
-    #[test]
-    fn extracts_org_qualifiers_case_insensitively() {
-        let qualifiers = extract_org_qualifiers("is:open org:AcMe repo:acme/service");
-
-        assert_eq!(qualifiers, vec!["acme"]);
-    }
-
-    #[test]
-    fn reads_org_qualifier_with_trailing_punctuation() {
-        assert_eq!(read_org_qualifier("(org:acme,)"), Some("acme".to_string()));
-    }
 
     #[test]
     fn truncates_by_char_limit_without_splitting_utf8() {
@@ -479,22 +380,6 @@ mod tests {
         let decoded = decode_base64("aGVs\nbG8=").expect("decode base64");
 
         assert_eq!(decoded, b"hello");
-    }
-
-    #[test]
-    fn adapter_rejects_missing_org_qualifier() {
-        let error = ensure_org_scoped_query("is:open repo:acme/service", "acme")
-            .expect_err("missing org qualifier should fail");
-
-        assert_eq!(error.message, "org qualifier is required. include org:acme");
-    }
-
-    #[test]
-    fn adapter_rejects_out_of_scope_owner() {
-        let error =
-            ensure_owner_in_scope("other-org", "acme").expect_err("owner out of scope should fail");
-
-        assert_eq!(error.message, "owner is out of scope. allowed owner: acme");
     }
 
     #[test]
