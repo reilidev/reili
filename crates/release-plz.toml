@@ -1,0 +1,30 @@
+[workspace]
+changelog_update = false
+git_only = true
+git_release_enable = false
+git_tag_enable = false
+git_tag_name = "v{{ version }}"
+pr_branch_prefix = "release-plz-"
+release_always = false
+
+[[package]]
+name = "reili_adapters"
+version_group = "workspace"
+
+[[package]]
+name = "reili_application"
+version_group = "workspace"
+
+[[package]]
+name = "reili_core"
+version_group = "workspace"
+
+[[package]]
+name = "reili_runtime"
+changelog_include = ["reili_adapters", "reili_application", "reili_core"]
+changelog_path = "../CHANGELOG.md"
+changelog_update = true
+git_release_enable = true
+git_release_name = "v{{ version }}"
+git_tag_enable = true
+version_group = "workspace"

@@ -4,42 +4,89 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
-
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
 
 env:
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  CARGO_HTTP_TIMEOUT: 60
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
   CARGO_TERM_COLOR: always
   BIN_NAME: reili
+  RELEASE_PLZ_VERSION: 0.3.157
 
 jobs:
   release-pr:
-    if: github.ref_type == 'branch' && github.ref_name == 'main'
     permissions:
       contents: write
-      issues: write
       pull-requests: write
     runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs['crates/runtime--release_created'] }}
-      tag_name: ${{ steps.release.outputs['crates/runtime--tag_name'] }}
-      version: ${{ steps.release.outputs['crates/runtime--version'] }}
-      major: ${{ steps.release.outputs['crates/runtime--major'] }}
-      minor: ${{ steps.release.outputs['crates/runtime--minor'] }}
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
     steps:
-      - id: release
-        uses: googleapis/release-please-action@v4
+      - uses: actions/checkout@v6
         with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        id: app-token
+        with:
+          app-id: ${{ vars.REILI_BOT_APP_ID }}
+          private-key: ${{ secrets.REILI_BOT_APP_PRIVATE_KEY }}
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # release tag v1; upstream does not publish v1.x.y tags
+        with:
+          toolchain: stable
+
+      - id: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+          config: crates/release-plz.toml
+          manifest_path: crates/Cargo.toml
+          version: ${{ env.RELEASE_PLZ_VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  release:
+    needs: release-pr
+    permissions:
+      contents: write
+      pull-requests: read
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.release-plz.outputs.releases_created }}
+      releases: ${{ steps.release-plz.outputs.releases }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        id: app-token
+        with:
+          app-id: ${{ vars.REILI_BOT_APP_ID }}
+          private-key: ${{ secrets.REILI_BOT_APP_PRIVATE_KEY }}
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # release tag v1; upstream does not publish v1.x.y tags
+        with:
+          toolchain: stable
+
+      - id: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+          config: crates/release-plz.toml
+          manifest_path: crates/Cargo.toml
+          version: ${{ env.RELEASE_PLZ_VERSION }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   prepare-release:
-    needs: release-pr
-    # Allow tag-triggered releases to proceed even though release-pr is skipped on non-main refs.
-    if: always() && (github.ref_type == 'tag' || needs.release-pr.outputs.release_created == 'true')
+    needs: release
+    if: needs.release.outputs.releases_created == 'true'
     permissions: {}
     runs-on: ubuntu-latest
     outputs:
@@ -47,39 +94,26 @@ jobs:
       version: ${{ steps.metadata.outputs.version }}
       major: ${{ steps.metadata.outputs.major }}
       minor: ${{ steps.metadata.outputs.minor }}
-      release_origin: ${{ steps.metadata.outputs.release_origin }}
     steps:
       - id: metadata
         name: Resolve release metadata
         env:
-          EVENT_REF_NAME: ${{ github.ref_name }}
-          EVENT_REF_TYPE: ${{ github.ref_type }}
-          RP_MAJOR: ${{ needs.release-pr.outputs.major }}
-          RP_MINOR: ${{ needs.release-pr.outputs.minor }}
-          RP_TAG_NAME: ${{ needs.release-pr.outputs.tag_name }}
-          RP_VERSION: ${{ needs.release-pr.outputs.version }}
+          RELEASES: ${{ needs.release.outputs.releases }}
         run: |
-          if [ "${EVENT_REF_TYPE}" = "tag" ]; then
-            tag_name="${EVENT_REF_NAME}"
-            version="${tag_name#v}"
-            major="${version%%.*}"
-            rest="${version#*.}"
-            minor="${rest%%.*}"
-            release_origin="tag-push"
-          else
-            tag_name="${RP_TAG_NAME}"
-            version="${RP_VERSION}"
-            major="${RP_MAJOR}"
-            minor="${RP_MINOR}"
-            release_origin="release-please"
-          fi
+          set -euo pipefail
+
+          runtime_release="$(echo "${RELEASES}" | jq -e -c '.[] | select(.package_name == "reili_runtime")')"
+          tag_name="$(echo "${runtime_release}" | jq -r '.tag')"
+          version="$(echo "${runtime_release}" | jq -r '.version')"
+          major="${version%%.*}"
+          rest="${version#*.}"
+          minor="${rest%%.*}"
 
           {
             echo "tag_name=${tag_name}"
             echo "version=${version}"
             echo "major=${major}"
             echo "minor=${minor}"
-            echo "release_origin=${release_origin}"
           } >> "${GITHUB_OUTPUT}"
 
   build-binaries:
@@ -111,26 +145,21 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        id: app-token
+        with:
+          app-id: ${{ vars.REILI_BOT_APP_ID }}
+          private-key: ${{ secrets.REILI_BOT_APP_PRIVATE_KEY }}
+
       - uses: actions/download-artifact@v8
         with:
           pattern: release-bundle-*
           merge-multiple: true
           path: dist
 
-      - uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
-        if: needs.prepare-release.outputs.release_origin == 'tag-push'
-        with:
-          tag_name: ${{ needs.prepare-release.outputs.tag_name }}
-          generate_release_notes: true
-          overwrite_files: true
-          files: |
-            dist/*.tar.gz
-            dist/*.sha256
-
-      - name: Upload assets to release-please release
-        if: needs.prepare-release.outputs.release_origin == 'release-please'
+      - name: Upload assets to GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           gh release upload "${{ needs.prepare-release.outputs.tag_name }}" \
             dist/*.tar.gz \
@@ -149,9 +178,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        id: app-token
+        with:
+          app-id: ${{ vars.REILI_BOT_APP_ID }}
+          private-key: ${{ secrets.REILI_BOT_APP_PRIVATE_KEY }}
+
       - name: Download release assets
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           mkdir -p dist/release
 
