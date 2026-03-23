@@ -48,7 +48,6 @@ jobs:
         working-directory: crates
         run: |
           cargo build --locked --release --target "${{ inputs.target }}" --bin "${BIN_NAME}"
-          strip "target/${{ inputs.target }}/release/${BIN_NAME}"
 
       - name: Package release artifact
         run: |

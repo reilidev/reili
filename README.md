@@ -271,7 +271,8 @@ For local development setup, architecture rules, and contributor workflows, see 
 ## Release
 
 - Pull requests and pushes to `main` run `cargo fmt`, `cargo clippy`, `cargo test`, and a Docker build validation in GitHub Actions.
-- Pushing a tag such as `v0.1.0` triggers the release workflow, which creates a GitHub Release, uploads a Linux binary archive, and publishes a multi-architecture container image to `ghcr.io/<owner>/<repo>`.
+- `release-plz` maintains the release pull request on every push to `main`; merging that PR creates the `vX.Y.Z` GitHub Release, uploads Linux binary archives, and publishes a multi-architecture container image to `ghcr.io/<owner>/<repo>`.
+- The release workflow mints a GitHub App installation token via `actions/create-github-app-token`; configure `vars.TOKEN_GEN_APP_ID` and `secrets.TOKEN_GEN_PRIVATE_KEY` for that app.
 - The container exposes `/healthz` for runtime health checks and listens on `PORT` (default `3000`).
 
 ## Non-Goals
