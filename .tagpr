@@ -1,0 +1,7 @@
+[tagpr]
+releaseBranch = main
+versionFile = crates/Cargo.toml
+vPrefix = true
+changelog = true
+changelogFile = CHANGELOG.md
+postVersionCommand = cargo metadata --format-version=1 --offline --manifest-path crates/Cargo.toml

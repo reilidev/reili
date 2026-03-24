@@ -271,8 +271,8 @@ For local development setup, architecture rules, and contributor workflows, see 
 ## Release
 
 - Pull requests and pushes to `main` run `cargo fmt`, `cargo clippy`, `cargo test`, and a Docker build validation in GitHub Actions.
-- `release-please` maintains the release pull request on every push to `main`; merging that PR creates the `vX.Y.Z` GitHub Release, uploads Linux binary archives, and publishes a multi-architecture container image to `ghcr.io/<owner>/<repo>`.
-- The release workflow uses `release-type: simple` with `crates/version.txt` as the tracked version file and injects the release tag into the binary at compile time as `APP_VERSION`.
+- `tagpr` maintains the release pull request on every push to `main`; merging that PR tags the merge commit, creates the `vX.Y.Z` GitHub Release, uploads Linux binary archives, and publishes a multi-architecture container image to `ghcr.io/<owner>/<repo>`.
+- The release workflow tracks `crates/Cargo.toml` as the workspace version file, refreshes `crates/Cargo.lock` after version bumps, updates `CHANGELOG.md`, and injects the release tag into the binary at compile time as `APP_VERSION`.
 - The release workflow mints a GitHub App installation token via `actions/create-github-app-token`; configure `vars.REILI_BOT_APP_ID` and `secrets.REILI_BOT_APP_PRIVATE_KEY` for that app.
 - The container exposes `/healthz` for runtime health checks and listens on `PORT` (default `3000`).
 

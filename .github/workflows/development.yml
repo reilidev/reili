@@ -63,7 +63,7 @@ jobs:
       - run: cargo test --workspace --locked --all-targets
 
   build-release-bundle:
-    if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'tagpr')
     needs:
       - lint
       - test
@@ -77,7 +77,7 @@ jobs:
       version: development
 
   container-image:
-    if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.head.ref, 'release-please--branches--')
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'tagpr')
     needs: build-release-bundle
     permissions:
       contents: read

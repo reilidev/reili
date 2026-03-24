@@ -14,20 +14,17 @@ env:
   BIN_NAME: reili
 
 jobs:
-  release:
+  tagpr:
     permissions:
       contents: write
       pull-requests: write
+      issues: read
     runs-on: ubuntu-latest
     concurrency:
       group: release-${{ github.ref }}
       cancel-in-progress: false
     outputs:
-      release_created: ${{ steps.release.outputs['crates--release_created'] }}
-      tag_name: ${{ steps.release.outputs['crates--tag_name'] }}
-      version: ${{ steps.release.outputs['crates--version'] }}
-      major: ${{ steps.release.outputs['crates--major'] }}
-      minor: ${{ steps.release.outputs['crates--minor'] }}
+      tag_name: ${{ steps.tagpr.outputs.tag }}
     steps:
       - uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
         id: app-token
@@ -35,16 +32,59 @@ jobs:
           app-id: ${{ vars.REILI_BOT_APP_ID }}
           private-key: ${{ secrets.REILI_BOT_APP_PRIVATE_KEY }}
 
-      - id: release
-        uses: googleapis/release-please-action@v4
+      - uses: actions/checkout@v6
         with:
           token: ${{ steps.app-token.outputs.token }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # release tag v1; upstream does not publish v1.x.y tags
+        with:
+          toolchain: stable
+
+      - id: tagpr
+        uses: Songmu/tagpr@v1.17.1
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  release-metadata:
+    needs: tagpr
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.parse.outputs.tag_name }}
+      version: ${{ steps.parse.outputs.version }}
+      major: ${{ steps.parse.outputs.major }}
+      minor: ${{ steps.parse.outputs.minor }}
+    steps:
+      - id: parse
+        env:
+          TAG_NAME: ${{ needs.tagpr.outputs.tag_name }}
+        run: |
+          if [ -z "${TAG_NAME}" ]; then
+            {
+              echo "tag_name="
+              echo "version="
+              echo "major="
+              echo "minor="
+            } >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          version="${TAG_NAME#v}"
+          major="${version%%.*}"
+          minor="${version#*.}"
+          minor="${minor%%.*}"
+
+          {
+            echo "tag_name=${TAG_NAME}"
+            echo "version=${version}"
+            echo "major=${major}"
+            echo "minor=${minor}"
+          } >> "${GITHUB_OUTPUT}"
 
   build-binaries:
-    needs: release
-    if: needs.release.outputs.release_created == 'true'
+    needs: release-metadata
+    if: needs.release-metadata.outputs.tag_name != ''
     permissions:
       contents: read
     strategy:
@@ -62,12 +102,13 @@ jobs:
       arch: ${{ matrix.arch }}
       runner: ${{ matrix.runner }}
       target: ${{ matrix.target }}
-      version: ${{ needs.release.outputs.tag_name }}
+      version: ${{ needs.release-metadata.outputs.tag_name }}
 
   github-release:
     needs:
       - build-binaries
-      - release
+      - release-metadata
+    if: needs.release-metadata.outputs.tag_name != ''
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -88,7 +129,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          gh release upload "${{ needs.release.outputs.tag_name }}" \
+          gh release upload "${{ needs.release-metadata.outputs.tag_name }}" \
             dist/*.tar.gz \
             dist/*.sha256 \
             --repo "${GITHUB_REPOSITORY}" \
@@ -97,7 +138,8 @@ jobs:
   container-image:
     needs:
       - github-release
-      - release
+      - release-metadata
+    if: needs.release-metadata.outputs.tag_name != ''
     permissions:
       contents: read
       packages: write
@@ -117,9 +159,9 @@ jobs:
         run: |
           mkdir -p dist/release
 
-          gh release download "${{ needs.release.outputs.tag_name }}" \
+          gh release download "${{ needs.release-metadata.outputs.tag_name }}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --pattern "reili-${{ needs.release.outputs.tag_name }}-*.tar.gz" \
+            --pattern "reili-${{ needs.release-metadata.outputs.tag_name }}-*.tar.gz" \
             --dir dist/release
 
       - name: Prepare Docker build context
@@ -132,7 +174,7 @@ jobs:
               aarch64-unknown-linux-musl) arch=arm64 ;;
             esac
 
-            package="reili-${{ needs.release.outputs.tag_name }}-${target}"
+            package="reili-${{ needs.release-metadata.outputs.tag_name }}-${target}"
 
             tar -xzf "dist/release/${package}.tar.gz" -C dist/release
             install -m 755 \
@@ -157,9 +199,9 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=raw,value=${{ needs.release.outputs.version }}
-            type=raw,value=${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}
-            type=raw,value=latest,enable=${{ !contains(needs.release.outputs.version, '-') }}
+            type=raw,value=${{ needs.release-metadata.outputs.version }}
+            type=raw,value=${{ needs.release-metadata.outputs.major }}.${{ needs.release-metadata.outputs.minor }}
+            type=raw,value=latest,enable=${{ !contains(needs.release-metadata.outputs.version, '-') }}
             type=sha
 
       - uses: docker/build-push-action@v7
@@ -169,7 +211,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: |
-            APP_VERSION=${{ needs.release.outputs.tag_name }}
+            APP_VERSION=${{ needs.release-metadata.outputs.tag_name }}
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
