@@ -84,14 +84,14 @@ Single-process runtime:
 
 ```bash
 cd crates
-bash -lc 'set -a; source ../.env; set +a; cargo run -p reili_runtime'
+bash -lc 'set -a; source ../.env; set +a; APP_VERSION=local cargo run -p reili_runtime'
 ```
 
 If you use `cargo-watch`:
 
 ```bash
 cd crates
-bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p reili_runtime"'
+bash -lc 'set -a; source ../.env; set +a; APP_VERSION=local cargo watch -x "run -p reili_runtime"'
 ```
 
 ### 6. Run with Docker
@@ -271,8 +271,9 @@ For local development setup, architecture rules, and contributor workflows, see 
 ## Release
 
 - Pull requests and pushes to `main` run `cargo fmt`, `cargo clippy`, `cargo test`, and a Docker build validation in GitHub Actions.
-- `release-plz` maintains the release pull request on every push to `main`; merging that PR creates the `vX.Y.Z` GitHub Release, uploads Linux binary archives, and publishes a multi-architecture container image to `ghcr.io/<owner>/<repo>`.
-- The release workflow mints a GitHub App installation token via `actions/create-github-app-token`; configure `vars.TOKEN_GEN_APP_ID` and `secrets.TOKEN_GEN_PRIVATE_KEY` for that app.
+- `release-please` maintains the release pull request on every push to `main`; merging that PR creates the `vX.Y.Z` GitHub Release, uploads Linux binary archives, and publishes a multi-architecture container image to `ghcr.io/<owner>/<repo>`.
+- The release workflow uses `release-type: simple` with `crates/version.txt` as the tracked version file and injects the release tag into the binary at compile time as `APP_VERSION`.
+- The release workflow mints a GitHub App installation token via `actions/create-github-app-token`; configure `vars.REILI_BOT_APP_ID` and `secrets.REILI_BOT_APP_PRIVATE_KEY` for that app.
 - The container exposes `/healthz` for runtime health checks and listens on `PORT` (default `3000`).
 
 ## Non-Goals

@@ -46,6 +46,8 @@ jobs:
 
       - name: Build release binary
         working-directory: crates
+        env:
+          APP_VERSION: ${{ inputs.version }}
         run: |
           cargo build --locked --release --target "${{ inputs.target }}" --bin "${BIN_NAME}"
 

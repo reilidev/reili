@@ -12,112 +12,39 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: true
   CARGO_TERM_COLOR: always
   BIN_NAME: reili
-  RELEASE_PLZ_VERSION: 0.3.157
 
 jobs:
-  release-pr:
+  release:
     permissions:
       contents: write
       pull-requests: write
     runs-on: ubuntu-latest
     concurrency:
-      group: release-plz-${{ github.ref }}
+      group: release-${{ github.ref }}
       cancel-in-progress: false
+    outputs:
+      release_created: ${{ steps.release.outputs['crates--release_created'] }}
+      tag_name: ${{ steps.release.outputs['crates--tag_name'] }}
+      version: ${{ steps.release.outputs['crates--version'] }}
+      major: ${{ steps.release.outputs['crates--major'] }}
+      minor: ${{ steps.release.outputs['crates--minor'] }}
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
       - uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
         id: app-token
         with:
           app-id: ${{ vars.REILI_BOT_APP_ID }}
           private-key: ${{ secrets.REILI_BOT_APP_PRIVATE_KEY }}
 
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # release tag v1; upstream does not publish v1.x.y tags
+      - id: release
+        uses: googleapis/release-please-action@v4
         with:
-          toolchain: stable
-
-      - id: release-plz
-        uses: release-plz/action@v0.5
-        with:
-          command: release-pr
-          config: crates/release-plz.toml
-          manifest_path: crates/Cargo.toml
-          version: ${{ env.RELEASE_PLZ_VERSION }}
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-
-  release:
-    needs: release-pr
-    permissions:
-      contents: write
-      pull-requests: read
-    runs-on: ubuntu-latest
-    outputs:
-      releases_created: ${{ steps.release-plz.outputs.releases_created }}
-      releases: ${{ steps.release-plz.outputs.releases }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
-        id: app-token
-        with:
-          app-id: ${{ vars.REILI_BOT_APP_ID }}
-          private-key: ${{ secrets.REILI_BOT_APP_PRIVATE_KEY }}
-
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # release tag v1; upstream does not publish v1.x.y tags
-        with:
-          toolchain: stable
-
-      - id: release-plz
-        uses: release-plz/action@v0.5
-        with:
-          command: release
-          config: crates/release-plz.toml
-          manifest_path: crates/Cargo.toml
-          version: ${{ env.RELEASE_PLZ_VERSION }}
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-
-  prepare-release:
-    needs: release
-    if: needs.release.outputs.releases_created == 'true'
-    permissions: {}
-    runs-on: ubuntu-latest
-    outputs:
-      tag_name: ${{ steps.metadata.outputs.tag_name }}
-      version: ${{ steps.metadata.outputs.version }}
-      major: ${{ steps.metadata.outputs.major }}
-      minor: ${{ steps.metadata.outputs.minor }}
-    steps:
-      - id: metadata
-        name: Resolve release metadata
-        env:
-          RELEASES: ${{ needs.release.outputs.releases }}
-        run: |
-          set -euo pipefail
-
-          runtime_release="$(echo "${RELEASES}" | jq -e -c '.[] | select(.package_name == "reili_runtime")')"
-          tag_name="$(echo "${runtime_release}" | jq -r '.tag')"
-          version="$(echo "${runtime_release}" | jq -r '.version')"
-          major="${version%%.*}"
-          rest="${version#*.}"
-          minor="${rest%%.*}"
-
-          {
-            echo "tag_name=${tag_name}"
-            echo "version=${version}"
-            echo "major=${major}"
-            echo "minor=${minor}"
-          } >> "${GITHUB_OUTPUT}"
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
 
   build-binaries:
-    needs: prepare-release
+    needs: release
+    if: needs.release.outputs.release_created == 'true'
     permissions:
       contents: read
     strategy:
@@ -135,12 +62,12 @@ jobs:
       arch: ${{ matrix.arch }}
       runner: ${{ matrix.runner }}
       target: ${{ matrix.target }}
-      version: ${{ needs.prepare-release.outputs.tag_name }}
+      version: ${{ needs.release.outputs.tag_name }}
 
   github-release:
     needs:
       - build-binaries
-      - prepare-release
+      - release
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -161,7 +88,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          gh release upload "${{ needs.prepare-release.outputs.tag_name }}" \
+          gh release upload "${{ needs.release.outputs.tag_name }}" \
             dist/*.tar.gz \
             dist/*.sha256 \
             --repo "${GITHUB_REPOSITORY}" \
@@ -170,7 +97,7 @@ jobs:
   container-image:
     needs:
       - github-release
-      - prepare-release
+      - release
     permissions:
       contents: read
       packages: write
@@ -190,9 +117,9 @@ jobs:
         run: |
           mkdir -p dist/release
 
-          gh release download "${{ needs.prepare-release.outputs.tag_name }}" \
+          gh release download "${{ needs.release.outputs.tag_name }}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --pattern "reili-${{ needs.prepare-release.outputs.tag_name }}-*.tar.gz" \
+            --pattern "reili-${{ needs.release.outputs.tag_name }}-*.tar.gz" \
             --dir dist/release
 
       - name: Prepare Docker build context
@@ -205,7 +132,7 @@ jobs:
               aarch64-unknown-linux-musl) arch=arm64 ;;
             esac
 
-            package="reili-${{ needs.prepare-release.outputs.tag_name }}-${target}"
+            package="reili-${{ needs.release.outputs.tag_name }}-${target}"
 
             tar -xzf "dist/release/${package}.tar.gz" -C dist/release
             install -m 755 \
@@ -230,9 +157,9 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=raw,value=${{ needs.prepare-release.outputs.version }}
-            type=raw,value=${{ needs.prepare-release.outputs.major }}.${{ needs.prepare-release.outputs.minor }}
-            type=raw,value=latest,enable=${{ !contains(needs.prepare-release.outputs.version, '-') }}
+            type=raw,value=${{ needs.release.outputs.version }}
+            type=raw,value=${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}
+            type=raw,value=latest,enable=${{ !contains(needs.release.outputs.version, '-') }}
             type=sha
 
       - uses: docker/build-push-action@v7
@@ -242,7 +169,7 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: |
-            APP_VERSION=${{ needs.prepare-release.outputs.tag_name }}
+            APP_VERSION=${{ needs.release.outputs.tag_name }}
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha

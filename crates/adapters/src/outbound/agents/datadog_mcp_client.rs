@@ -17,6 +17,7 @@ use serde_json::json;
 use tracing::error;
 
 const DATADOG_MCP_CLIENT_NAME: &str = "reili";
+const DATADOG_MCP_CLIENT_VERSION_FALLBACK: &str = "unknown";
 const DATADOG_MCP_TOOLSET: &str = "core";
 const DATADOG_API_KEY_HEADER: &str = "DD_API_KEY";
 const DATADOG_APPLICATION_KEY_HEADER: &str = "DD_APPLICATION_KEY";
@@ -237,12 +238,16 @@ fn build_client_info() -> ClientInfo {
     ClientInfo {
         protocol_version: Default::default(),
         capabilities: ClientCapabilities::default(),
-        client_info: Implementation {
-            name: DATADOG_MCP_CLIENT_NAME.to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            ..Default::default()
-        },
+        client_info: build_client_implementation(),
         meta: None,
+    }
+}
+
+fn build_client_implementation() -> Implementation {
+    Implementation {
+        name: DATADOG_MCP_CLIENT_NAME.to_string(),
+        version: DATADOG_MCP_CLIENT_VERSION_FALLBACK.to_string(),
+        ..Default::default()
     }
 }
 
@@ -262,6 +267,7 @@ fn build_datadog_mcp_http_client(
 async fn diagnose_datadog_mcp_initialize(
     config: &DatadogMcpToolConfig,
 ) -> Result<DatadogMcpInitializeDiagnostic, PortError> {
+    let client_implementation = build_client_implementation();
     let response = reqwest::Client::new()
         .post(datadog_mcp_url(&config.site))
         .header("accept", "application/json, text/event-stream")
@@ -276,8 +282,8 @@ async fn diagnose_datadog_mcp_initialize(
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
                 "clientInfo": {
-                    "name": DATADOG_MCP_CLIENT_NAME,
-                    "version": env!("CARGO_PKG_VERSION"),
+                    "name": client_implementation.name,
+                    "version": client_implementation.version,
                 }
             }
         }))
@@ -414,8 +420,9 @@ mod tests {
     use rmcp::transport::streamable_http_client::StreamableHttpPostResponse;
 
     use super::{
-        DatadogMcpToolConfig, build_datadog_mcp_headers, datadog_mcp_url, datadog_site_domain,
-        read_server_result,
+        DATADOG_MCP_CLIENT_NAME, DATADOG_MCP_CLIENT_VERSION_FALLBACK, DatadogMcpToolConfig,
+        build_client_implementation, build_datadog_mcp_headers, datadog_mcp_url,
+        datadog_site_domain, read_server_result,
     };
 
     #[test]
@@ -465,6 +472,14 @@ mod tests {
         );
         assert!(headers.get("dd-api-key").is_none());
         assert!(headers.get("dd-application-key").is_none());
+    }
+
+    #[test]
+    fn builds_client_implementation_without_cargo_pkg_version() {
+        let client = build_client_implementation();
+
+        assert_eq!(client.name, DATADOG_MCP_CLIENT_NAME);
+        assert_eq!(client.version, DATADOG_MCP_CLIENT_VERSION_FALLBACK);
     }
 
     #[tokio::test]
