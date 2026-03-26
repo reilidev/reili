@@ -227,7 +227,6 @@ async fn create_provider_ports(
                 },
             )),
             task_runner: Arc::new(BedrockTaskRunner::new(BedrockTaskRunnerInput {
-                region: config.region.clone(),
                 model_id: config.model_id.clone(),
                 datadog_mcp: DatadogMcpToolConfig {
                     api_key: input.datadog_api_key,

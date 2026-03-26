@@ -54,7 +54,6 @@ Required:
 - `DATADOG_APP_KEY`
 - `LLM_PROVIDER`
 - `LLM_OPENAI_API_KEY` when `LLM_PROVIDER=openai`
-- `LLM_BEDROCK_REGION` when `LLM_PROVIDER=bedrock`
 - `LLM_BEDROCK_MODEL_ID` when `LLM_PROVIDER=bedrock`
 - `GITHUB_APP_ID`
 - `GITHUB_APP_PRIVATE_KEY`
@@ -67,7 +66,7 @@ Common optional variables:
 - `DATADOG_SITE` (default: `datadoghq.com`)
 - `LANGUAGE` (default: `English`)
 
-When `LLM_PROVIDER=bedrock`, AWS credentials are loaded from the standard AWS SDK environment or profile chain.
+When `LLM_PROVIDER=bedrock`, AWS credentials and region are loaded from the standard AWS SDK environment or profile chain. Set `AWS_PROFILE` to use a named AWS profile such as an AWS SSO profile, and set `AWS_REGION` if the selected profile does not already define a region.
 
 ### 4. Configure Slack App
 

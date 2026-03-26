@@ -7,10 +7,15 @@ license = "Apache-2.0"
 [dependencies]
 mockall.workspace = true
 async-trait = "0.1"
+aws-config = { version = "1.8", default-features = false, features = ["behavior-version-latest", "sso"] }
+aws-credential-types = "1"
+aws-sdk-bedrockruntime = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sigv4 = { version = "1", features = ["http1"] }
 axum = { version = "0.8", default-features = false }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock"] }
 futures = "0.3"
+http = "1"
 jsonwebtoken = "9"
 octocrab = "0.39"
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
