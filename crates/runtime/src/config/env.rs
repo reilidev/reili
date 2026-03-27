@@ -51,7 +51,6 @@ pub struct OpenAiLlmConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BedrockLlmConfig {
-    pub region: String,
     pub model_id: String,
 }
 
@@ -170,7 +169,6 @@ fn read_bedrock_llm_config(
     env: &dyn EnvironmentReader,
 ) -> Result<BedrockLlmConfig, EnvConfigError> {
     Ok(BedrockLlmConfig {
-        region: read_required_env(env, "LLM_BEDROCK_REGION")?,
         model_id: read_required_env(env, "LLM_BEDROCK_MODEL_ID")?,
     })
 }
@@ -347,7 +345,6 @@ mod tests {
     fn loads_bedrock_llm_config() {
         let env = environment_reader_mock(&[
             ("LLM_PROVIDER", "bedrock"),
-            ("LLM_BEDROCK_REGION", "ap-northeast-1"),
             (
                 "LLM_BEDROCK_MODEL_ID",
                 "anthropic.claude-3-7-sonnet-20250219-v1:0",
@@ -358,7 +355,6 @@ mod tests {
 
         match config.llm.provider {
             LlmProviderConfig::Bedrock(provider) => {
-                assert_eq!(provider.region, "ap-northeast-1");
                 assert_eq!(
                     provider.model_id,
                     "anthropic.claude-3-7-sonnet-20250219-v1:0"
