@@ -796,7 +796,7 @@ mod tests {
             create_route(),
         );
 
-        lifecycle.start(create_chunk(&"a".repeat(2650))).await;
+        lifecycle.start(create_chunk(&"a".repeat(2750))).await;
         let chunks = create_chunk(&"b".repeat(200));
         let reason = lifecycle
             .rotation_reason_for_append(&chunks)
