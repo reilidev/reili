@@ -7,7 +7,7 @@ This document is for contributors and maintainers of `Reili`.
 - Rust stable toolchain
 - Slack App credentials
 - Datadog API credentials
-- OpenAI API key
+- OpenAI API key, AWS credentials for Bedrock, or Google Cloud ADC for Vertex AI
 - GitHub App credentials
 
 ## Setup
@@ -27,6 +27,9 @@ cp .env.example .env
 - `LLM_PROVIDER`
 - `LLM_OPENAI_API_KEY` when `LLM_PROVIDER=openai`
 - `LLM_BEDROCK_MODEL_ID` when `LLM_PROVIDER=bedrock`
+- `LLM_VERTEX_AI_MODEL_ID` when `LLM_PROVIDER=vertexai`
+- `GOOGLE_CLOUD_LOCATION` when `LLM_PROVIDER=vertexai`
+- `GOOGLE_CLOUD_PROJECT` when `LLM_PROVIDER=vertexai`
 - `GITHUB_APP_ID`
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_APP_INSTALLATION_ID`
@@ -40,6 +43,8 @@ Optional:
 
 When `LLM_PROVIDER=bedrock`, AWS credentials and region are loaded from the standard AWS SDK environment or profile chain. Set `AWS_PROFILE` to use a named AWS profile such as an AWS SSO profile, and set `AWS_REGION` if the selected profile does not already define a region.
 
+
+When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Default Credentials. Set `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and use the exact Vertex AI Anthropic model id for `LLM_VERTEX_AI_MODEL_ID`.
 
 ## Local Run
 

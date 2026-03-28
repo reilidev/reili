@@ -23,6 +23,10 @@ pub struct CreateBedrockProviderSettingsInput {
     pub model_id: String,
 }
 
+pub struct CreateVertexAiProviderSettingsInput {
+    pub model_id: String,
+}
+
 pub fn create_openai_provider_settings(
     input: CreateOpenAiProviderSettingsInput,
 ) -> LlmProviderSettings {
@@ -53,6 +57,20 @@ pub fn create_bedrock_provider_settings(
 ) -> LlmProviderSettings {
     LlmProviderSettings {
         provider: "bedrock".to_string(),
+        specialist_model: input.model_id.clone(),
+        task_runner_model: input.model_id,
+        task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
+        specialist_max_turns: DEFAULT_SPECIALIST_MAX_TURNS,
+        tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
+        additional_params: json!({}),
+    }
+}
+
+pub fn create_vertex_ai_provider_settings(
+    input: CreateVertexAiProviderSettingsInput,
+) -> LlmProviderSettings {
+    LlmProviderSettings {
+        provider: "vertexai".to_string(),
         specialist_model: input.model_id.clone(),
         task_runner_model: input.model_id,
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,

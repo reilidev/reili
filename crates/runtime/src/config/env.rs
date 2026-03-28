@@ -31,6 +31,7 @@ pub struct LlmConfig {
 pub enum LlmProviderConfig {
     OpenAi(OpenAiLlmConfig),
     Bedrock(BedrockLlmConfig),
+    VertexAi(VertexAiLlmConfig),
 }
 
 impl LlmProviderConfig {
@@ -39,6 +40,7 @@ impl LlmProviderConfig {
         match self {
             Self::OpenAi(_) => "openai",
             Self::Bedrock(_) => "bedrock",
+            Self::VertexAi(_) => "vertexai",
         }
     }
 }
@@ -51,6 +53,13 @@ pub struct OpenAiLlmConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BedrockLlmConfig {
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VertexAiLlmConfig {
+    pub project_id: String,
+    pub location: String,
     pub model_id: String,
 }
 
@@ -145,6 +154,7 @@ fn read_llm_config(env: &dyn EnvironmentReader) -> Result<LlmConfig, EnvConfigEr
     let provider_config = match provider.as_str() {
         "openai" => LlmProviderConfig::OpenAi(read_openai_llm_config(env)?),
         "bedrock" => LlmProviderConfig::Bedrock(read_bedrock_llm_config(env)?),
+        "vertexai" | "vertex_ai" => LlmProviderConfig::VertexAi(read_vertex_ai_llm_config(env)?),
         _ => {
             return Err(EnvConfigError::InvalidValue {
                 name: "LLM_PROVIDER".to_string(),
@@ -170,6 +180,16 @@ fn read_bedrock_llm_config(
 ) -> Result<BedrockLlmConfig, EnvConfigError> {
     Ok(BedrockLlmConfig {
         model_id: read_required_env(env, "LLM_BEDROCK_MODEL_ID")?,
+    })
+}
+
+fn read_vertex_ai_llm_config(
+    env: &dyn EnvironmentReader,
+) -> Result<VertexAiLlmConfig, EnvConfigError> {
+    Ok(VertexAiLlmConfig {
+        project_id: read_required_env(env, "GOOGLE_CLOUD_PROJECT")?,
+        location: read_required_env(env, "GOOGLE_CLOUD_LOCATION")?,
+        model_id: read_required_env(env, "LLM_VERTEX_AI_MODEL_ID")?,
     })
 }
 
@@ -337,7 +357,9 @@ mod tests {
                 assert_eq!(provider.api_key, "openai-api-key");
                 assert_eq!(provider.task_runner_model, DEFAULT_OPENAI_TASK_RUNNER_MODEL);
             }
-            LlmProviderConfig::Bedrock(_) => panic!("expected openai provider"),
+            LlmProviderConfig::Bedrock(_) | LlmProviderConfig::VertexAi(_) => {
+                panic!("expected openai provider")
+            }
         }
     }
 
@@ -360,7 +382,32 @@ mod tests {
                     "anthropic.claude-3-7-sonnet-20250219-v1:0"
                 );
             }
-            LlmProviderConfig::OpenAi(_) => panic!("expected bedrock provider"),
+            LlmProviderConfig::OpenAi(_) | LlmProviderConfig::VertexAi(_) => {
+                panic!("expected bedrock provider")
+            }
+        }
+    }
+
+    #[test]
+    fn loads_vertex_ai_llm_config() {
+        let env = environment_reader_mock(&[
+            ("LLM_PROVIDER", "vertexai"),
+            ("GOOGLE_CLOUD_PROJECT", "example-project"),
+            ("GOOGLE_CLOUD_LOCATION", "us-east5"),
+            ("LLM_VERTEX_AI_MODEL_ID", "claude-sonnet-4-6"),
+        ]);
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        match config.llm.provider {
+            LlmProviderConfig::VertexAi(provider) => {
+                assert_eq!(provider.project_id, "example-project");
+                assert_eq!(provider.location, "us-east5");
+                assert_eq!(provider.model_id, "claude-sonnet-4-6");
+            }
+            LlmProviderConfig::OpenAi(_) | LlmProviderConfig::Bedrock(_) => {
+                panic!("expected vertexai provider")
+            }
         }
     }
 
