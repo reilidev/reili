@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM gcr.io/distroless/static:latest@sha256:28efbe90d0b2f2a3ee465cc5b44f3f2cf5533514cf4d51447a977a5dc8e526d0 AS runtime
+FROM gcr.io/distroless/static:latest@sha256:47b2d72ff90843eb8a768b5c2f89b40741843b639d065b9b937b07cd59b479c6 AS runtime
 
 ARG APP_VERSION
 ARG TARGETARCH
