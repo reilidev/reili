@@ -163,7 +163,7 @@ fn normalize_field_value(field: &Field, value: Value) -> Value {
 }
 
 fn default_env_filter() -> EnvFilter {
-    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"))
+    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn,reili_=info"))
 }
 
 fn log_fields_to_json(fields: LogFields) -> Map<String, Value> {
