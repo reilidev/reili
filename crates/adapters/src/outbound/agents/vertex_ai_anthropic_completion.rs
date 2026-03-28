@@ -164,11 +164,31 @@ impl TryFrom<CompletionRequest> for VertexAnthropicCompletionRequest {
             CompletionError::RequestError("`max_tokens` must be set for Vertex AI Claude".into())
         })?;
 
+        let documents = request.normalized_documents();
+        let mut system_segments = request
+            .preamble
+            .into_iter()
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+
         let mut full_history = Vec::new();
-        if let Some(documents) = request.normalized_documents() {
+        if let Some(documents) = documents {
             full_history.push(documents);
         }
-        full_history.extend(request.chat_history);
+        full_history.extend(
+            request
+                .chat_history
+                .into_iter()
+                .filter_map(|message| match message {
+                    Message::System { content } => {
+                        if !content.is_empty() {
+                            system_segments.push(content);
+                        }
+                        None
+                    }
+                    other => Some(other),
+                }),
+        );
 
         let messages = full_history
             .into_iter()
@@ -199,7 +219,7 @@ impl TryFrom<CompletionRequest> for VertexAnthropicCompletionRequest {
             anthropic_version: ANTHROPIC_VERTEX_VERSION.to_string(),
             messages,
             max_tokens,
-            system: request.preamble.filter(|value| !value.is_empty()),
+            system: (!system_segments.is_empty()).then(|| system_segments.join("\n\n")),
             temperature: request.temperature,
             tool_choice: request
                 .tool_choice
@@ -267,6 +287,9 @@ impl TryFrom<Message> for VertexAnthropicMessage {
 
     fn try_from(message: Message) -> Result<Self, Self::Error> {
         match message {
+            Message::System { .. } => Err(MessageError::ConversionError(
+                "System messages must be extracted before Vertex AI Claude conversion".to_string(),
+            )),
             Message::User { content } => Ok(Self {
                 role: VertexAnthropicRole::User,
                 content: content
@@ -683,6 +706,31 @@ mod tests {
         assert_eq!(request.tools.len(), 1);
         assert_eq!(request.messages.len(), 1);
         assert_eq!(request.additional_params, Some(json!({ "top_p": 0.9 })));
+    }
+
+    #[test]
+    fn folds_chat_history_system_messages_into_system_prompt() {
+        let mut request = sample_request();
+        request.chat_history = OneOrMany::many(vec![
+            Message::System {
+                content: "follow the runbook".to_string(),
+            },
+            Message::User {
+                content: OneOrMany::one(UserContent::Text(Text {
+                    text: "hello".to_string(),
+                })),
+            },
+        ])
+        .expect("chat history");
+
+        let request =
+            VertexAnthropicCompletionRequest::try_from(request).expect("build vertex request");
+
+        assert_eq!(
+            request.system.as_deref(),
+            Some("system prompt\n\nfollow the runbook")
+        );
+        assert_eq!(request.messages.len(), 1);
     }
 
     #[test]
