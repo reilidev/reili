@@ -35,7 +35,7 @@ Its current task focus is triage, investigation, and communicating findings.
 
 - Slack App (Bot Token / Signing Secret)
 - Datadog API Key + APP Key
-- OpenAI API Key or AWS credentials with permission to use Amazon Bedrock (for example an AWS CLI profile or IRSA role)
+- OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call Vertex AI partner models
 - GitHub App (App ID / Private Key / Installation ID)
 
 ### 2. Install
@@ -55,6 +55,9 @@ Required:
 - `LLM_PROVIDER`
 - `LLM_OPENAI_API_KEY` when `LLM_PROVIDER=openai`
 - `LLM_BEDROCK_MODEL_ID` when `LLM_PROVIDER=bedrock`
+- `LLM_VERTEX_AI_MODEL_ID` when `LLM_PROVIDER=vertexai`
+- `GOOGLE_CLOUD_LOCATION` when `LLM_PROVIDER=vertexai`
+- `GOOGLE_CLOUD_PROJECT` when `LLM_PROVIDER=vertexai`
 - `GITHUB_APP_ID`
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_APP_INSTALLATION_ID`
@@ -67,6 +70,12 @@ Common optional variables:
 - `LANGUAGE` (default: `English`)
 
 When `LLM_PROVIDER=bedrock`, AWS credentials and region are loaded from the standard AWS SDK environment or profile chain. Set `AWS_PROFILE` to use a named AWS profile such as an AWS SSO profile, and set `AWS_REGION` if the selected profile does not already define a region.
+
+When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Default Credentials.
+
+- Set `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `LLM_VERTEX_AI_MODEL_ID`.
+- Use the exact Vertex AI Anthropic model id, including the published version suffix when Google provides one.
+- If Vertex AI returns `RESOURCE_EXHAUSTED`, verify your project quotas in Google Cloud Quotas (`https://console.cloud.google.com/iam-admin/quotas`) and adjust them if needed.
 
 ### 4. Configure Slack App
 

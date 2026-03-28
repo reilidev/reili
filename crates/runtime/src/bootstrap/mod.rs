@@ -4,7 +4,8 @@ use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::logger::TracingLogger;
 use reili_adapters::outbound::agents::{
     BedrockTaskRunner, BedrockTaskRunnerInput, DatadogMcpToolConfig, OpenAiTaskRunner,
-    OpenAiTaskRunnerInput,
+    OpenAiTaskRunnerInput, VertexAiAnthropicClient, VertexAiAnthropicClientInput,
+    VertexAiTaskRunner, VertexAiTaskRunnerInput,
 };
 use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
 use reili_adapters::outbound::datadog::DatadogEventSearchAdapter;
@@ -17,6 +18,9 @@ use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAd
 use reili_adapters::outbound::slack::{
     SlackProgressReporter, SlackProgressReporterInput, SlackThreadHistoryAdapter,
     SlackThreadReplyAdapter, SlackWebApiClient, SlackWebApiClientConfig,
+};
+use reili_adapters::outbound::vertex_ai::{
+    VertexAiWebSearchAdapter, VertexAiWebSearchAdapterConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
 use reili_application::task::{
@@ -67,6 +71,8 @@ pub enum RuntimeBootstrapError {
     Port(#[from] PortError),
     #[error("Slack auth.test response did not contain user_id")]
     MissingSlackBotUserId,
+    #[error("Failed to initialize {provider} client: {message}")]
+    ProviderClientInitialization { provider: String, message: String },
 }
 
 struct ProviderPorts {
@@ -237,6 +243,47 @@ async fn create_provider_ports(
                 language: input.language,
             })),
         }),
+        LlmProviderConfig::VertexAi(config) => {
+            let client = VertexAiAnthropicClient::new(VertexAiAnthropicClientInput {
+                project_id: config.project_id.clone(),
+                location: config.location.clone(),
+            })
+            .await
+            .map_err(
+                |error| RuntimeBootstrapError::ProviderClientInitialization {
+                    provider: "vertexai".to_string(),
+                    message: error.to_string(),
+                },
+            )?;
+
+            Ok(ProviderPorts {
+                web_search_port: Arc::new(
+                    VertexAiWebSearchAdapter::new(VertexAiWebSearchAdapterConfig {
+                        project_id: config.project_id.clone(),
+                        location: config.location.clone(),
+                        model_id: config.model_id.clone(),
+                    })
+                    .await
+                    .map_err(|error| {
+                        RuntimeBootstrapError::ProviderClientInitialization {
+                            provider: "vertexai".to_string(),
+                            message: error,
+                        }
+                    })?,
+                ),
+                task_runner: Arc::new(VertexAiTaskRunner::new(VertexAiTaskRunnerInput {
+                    client,
+                    model_id: config.model_id.clone(),
+                    datadog_mcp: DatadogMcpToolConfig {
+                        api_key: input.datadog_api_key,
+                        app_key: input.datadog_app_key,
+                        site: input.datadog_site,
+                    },
+                    github_scope_org: input.github_scope_org,
+                    language: input.language,
+                })),
+            })
+        }
     }
 }
 

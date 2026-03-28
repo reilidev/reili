@@ -15,11 +15,13 @@ axum = { version = "0.8", default-features = false }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock"] }
 futures = "0.3"
+google-cloud-api = "1.4.0"
+google-cloud-aiplatform-v1 = { version = "1.9.0", default-features = false, features = ["prediction-service"] }
 http = "1"
 jsonwebtoken = "9"
 octocrab = "0.39"
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
-rig-core = { version = "0.32", features = ["rmcp"] }
+rig-core = { version = "0.33", features = ["rmcp"] }
 rmcp = { version = "0.16", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 ring = "0.17"
 serde = { version = "1", features = ["derive"] }
@@ -28,7 +30,7 @@ reili_core = { path = "../core" }
 tokio = { version = "1", features = ["macros", "rt", "sync", "test-util", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
-rig-bedrock = "0.4.1"
+rig-bedrock = "0.4.2"
 
 [dev-dependencies]
 reili_core = { path = "../core", features = ["test-support"] }

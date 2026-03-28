@@ -9,6 +9,8 @@ mod progress_event_hook;
 mod progress_reporting_sub_agent_tool;
 mod task_agents;
 pub mod tools;
+mod vertex_ai_anthropic_completion;
+mod vertex_ai_task_runner;
 
 pub use bedrock_task_runner::{BedrockTaskRunner, BedrockTaskRunnerInput};
 pub use datadog_mcp_tools::DatadogMcpToolConfig;
@@ -19,3 +21,5 @@ pub use tools::{
     SearchDatadogEventsTool, SearchDatadogLogsTool, SearchGithubCodeTool,
     SearchGithubIssuesAndPullRequestsTool, SearchGithubReposTool,
 };
+pub use vertex_ai_anthropic_completion::{VertexAiAnthropicClient, VertexAiAnthropicClientInput};
+pub use vertex_ai_task_runner::{VertexAiTaskRunner, VertexAiTaskRunnerInput};
