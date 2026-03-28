@@ -10,6 +10,9 @@ on:
       - main
     paths:
       - "crates/**"
+  push:
+    branches:
+      - main
 
 env:
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
@@ -21,6 +24,7 @@ env:
 
 jobs:
   lint:
+    if: github.event_name == 'pull_request'
     permissions:
       contents: read
     runs-on: ubuntu-slim
@@ -42,6 +46,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  # Always run for caching purposes
   test:
     permissions:
       contents: read
