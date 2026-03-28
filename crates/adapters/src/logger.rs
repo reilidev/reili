@@ -163,10 +163,7 @@ fn normalize_field_value(field: &Field, value: Value) -> Value {
 }
 
 fn default_env_filter() -> EnvFilter {
-    match EnvFilter::try_from_default_env() {
-        Ok(filter) => filter,
-        Err(_) => EnvFilter::new("info"),
-    }
+    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"))
 }
 
 fn log_fields_to_json(fields: LogFields) -> Map<String, Value> {
@@ -229,12 +226,11 @@ mod tests {
     }
 
     #[test]
-    fn writes_json_logs_for_info_warn_and_error() {
+    fn writes_json_logs_for_warn_and_error() {
         let buffer = SharedBuffer::default();
         let subscriber = build_json_subscriber(buffer.clone());
 
         tracing::subscriber::with_default(subscriber, || {
-            tracing::info!(job_id = "job-1", "task started");
             tracing::warn!(retry_count = 2, "task retried");
             tracing::error!(job_id = "job-1", "task failed");
         });
@@ -245,16 +241,13 @@ mod tests {
             .map(|line| serde_json::from_str(line).expect("parse json log line"))
             .collect();
 
-        assert_eq!(logs.len(), 3);
-        assert_eq!(logs[0]["level"], "INFO");
-        assert_eq!(logs[0]["message"], "task started");
-        assert_eq!(logs[0]["job_id"], "job-1");
-        assert_eq!(logs[1]["level"], "WARN");
-        assert_eq!(logs[1]["message"], "task retried");
-        assert_eq!(logs[1]["retry_count"], 2);
-        assert_eq!(logs[2]["level"], "ERROR");
-        assert_eq!(logs[2]["message"], "task failed");
-        assert_eq!(logs[2]["job_id"], "job-1");
+        assert_eq!(logs.len(), 2);
+        assert_eq!(logs[0]["level"], "WARN");
+        assert_eq!(logs[0]["message"], "task retried");
+        assert_eq!(logs[0]["retry_count"], 2);
+        assert_eq!(logs[1]["level"], "ERROR");
+        assert_eq!(logs[1]["message"], "task failed");
+        assert_eq!(logs[1]["job_id"], "job-1");
     }
 
     #[test]
@@ -263,7 +256,7 @@ mod tests {
         let subscriber = build_json_subscriber(buffer.clone());
 
         tracing::subscriber::with_default(subscriber, || {
-            tracing::info!(
+            tracing::warn!(
                 message = "task started",
                 meta = tracing::field::display(serde_json::json!({
                     "jobId": "job-1",
@@ -288,7 +281,7 @@ mod tests {
         let logger = TracingLogger;
 
         tracing::subscriber::with_default(subscriber, || {
-            logger.info(
+            logger.warn(
                 "slack_stream_started",
                 log_fields([
                     ("channel", LogFieldValue::from("C123")),

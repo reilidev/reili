@@ -1,13 +1,20 @@
+use std::time::Duration;
+
 use super::{SlackAnyChunk, SlackChunkSourceType, SlackTaskUpdateStatus};
 
 pub(crate) const STREAM_ROTATION_CHARACTER_LIMIT: usize = 2800;
+// Rotate before 300 seconds because Slack starts rejecting long-lived streams around that mark.
+// This 300-second threshold is based on observed behavior, not an explicitly documented limit.
+pub(crate) const STREAM_ROTATION_MAX_AGE: Duration = Duration::from_secs(270);
 
 pub(crate) fn should_rotate_stream(
     current_stream_character_count: usize,
+    current_stream_elapsed: Duration,
     chunks: &[SlackAnyChunk],
 ) -> bool {
-    current_stream_character_count.saturating_add(count_chunk_characters(chunks))
-        > STREAM_ROTATION_CHARACTER_LIMIT
+    current_stream_elapsed >= STREAM_ROTATION_MAX_AGE
+        || current_stream_character_count.saturating_add(count_chunk_characters(chunks))
+            > STREAM_ROTATION_CHARACTER_LIMIT
 }
 
 pub(crate) fn count_chunk_characters(chunks: &[SlackAnyChunk]) -> usize {
@@ -65,7 +72,12 @@ fn count_chunk_source_type_characters(source_type: &SlackChunkSourceType) -> usi
 
 #[cfg(test)]
 mod tests {
-    use super::{STREAM_ROTATION_CHARACTER_LIMIT, count_chunk_characters, should_rotate_stream};
+    use std::time::Duration;
+
+    use super::{
+        STREAM_ROTATION_CHARACTER_LIMIT, STREAM_ROTATION_MAX_AGE, count_chunk_characters,
+        should_rotate_stream,
+    };
     use crate::outbound::slack::progress_stream::progress_models::{
         SlackChunkSource, SlackPlanUpdateChunk,
     };
@@ -108,6 +120,7 @@ mod tests {
 
         assert!(!should_rotate_stream(
             STREAM_ROTATION_CHARACTER_LIMIT - 10,
+            Duration::from_secs(0),
             &chunks
         ));
     }
@@ -120,6 +133,7 @@ mod tests {
 
         assert!(should_rotate_stream(
             STREAM_ROTATION_CHARACTER_LIMIT - 9,
+            Duration::from_secs(0),
             &chunks
         ));
     }
@@ -130,6 +144,32 @@ mod tests {
             text: "a".to_string(),
         })];
 
-        assert!(should_rotate_stream(usize::MAX, &chunks));
+        assert!(should_rotate_stream(
+            usize::MAX,
+            Duration::from_secs(0),
+            &chunks
+        ));
+    }
+
+    #[test]
+    fn rotates_when_stream_age_reaches_limit() {
+        let chunks = vec![SlackAnyChunk::MarkdownText(SlackMarkdownTextChunk {
+            text: "a".to_string(),
+        })];
+
+        assert!(should_rotate_stream(0, STREAM_ROTATION_MAX_AGE, &chunks));
+    }
+
+    #[test]
+    fn does_not_rotate_when_stream_age_is_below_limit_and_character_limit_not_exceeded() {
+        let chunks = vec![SlackAnyChunk::MarkdownText(SlackMarkdownTextChunk {
+            text: "a".to_string(),
+        })];
+
+        assert!(!should_rotate_stream(
+            0,
+            STREAM_ROTATION_MAX_AGE - Duration::from_secs(1),
+            &chunks
+        ));
     }
 }
