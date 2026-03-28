@@ -212,6 +212,7 @@ async fn run_task(
             request,
             context,
             on_progress_event: Arc::clone(&on_progress_event),
+            logger: Arc::clone(&input.deps.logger),
         })
         .await
         .map_err(ExecuteTaskJobError::from)?;

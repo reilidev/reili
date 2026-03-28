@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, SecondsFormat, Utc};
+use reili_core::logger::Logger;
 use reili_core::task::{
     TASK_RUNNER_PROGRESS_OWNER_ID, TaskProgressEventPort, TaskRequest, TaskResources, TaskRuntime,
 };
 use rig::agent::Agent;
 use rig::prelude::CompletionClient;
 
+use super::agent_execution_hook::AgentExecutionHook;
 use super::datadog_mcp_tools::DatadogMcpToolset;
 use super::tools::{
     GetPullRequestDiffTool, GetPullRequestTool, GetRepositoryContentTool, ReportProgressTool,
@@ -15,7 +17,6 @@ use super::tools::{
 };
 use super::{
     llm_provider_settings::LlmProviderSettings, llm_usage_collector::LlmUsageCollector,
-    progress_event_hook::ProgressEventHook,
     progress_reporting_sub_agent_tool::ProgressReportingSubAgentTool,
 };
 
@@ -23,7 +24,7 @@ const DATADOG_PROGRESS_OWNER_ID: &str = "investigate_datadog";
 const GITHUB_PROGRESS_OWNER_ID: &str = "investigate_github";
 
 type CompletionAgent<C> = Agent<<C as CompletionClient>::CompletionModel>;
-type SpecialistAgent<C> = Agent<<C as CompletionClient>::CompletionModel, ProgressEventHook>;
+type SpecialistAgent<C> = Agent<<C as CompletionClient>::CompletionModel, AgentExecutionHook>;
 
 pub struct BuildTaskAgentInput<C>
 where
@@ -35,6 +36,7 @@ where
     pub datadog_site: String,
     pub datadog_mcp_toolset: DatadogMcpToolset,
     pub github_scope_org: String,
+    pub logger: Arc<dyn Logger>,
     pub runtime: TaskRuntime,
     pub on_progress_event: Arc<dyn TaskProgressEventPort>,
     pub language: String,
@@ -54,8 +56,10 @@ where
         datadog_mcp_toolset: input.datadog_mcp_toolset.clone(),
         github_scope_org: String::new(),
         language: input.language.clone(),
+        logger: Arc::clone(&input.logger),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: DATADOG_PROGRESS_OWNER_ID.to_string(),
+        runtime: input.runtime.clone(),
         usage_collector: input.usage_collector.clone(),
     });
     let github_agent = build_github_agent(BuildSpecialistAgentInput {
@@ -65,8 +69,10 @@ where
         datadog_mcp_toolset: input.datadog_mcp_toolset.clone(),
         github_scope_org: input.github_scope_org.clone(),
         language: input.language.clone(),
+        logger: Arc::clone(&input.logger),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: GITHUB_PROGRESS_OWNER_ID.to_string(),
+        runtime: input.runtime.clone(),
         usage_collector: input.usage_collector.clone(),
     });
 
@@ -219,8 +225,10 @@ where
     datadog_mcp_toolset: DatadogMcpToolset,
     github_scope_org: String,
     language: String,
+    logger: Arc<dyn Logger>,
     on_progress_event: Arc<dyn TaskProgressEventPort>,
     owner_id: String,
+    runtime: TaskRuntime,
     usage_collector: LlmUsageCollector,
 }
 
@@ -237,8 +245,10 @@ where
         .preamble(&build_datadog_instructions(&input.language))
         .default_max_turns(input.settings.specialist_max_turns)
         .additional_params(input.settings.additional_params.clone())
-        .hook(ProgressEventHook::new(
+        .hook(AgentExecutionHook::new(
             input.owner_id.clone(),
+            input.runtime,
+            input.logger,
             Arc::clone(&input.on_progress_event),
             input.usage_collector,
         ))
@@ -267,8 +277,10 @@ where
         }))
         .default_max_turns(input.settings.specialist_max_turns)
         .additional_params(input.settings.additional_params.clone())
-        .hook(ProgressEventHook::new(
+        .hook(AgentExecutionHook::new(
             input.owner_id.clone(),
+            input.runtime,
+            input.logger,
             Arc::clone(&input.on_progress_event),
             input.usage_collector,
         ))
