@@ -1,10 +1,12 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use reili_core::error::PortError;
 use reili_core::task::StartTaskProgressSessionInput;
 
 use super::chunk_rotation::{
-    STREAM_ROTATION_CHARACTER_LIMIT, count_chunk_characters, should_rotate_stream,
+    STREAM_ROTATION_CHARACTER_LIMIT, STREAM_ROTATION_MAX_AGE, count_chunk_characters,
+    should_rotate_stream,
 };
 use super::{
     LogFieldValue, SlackAnyChunk, SlackAppendStreamInput, SlackProgressStreamApiPort,
@@ -14,8 +16,10 @@ use super::{
 pub(crate) struct SlackProgressStreamLifecycle {
     api: Arc<dyn SlackProgressStreamApiPort>,
     logger: Arc<dyn SlackProgressStreamLogger>,
+    clock: Arc<dyn SlackProgressStreamClock>,
     route: StartTaskProgressSessionInput,
     stream_ts: Option<String>,
+    stream_started_at: Option<Instant>,
     current_stream_character_count: usize,
     stream_stopped: bool,
     append_count: u64,
@@ -28,17 +32,56 @@ struct RecoverFromAppendFailureInput {
     error: PortError,
 }
 
+enum SlackStreamRotationReason {
+    CharacterLimit,
+    TimeLimit,
+    MessageTooLong,
+}
+
+impl SlackStreamRotationReason {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::CharacterLimit => "character_limit",
+            Self::TimeLimit => "time_limit",
+            Self::MessageTooLong => "msg_too_long",
+        }
+    }
+}
+
+trait SlackProgressStreamClock: Send + Sync {
+    fn now(&self) -> Instant;
+}
+
+struct SystemSlackProgressStreamClock;
+
+impl SlackProgressStreamClock for SystemSlackProgressStreamClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
 impl SlackProgressStreamLifecycle {
     pub(crate) fn new(
         api: Arc<dyn SlackProgressStreamApiPort>,
         logger: Arc<dyn SlackProgressStreamLogger>,
         route: StartTaskProgressSessionInput,
     ) -> Self {
+        Self::new_with_clock(api, logger, route, Arc::new(SystemSlackProgressStreamClock))
+    }
+
+    fn new_with_clock(
+        api: Arc<dyn SlackProgressStreamApiPort>,
+        logger: Arc<dyn SlackProgressStreamLogger>,
+        route: StartTaskProgressSessionInput,
+        clock: Arc<dyn SlackProgressStreamClock>,
+    ) -> Self {
         Self {
             api,
             logger,
+            clock,
             route,
             stream_ts: None,
+            stream_started_at: None,
             current_stream_character_count: 0,
             stream_stopped: false,
             append_count: 0,
@@ -65,8 +108,10 @@ impl SlackProgressStreamLifecycle {
 
         match start_result {
             Ok(stream) => {
-                self.stream_ts = Some(stream.stream_ts.clone());
-                self.current_stream_character_count = count_chunk_characters(&chunks);
+                self.record_started_stream(
+                    stream.stream_ts.clone(),
+                    count_chunk_characters(&chunks),
+                );
                 let mut meta = string_log_meta([
                     ("channel", self.route.channel.clone()),
                     ("threadTs", self.route.thread_ts.clone()),
@@ -91,8 +136,8 @@ impl SlackProgressStreamLifecycle {
             return;
         }
 
-        if should_rotate_stream(self.current_stream_character_count, &chunks) {
-            self.rotate_stream_with_chunks(chunks).await;
+        if let Some(reason) = self.rotation_reason(&chunks) {
+            self.rotate_stream_with_chunks(chunks, reason).await;
             return;
         }
 
@@ -188,7 +233,8 @@ impl SlackProgressStreamLifecycle {
         }
 
         if is_message_too_long_error(&input.error) {
-            self.rotate_stream_with_chunks(input.chunks).await;
+            self.rotate_stream_with_chunks(input.chunks, SlackStreamRotationReason::MessageTooLong)
+                .await;
             return;
         }
 
@@ -224,8 +270,7 @@ impl SlackProgressStreamLifecycle {
             return;
         };
 
-        self.stream_ts = Some(stream.stream_ts.clone());
-        self.current_stream_character_count = chunk_character_count;
+        self.record_started_stream(stream.stream_ts.clone(), chunk_character_count);
         self.append_count = self.append_count.saturating_add(1);
 
         let mut meta = string_log_meta([
@@ -244,9 +289,14 @@ impl SlackProgressStreamLifecycle {
         self.logger.info("slack_stream_restarted", meta);
     }
 
-    async fn rotate_stream_with_chunks(&mut self, chunks: Vec<SlackAnyChunk>) {
+    async fn rotate_stream_with_chunks(
+        &mut self,
+        chunks: Vec<SlackAnyChunk>,
+        reason: SlackStreamRotationReason,
+    ) {
         let previous_stream_ts = self.stream_ts.clone();
         let previous_character_count = self.current_stream_character_count;
+        let previous_stream_age = self.current_stream_elapsed();
         let chunk_character_count = count_chunk_characters(&chunks);
 
         self.stop_current_stream_for_rotation().await;
@@ -271,8 +321,7 @@ impl SlackProgressStreamLifecycle {
             return;
         };
 
-        self.stream_ts = Some(stream.stream_ts.clone());
-        self.current_stream_character_count = chunk_character_count;
+        self.record_started_stream(stream.stream_ts.clone(), chunk_character_count);
         self.append_count = self.append_count.saturating_add(1);
 
         let mut meta = string_log_meta([
@@ -287,6 +336,15 @@ impl SlackProgressStreamLifecycle {
                 "slack_stream_character_limit",
                 STREAM_ROTATION_CHARACTER_LIMIT.to_string(),
             ),
+            (
+                "previousSlackStreamAgeSeconds",
+                previous_stream_age.as_secs().to_string(),
+            ),
+            (
+                "slack_stream_max_age_seconds",
+                STREAM_ROTATION_MAX_AGE.as_secs().to_string(),
+            ),
+            ("reason", reason.as_str().to_string()),
             (
                 "previousSlackStreamCharacterCount",
                 previous_character_count.to_string(),
@@ -334,6 +392,7 @@ impl SlackProgressStreamLifecycle {
 
     fn disable_stream(&mut self, error_message: String, reason: &str) {
         self.stream_ts = None;
+        self.stream_started_at = None;
         self.current_stream_character_count = 0;
         self.last_error_message = Some(error_message.clone());
 
@@ -383,6 +442,35 @@ impl SlackProgressStreamLifecycle {
 
         self.logger.info("slack_stream_stopped", meta);
     }
+
+    fn record_started_stream(&mut self, stream_ts: String, character_count: usize) {
+        self.stream_ts = Some(stream_ts);
+        self.stream_started_at = Some(self.clock.now());
+        self.current_stream_character_count = character_count;
+    }
+
+    fn current_stream_elapsed(&self) -> std::time::Duration {
+        self.stream_started_at
+            .map(|started_at| self.clock.now().saturating_duration_since(started_at))
+            .unwrap_or_default()
+    }
+
+    fn rotation_reason(&self, chunks: &[SlackAnyChunk]) -> Option<SlackStreamRotationReason> {
+        let current_stream_elapsed = self.current_stream_elapsed();
+        if current_stream_elapsed >= STREAM_ROTATION_MAX_AGE {
+            return Some(SlackStreamRotationReason::TimeLimit);
+        }
+
+        if should_rotate_stream(
+            self.current_stream_character_count,
+            current_stream_elapsed,
+            chunks,
+        ) {
+            return Some(SlackStreamRotationReason::CharacterLimit);
+        }
+
+        None
+    }
 }
 
 fn is_permanent_stream_append_error(error: &PortError) -> bool {
@@ -404,16 +492,18 @@ fn is_message_not_in_streaming_state_error(error: &PortError) -> bool {
 mod tests {
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     use async_trait::async_trait;
     use reili_core::error::PortError;
     use reili_core::logger::{LogEntry, LogFields, LogLevel};
     use reili_core::task::StartTaskProgressSessionInput;
 
+    use super::{SlackProgressStreamClock, SlackProgressStreamLifecycle};
     use crate::outbound::slack::progress_stream::{
         LogFieldValue, SlackAnyChunk, SlackAppendStreamInput, SlackMarkdownTextChunk,
-        SlackProgressStreamApiPort, SlackProgressStreamLifecycle, SlackProgressStreamLogger,
-        SlackStartStreamInput, SlackStartStreamOutput, SlackStopStreamInput,
+        SlackProgressStreamApiPort, SlackProgressStreamLogger, SlackStartStreamInput,
+        SlackStartStreamOutput, SlackStopStreamInput,
     };
 
     struct MockSlackProgressStreamApi {
@@ -536,6 +626,29 @@ mod tests {
         }
     }
 
+    struct TestClock {
+        now: Mutex<Instant>,
+    }
+
+    impl TestClock {
+        fn new(now: Instant) -> Self {
+            Self {
+                now: Mutex::new(now),
+            }
+        }
+
+        fn advance(&self, duration: Duration) {
+            let mut now = self.now.lock().expect("lock clock");
+            *now = now.checked_add(duration).expect("advance clock");
+        }
+    }
+
+    impl SlackProgressStreamClock for TestClock {
+        fn now(&self) -> Instant {
+            *self.now.lock().expect("lock clock")
+        }
+    }
+
     fn create_route() -> StartTaskProgressSessionInput {
         StartTaskProgressSessionInput {
             channel: "C123".to_string(),
@@ -615,11 +728,14 @@ mod tests {
         assert_eq!(api.start_calls.lock().expect("lock start").len(), 2);
         assert_eq!(api.append_calls.lock().expect("lock append").len(), 0);
         assert_eq!(api.stop_calls.lock().expect("lock stop").len(), 2);
-        assert!(
-            logger
-                .info_logs()
-                .iter()
-                .any(|(message, _)| message == "slack_stream_rotated")
+        let rotation_log = logger
+            .info_logs()
+            .into_iter()
+            .find(|(message, _)| message == "slack_stream_rotated")
+            .expect("rotation log");
+        assert_eq!(
+            rotation_log.1.get("reason").and_then(LogFieldValue::as_str),
+            Some("character_limit")
         );
     }
 
@@ -652,6 +768,54 @@ mod tests {
         assert_eq!(api.start_calls.lock().expect("lock start").len(), 2);
         assert_eq!(api.append_calls.lock().expect("lock append").len(), 1);
         assert_eq!(api.stop_calls.lock().expect("lock stop").len(), 2);
+        let rotation_log = logger
+            .info_logs()
+            .into_iter()
+            .find(|(message, _)| message == "slack_stream_rotated")
+            .expect("rotation log");
+        assert_eq!(
+            rotation_log.1.get("reason").and_then(LogFieldValue::as_str),
+            Some("msg_too_long")
+        );
+    }
+
+    #[tokio::test]
+    async fn rotates_stream_before_append_when_stream_age_is_near_slack_limit() {
+        let api = Arc::new(MockSlackProgressStreamApi::new());
+        api.push_start_response(Ok(SlackStartStreamOutput {
+            stream_ts: "stream-initial".to_string(),
+        }));
+        api.push_start_response(Ok(SlackStartStreamOutput {
+            stream_ts: "stream-rotated".to_string(),
+        }));
+        api.push_stop_response(Ok(()));
+        api.push_stop_response(Ok(()));
+        let logger = Arc::new(MockLogger::default());
+        let clock = Arc::new(TestClock::new(Instant::now()));
+        let mut lifecycle = SlackProgressStreamLifecycle::new_with_clock(
+            Arc::clone(&api) as Arc<dyn SlackProgressStreamApiPort>,
+            Arc::clone(&logger) as Arc<dyn SlackProgressStreamLogger>,
+            create_route(),
+            Arc::clone(&clock) as Arc<dyn SlackProgressStreamClock>,
+        );
+
+        lifecycle.start(create_chunk("initial")).await;
+        clock.advance(Duration::from_secs(290));
+        lifecycle.append(create_chunk("Collect evidence")).await;
+        lifecycle.stop().await;
+
+        assert_eq!(api.start_calls.lock().expect("lock start").len(), 2);
+        assert_eq!(api.append_calls.lock().expect("lock append").len(), 0);
+        assert_eq!(api.stop_calls.lock().expect("lock stop").len(), 2);
+        let rotation_log = logger
+            .info_logs()
+            .into_iter()
+            .find(|(message, _)| message == "slack_stream_rotated")
+            .expect("rotation log");
+        assert_eq!(
+            rotation_log.1.get("reason").and_then(LogFieldValue::as_str),
+            Some("time_limit")
+        );
     }
 
     #[tokio::test]
