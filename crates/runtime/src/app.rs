@@ -16,7 +16,8 @@ use reili_core::messaging::slack::SlackMessageHandlerPort;
 use serde_json::json;
 
 use crate::bootstrap::{RuntimeBootstrapError, build_runtime_deps};
-use crate::config::env::{EnvConfigError, load_app_config};
+use crate::config::env::{EnvConfigError, SlackConnectionMode, load_app_config};
+use crate::socket_mode::{SocketModeClient, SocketModeConfig, SocketModeError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppRunError {
@@ -30,6 +31,10 @@ pub enum AppRunError {
     Bind(std::io::Error),
     #[error("App server failed: {0}")]
     Serve(std::io::Error),
+    #[error("Socket Mode failed: {0}")]
+    SocketMode(#[from] SocketModeError),
+    #[error("Missing SLACK_SIGNING_SECRET for HTTP mode")]
+    MissingSigningSecret,
 }
 
 #[derive(Clone)]
@@ -44,18 +49,37 @@ pub async fn run_app() -> Result<(), AppRunError> {
 
     let config = load_app_config()?;
     let deps = build_runtime_deps(&config).await?;
-    let worker_runner = deps.worker_runner;
-    worker_runner.start();
+    deps.worker_runner.start();
+
+    let serve_result = match &config.slack_connection_mode {
+        SlackConnectionMode::Http => run_http_server(&config, &deps).await,
+        SlackConnectionMode::SocketMode { app_token } => {
+            run_socket_mode(app_token.expose(), &deps).await
+        }
+    };
+
+    deps.worker_runner.stop();
+    serve_result
+}
+
+async fn run_http_server(
+    config: &crate::config::env::AppConfig,
+    deps: &crate::bootstrap::RuntimeDeps,
+) -> Result<(), AppRunError> {
+    let slack_signature_verifier = deps
+        .slack_signature_verifier
+        .clone()
+        .ok_or(AppRunError::MissingSigningSecret)?;
 
     let http_state = Arc::new(AppHttpState {
-        slack_message_handler: deps.slack_message_handler,
-        bot_user_id: deps.bot_user_id,
-        logger: deps.logger,
+        slack_message_handler: Arc::clone(&deps.slack_message_handler),
+        bot_user_id: deps.bot_user_id.clone(),
+        logger: Arc::clone(&deps.logger),
     });
     let app = Router::new()
         .route("/slack/events", post(handle_slack_events))
         .route_layer(middleware::from_fn_with_state(
-            deps.slack_signature_verifier,
+            slack_signature_verifier,
             verify_slack_signature_middleware,
         ))
         .route("/healthz", get(handle_healthz))
@@ -70,14 +94,34 @@ pub async fn run_app() -> Result<(), AppRunError> {
         "App is running"
     );
 
-    let serve_result = axum::serve(listener, app)
+    axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .map_err(AppRunError::Serve);
+        .map_err(AppRunError::Serve)
+}
 
-    worker_runner.stop();
+async fn run_socket_mode(
+    app_token: &str,
+    deps: &crate::bootstrap::RuntimeDeps,
+) -> Result<(), AppRunError> {
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-    serve_result
+    let client = SocketModeClient::new(SocketModeConfig {
+        app_token: app_token.to_string(),
+        bot_user_id: deps.bot_user_id.clone(),
+        slack_message_handler: Arc::clone(&deps.slack_message_handler),
+        logger: Arc::clone(&deps.logger),
+    });
+
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = shutdown_tx.send(true);
+    });
+
+    client
+        .run(shutdown_rx)
+        .await
+        .map_err(AppRunError::SocketMode)
 }
 
 async fn handle_slack_events(State(state): State<Arc<AppHttpState>>, body: Bytes) -> Response {

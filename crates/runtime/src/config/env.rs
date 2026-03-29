@@ -1,3 +1,5 @@
+use std::fmt;
+
 use thiserror::Error;
 
 const DEFAULT_APP_PORT: u16 = 3000;
@@ -7,10 +9,50 @@ const DEFAULT_LANGUAGE: &str = "English";
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
 const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
 const DEFAULT_OPENAI_TASK_RUNNER_MODEL: &str = "gpt-5.3-codex";
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[REDACTED]")
+    }
+}
+
+impl fmt::Display for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[REDACTED]")
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum SlackConnectionMode {
+    Http,
+    SocketMode { app_token: SecretString },
+}
+
+impl fmt::Debug for SlackConnectionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Http => write!(f, "Http"),
+            Self::SocketMode { .. } => write!(f, "SocketMode {{ app_token: [REDACTED] }}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackAuthConfig {
     pub slack_bot_token: String,
-    pub slack_signing_secret: String,
+    pub slack_signing_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +116,8 @@ pub struct GitHubAppConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub slack_bot_token: String,
-    pub slack_signing_secret: String,
+    pub slack_signing_secret: Option<String>,
+    pub slack_connection_mode: SlackConnectionMode,
     pub port: u16,
     pub worker_concurrency: u32,
     pub job_max_retry: u32,
@@ -113,12 +156,14 @@ impl EnvironmentReader for ProcessEnvironment {
 }
 
 fn load_app_config_with_env(env: &dyn EnvironmentReader) -> Result<AppConfig, EnvConfigError> {
-    let slack_auth = read_slack_auth_config(env)?;
+    let connection_mode = read_slack_connection_mode(env)?;
+    let slack_auth = read_slack_auth_config(env, &connection_mode)?;
     let task_config = read_task_config(env)?;
 
     Ok(AppConfig {
         slack_bot_token: slack_auth.slack_bot_token,
         slack_signing_secret: slack_auth.slack_signing_secret,
+        slack_connection_mode: connection_mode,
         port: read_port(env, "PORT", DEFAULT_APP_PORT)?,
         worker_concurrency: DEFAULT_WORKER_CONCURRENCY,
         job_max_retry: DEFAULT_JOB_MAX_RETRY,
@@ -132,10 +177,40 @@ fn load_app_config_with_env(env: &dyn EnvironmentReader) -> Result<AppConfig, En
     })
 }
 
-fn read_slack_auth_config(env: &dyn EnvironmentReader) -> Result<SlackAuthConfig, EnvConfigError> {
+fn read_slack_connection_mode(
+    env: &dyn EnvironmentReader,
+) -> Result<SlackConnectionMode, EnvConfigError> {
+    let socket_mode = read_or_default(env, "SLACK_SOCKET_MODE", "false");
+    if socket_mode == "true" {
+        let app_token = read_required_env(env, "SLACK_APP_TOKEN")?;
+        if !app_token.starts_with("xapp-") {
+            return Err(EnvConfigError::InvalidValue {
+                name: "SLACK_APP_TOKEN".to_string(),
+                value: "must start with xapp-".to_string(),
+            });
+        }
+        Ok(SlackConnectionMode::SocketMode {
+            app_token: SecretString::new(app_token),
+        })
+    } else {
+        Ok(SlackConnectionMode::Http)
+    }
+}
+
+fn read_slack_auth_config(
+    env: &dyn EnvironmentReader,
+    connection_mode: &SlackConnectionMode,
+) -> Result<SlackAuthConfig, EnvConfigError> {
+    let slack_bot_token = read_required_env(env, "SLACK_BOT_TOKEN")?;
+    let slack_signing_secret = match connection_mode {
+        SlackConnectionMode::Http => Some(read_required_env(env, "SLACK_SIGNING_SECRET")?),
+        SlackConnectionMode::SocketMode { .. } => {
+            read_optional_non_empty_env(env, "SLACK_SIGNING_SECRET")
+        }
+    };
     Ok(SlackAuthConfig {
-        slack_bot_token: read_required_env(env, "SLACK_BOT_TOKEN")?,
-        slack_signing_secret: read_required_env(env, "SLACK_SIGNING_SECRET")?,
+        slack_bot_token,
+        slack_signing_secret,
     })
 }
 
@@ -209,11 +284,15 @@ fn read_github_app_config(env: &dyn EnvironmentReader) -> Result<GitHubAppConfig
 }
 
 fn read_required_env(env: &dyn EnvironmentReader, name: &str) -> Result<String, EnvConfigError> {
+    read_optional_non_empty_env(env, name).ok_or_else(|| EnvConfigError::MissingRequired {
+        name: name.to_string(),
+    })
+}
+
+fn read_optional_non_empty_env(env: &dyn EnvironmentReader, name: &str) -> Option<String> {
     match env.get(name) {
-        Some(value) if !value.is_empty() => Ok(value),
-        _ => Err(EnvConfigError::MissingRequired {
-            name: name.to_string(),
-        }),
+        Some(value) if !value.trim().is_empty() => Some(value),
+        _ => None,
     }
 }
 
@@ -270,8 +349,8 @@ mod tests {
 
     use super::{
         DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_OPENAI_TASK_RUNNER_MODEL,
-        DEFAULT_WORKER_CONCURRENCY, LlmProviderConfig, MockEnvironmentReader,
-        load_app_config_with_env,
+        DEFAULT_WORKER_CONCURRENCY, LlmProviderConfig, MockEnvironmentReader, SecretString,
+        SlackConnectionMode, load_app_config_with_env,
     };
 
     fn environment_reader_mock(overrides: &[(&str, &str)]) -> MockEnvironmentReader {
@@ -424,5 +503,207 @@ mod tests {
                 value: "invalid".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn defaults_to_http_mode_when_socket_mode_not_set() {
+        let env = environment_reader_mock(&[]);
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        assert_eq!(config.slack_connection_mode, SlackConnectionMode::Http);
+        assert_eq!(
+            config.slack_signing_secret,
+            Some("signing-secret".to_string())
+        );
+    }
+
+    #[test]
+    fn enables_socket_mode_with_valid_app_token() {
+        let env = environment_reader_mock(&[
+            ("SLACK_SOCKET_MODE", "true"),
+            ("SLACK_APP_TOKEN", "xapp-test-token"),
+        ]);
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        match &config.slack_connection_mode {
+            SlackConnectionMode::SocketMode { app_token } => {
+                assert_eq!(app_token.expose(), "xapp-test-token");
+            }
+            SlackConnectionMode::Http => panic!("expected SocketMode"),
+        }
+    }
+
+    #[test]
+    fn socket_mode_requires_app_token() {
+        let env = environment_reader_mock(&[("SLACK_SOCKET_MODE", "true")]);
+
+        let error = load_app_config_with_env(&env).expect_err("missing SLACK_APP_TOKEN");
+
+        assert_eq!(
+            error,
+            super::EnvConfigError::MissingRequired {
+                name: "SLACK_APP_TOKEN".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn socket_mode_rejects_non_xapp_token() {
+        let env = environment_reader_mock(&[
+            ("SLACK_SOCKET_MODE", "true"),
+            ("SLACK_APP_TOKEN", "xoxb-wrong-prefix"),
+        ]);
+
+        let error = load_app_config_with_env(&env).expect_err("invalid prefix");
+
+        assert_eq!(
+            error,
+            super::EnvConfigError::InvalidValue {
+                name: "SLACK_APP_TOKEN".to_string(),
+                value: "must start with xapp-".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn socket_mode_does_not_require_signing_secret() {
+        let env = environment_reader_mock_without_keys(
+            &[
+                ("SLACK_SOCKET_MODE", "true"),
+                ("SLACK_APP_TOKEN", "xapp-test-token"),
+            ],
+            &["SLACK_SIGNING_SECRET"],
+        );
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        assert!(config.slack_signing_secret.is_none());
+    }
+
+    #[test]
+    fn socket_mode_treats_empty_signing_secret_as_none() {
+        let env = environment_reader_mock(&[
+            ("SLACK_SOCKET_MODE", "true"),
+            ("SLACK_APP_TOKEN", "xapp-test-token"),
+            ("SLACK_SIGNING_SECRET", ""),
+        ]);
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        assert!(config.slack_signing_secret.is_none());
+    }
+
+    #[test]
+    fn socket_mode_treats_whitespace_signing_secret_as_none() {
+        let env = environment_reader_mock(&[
+            ("SLACK_SOCKET_MODE", "true"),
+            ("SLACK_APP_TOKEN", "xapp-test-token"),
+            ("SLACK_SIGNING_SECRET", "   "),
+        ]);
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        assert!(config.slack_signing_secret.is_none());
+    }
+
+    #[test]
+    fn http_mode_requires_signing_secret() {
+        let env = environment_reader_mock_without_keys(&[], &["SLACK_SIGNING_SECRET"]);
+
+        let error = load_app_config_with_env(&env).expect_err("missing signing secret");
+
+        assert_eq!(
+            error,
+            super::EnvConfigError::MissingRequired {
+                name: "SLACK_SIGNING_SECRET".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn http_mode_rejects_empty_signing_secret() {
+        let env = environment_reader_mock(&[("SLACK_SIGNING_SECRET", "")]);
+
+        let error = load_app_config_with_env(&env).expect_err("empty signing secret");
+
+        assert_eq!(
+            error,
+            super::EnvConfigError::MissingRequired {
+                name: "SLACK_SIGNING_SECRET".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn http_mode_rejects_whitespace_signing_secret() {
+        let env = environment_reader_mock(&[("SLACK_SIGNING_SECRET", "   ")]);
+
+        let error = load_app_config_with_env(&env).expect_err("whitespace signing secret");
+
+        assert_eq!(
+            error,
+            super::EnvConfigError::MissingRequired {
+                name: "SLACK_SIGNING_SECRET".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn slack_connection_mode_debug_masks_app_token() {
+        let mode = SlackConnectionMode::SocketMode {
+            app_token: SecretString::new("xapp-secret".to_string()),
+        };
+
+        let debug_output = format!("{mode:?}");
+
+        assert!(!debug_output.contains("xapp-secret"));
+        assert!(debug_output.contains("[REDACTED]"));
+    }
+
+    fn environment_reader_mock_without_keys(
+        overrides: &[(&str, &str)],
+        remove_keys: &[&str],
+    ) -> MockEnvironmentReader {
+        let mut values = HashMap::from([
+            ("SLACK_BOT_TOKEN".to_string(), "xoxb-test".to_string()),
+            (
+                "SLACK_SIGNING_SECRET".to_string(),
+                "signing-secret".to_string(),
+            ),
+            ("DATADOG_API_KEY".to_string(), "dd-api-key".to_string()),
+            ("DATADOG_APP_KEY".to_string(), "dd-app-key".to_string()),
+            ("LLM_PROVIDER".to_string(), "openai".to_string()),
+            (
+                "LLM_OPENAI_API_KEY".to_string(),
+                "openai-api-key".to_string(),
+            ),
+            ("GITHUB_APP_ID".to_string(), "12345".to_string()),
+            (
+                "GITHUB_APP_PRIVATE_KEY".to_string(),
+                "-----BEGIN RSA PRIVATE KEY-----\\nabc\\n-----END RSA PRIVATE KEY-----".to_string(),
+            ),
+            (
+                "GITHUB_APP_INSTALLATION_ID".to_string(),
+                "123456".to_string(),
+            ),
+            (
+                "GITHUB_SEARCH_SCOPE_ORG".to_string(),
+                "example-org".to_string(),
+            ),
+        ]);
+
+        for key in remove_keys {
+            values.remove(*key);
+        }
+        for (key, value) in overrides {
+            values.insert((*key).to_string(), (*value).to_string());
+        }
+
+        let mut env = MockEnvironmentReader::new();
+        env.expect_get()
+            .returning(move |name| values.get(name).cloned());
+        env
     }
 }

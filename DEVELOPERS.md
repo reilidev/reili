@@ -62,6 +62,22 @@ cd crates
 bash -lc 'set -a; source ../.env; set +a; APP_VERSION=local cargo watch -x "run -p reili_runtime"' 2>&1 | tee -a ../.tmp/reili.log
 ```
 
+## Docker Run
+
+Build a local image:
+
+```bash
+docker build --build-arg APP_VERSION=local -t reili:local .
+docker run --env-file .env -p 3000:3000 reili:local
+```
+
+To consume the published GitHub Container Registry image after release, set the image name in
+`compose.example.yaml` and start it with Docker Compose:
+
+```bash
+docker compose -f compose.example.yaml up -d
+```
+
 ## Validation Commands
 
 Run these before opening a PR:
