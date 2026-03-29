@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use reili_core::error::AgentRunFailedError;
+use reili_core::logger::Logger;
 use reili_core::task::{
     LlmExecutionMetadata, LlmUsageSnapshot, RunTaskInput, TASK_RUNNER_PROGRESS_OWNER_ID,
     TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort, TaskRunReport,
@@ -8,10 +9,10 @@ use reili_core::task::{
 use rig::completion::Prompt;
 use rig::prelude::CompletionClient;
 
+use super::agent_execution_hook::AgentExecutionHook;
 use super::datadog_mcp_tools::{DatadogMcpToolConfig, connect_datadog_mcp_toolset};
 use super::llm_provider_settings::LlmProviderSettings;
 use super::llm_usage_collector::LlmUsageCollector;
-use super::progress_event_hook::ProgressEventHook;
 use super::task_agents::{BuildTaskAgentInput, build_task_agent, build_task_prompt};
 
 pub struct RunLlmTaskInput<C>
@@ -34,8 +35,11 @@ where
     C::CompletionModel: 'static,
 {
     let usage_collector = LlmUsageCollector::new();
+    let runtime = input.run.context.runtime.clone();
     let task_runner_prompt_hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
+        logger: Arc::clone(&input.run.logger),
         on_progress_event: Arc::clone(&input.run.on_progress_event),
+        runtime: runtime.clone(),
         usage_collector: usage_collector.clone(),
     });
     let datadog_mcp_toolset = connect_datadog_mcp_toolset(&input.datadog_mcp)
@@ -59,7 +63,8 @@ where
         datadog_site: input.datadog_mcp.site.clone(),
         datadog_mcp_toolset,
         github_scope_org: input.github_scope_org,
-        runtime: input.run.context.runtime,
+        logger: Arc::clone(&input.run.logger),
+        runtime,
         on_progress_event: Arc::clone(&input.run.on_progress_event),
         language: input.language,
         usage_collector: usage_collector.clone(),
@@ -101,13 +106,17 @@ struct PublishMessageOutputCreatedEventInput {
 }
 
 struct CreateTaskRunnerPromptHookInput {
+    logger: Arc<dyn Logger>,
     on_progress_event: Arc<dyn TaskProgressEventPort>,
+    runtime: reili_core::task::TaskRuntime,
     usage_collector: LlmUsageCollector,
 }
 
-fn create_task_runner_prompt_hook(input: CreateTaskRunnerPromptHookInput) -> ProgressEventHook {
-    ProgressEventHook::new(
+fn create_task_runner_prompt_hook(input: CreateTaskRunnerPromptHookInput) -> AgentExecutionHook {
+    AgentExecutionHook::new(
         TASK_RUNNER_PROGRESS_OWNER_ID.to_string(),
+        input.runtime,
+        input.logger,
         input.on_progress_event,
         input.usage_collector,
     )
@@ -146,15 +155,41 @@ fn create_failed_error(input: CreateTaskRunnerFailedErrorInput) -> AgentRunFaile
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use reili_core::logger::{LogEntry, Logger, MockLogger};
     use reili_core::task::{
         MockTaskProgressEventPort, TASK_RUNNER_PROGRESS_OWNER_ID, TaskProgressEvent,
-        TaskProgressEventInput,
+        TaskProgressEventInput, TaskRuntime,
     };
     use rig::agent::{PromptHook, ToolCallHookAction};
     use rig::providers::openai;
 
     use super::{CreateTaskRunnerPromptHookInput, create_task_runner_prompt_hook};
     use crate::outbound::agents::llm_usage_collector::LlmUsageCollector;
+
+    struct LoggerHarness {
+        inner: MockLogger,
+    }
+
+    impl Logger for LoggerHarness {
+        fn log(&self, entry: LogEntry) {
+            self.inner.log(entry);
+        }
+    }
+
+    fn sample_runtime() -> TaskRuntime {
+        TaskRuntime {
+            started_at_iso: "2026-03-28T00:00:00.000Z".to_string(),
+            channel: "C123".to_string(),
+            thread_ts: "1710000000.123456".to_string(),
+            retry_count: 0,
+        }
+    }
+
+    fn logger_with_log_count(times: usize) -> Arc<dyn Logger> {
+        let mut inner = MockLogger::new();
+        inner.expect_log().times(times).returning(|_| ());
+        Arc::new(LoggerHarness { inner })
+    }
 
     #[tokio::test]
     async fn task_runner_prompt_hook_publishes_direct_datadog_tool_calls() {
@@ -169,7 +204,9 @@ mod tests {
                 Ok(())
             });
         let hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
+            logger: logger_with_log_count(1),
             on_progress_event: Arc::new(progress_event_port),
+            runtime: sample_runtime(),
             usage_collector: LlmUsageCollector::new(),
         });
 
@@ -200,7 +237,9 @@ mod tests {
         let mut progress_event_port = MockTaskProgressEventPort::new();
         progress_event_port.expect_publish().times(0);
         let hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
+            logger: logger_with_log_count(1),
             on_progress_event: Arc::new(progress_event_port),
+            runtime: sample_runtime(),
             usage_collector: LlmUsageCollector::new(),
         });
 

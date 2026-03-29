@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::logger::Logger;
 use async_trait::async_trait;
 
 use crate::error::AgentRunFailedError;
@@ -23,6 +24,7 @@ pub struct RunTaskInput {
     pub request: TaskRequest,
     pub context: TaskContext,
     pub on_progress_event: Arc<dyn TaskProgressEventPort>,
+    pub logger: Arc<dyn Logger>,
 }
 
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
