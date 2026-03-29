@@ -11,11 +11,11 @@ pub(crate) use reili_core::logger::{
 
 pub use progress_reporter::{SlackProgressReporter, SlackProgressReporterInput};
 
-pub(crate) use block_builder::{build_progress_chunks, build_stream_start_chunks};
+pub(crate) use block_builder::build_progress_chunks;
 pub(crate) use progress_models::{
-    SlackAnyChunk, SlackAppendStreamInput, SlackChunkSourceType, SlackMarkdownTextChunk,
-    SlackStartStreamInput, SlackStartStreamOutput, SlackStopStreamInput, SlackStreamBlock,
-    SlackTaskUpdateChunk, SlackTaskUpdateStatus,
+    SlackAnyChunk, SlackAppendStreamInput, SlackChunkSourceType, SlackStartStreamInput,
+    SlackStartStreamOutput, SlackStopStreamInput, SlackStreamBlock, SlackTaskUpdateChunk,
+    SlackTaskUpdateStatus,
 };
 pub(crate) use stream_lifecycle::SlackProgressStreamLifecycle;
 

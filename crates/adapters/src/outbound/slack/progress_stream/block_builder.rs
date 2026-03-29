@@ -1,14 +1,6 @@
 use reili_core::task::{TaskProgressScopeStatus, TaskProgressUpdate};
 
-use super::{SlackAnyChunk, SlackMarkdownTextChunk, SlackTaskUpdateChunk, SlackTaskUpdateStatus};
-
-const STREAM_START_TEXT: &str = ":hourglass_flowing_sand:";
-
-pub(crate) fn build_stream_start_chunks() -> Vec<SlackAnyChunk> {
-    vec![SlackAnyChunk::MarkdownText(SlackMarkdownTextChunk {
-        text: STREAM_START_TEXT.to_string(),
-    })]
-}
+use super::{SlackAnyChunk, SlackTaskUpdateChunk, SlackTaskUpdateStatus};
 
 pub(crate) fn build_progress_chunks(update: TaskProgressUpdate) -> Vec<SlackAnyChunk> {
     vec![match update {

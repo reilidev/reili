@@ -79,11 +79,10 @@ mod tests {
         should_rotate_stream,
     };
     use crate::outbound::slack::progress_stream::progress_models::{
-        SlackChunkSource, SlackPlanUpdateChunk,
+        SlackChunkSource, SlackMarkdownTextChunk, SlackPlanUpdateChunk,
     };
     use crate::outbound::slack::progress_stream::{
-        SlackAnyChunk, SlackChunkSourceType, SlackMarkdownTextChunk, SlackTaskUpdateChunk,
-        SlackTaskUpdateStatus,
+        SlackAnyChunk, SlackChunkSourceType, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
     };
 
     #[test]
