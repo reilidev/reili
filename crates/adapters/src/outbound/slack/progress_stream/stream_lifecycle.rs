@@ -147,6 +147,10 @@ impl SlackProgressStreamLifecycle {
         }
     }
 
+    pub(crate) fn needs_initial_start(&self) -> bool {
+        !self.stream_stopped && self.stream_ts.is_none()
+    }
+
     pub(crate) fn rotation_reason_for_append(
         &self,
         chunks: &[SlackAnyChunk],
@@ -563,10 +567,11 @@ mod tests {
         SlackProgressStreamAppendOutcome, SlackProgressStreamClock, SlackProgressStreamLifecycle,
         SlackProgressStreamRotationInput, SlackStreamRotationReason,
     };
+    use crate::outbound::slack::progress_stream::progress_models::SlackMarkdownTextChunk;
     use crate::outbound::slack::progress_stream::{
-        LogFieldValue, SlackAnyChunk, SlackAppendStreamInput, SlackMarkdownTextChunk,
-        SlackProgressStreamApiPort, SlackProgressStreamLogger, SlackStartStreamInput,
-        SlackStartStreamOutput, SlackStopStreamInput,
+        LogFieldValue, SlackAnyChunk, SlackAppendStreamInput, SlackProgressStreamApiPort,
+        SlackProgressStreamLogger, SlackStartStreamInput, SlackStartStreamOutput,
+        SlackStopStreamInput,
     };
 
     struct MockSlackProgressStreamApi {

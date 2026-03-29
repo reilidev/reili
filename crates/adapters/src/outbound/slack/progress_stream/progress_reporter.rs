@@ -192,6 +192,11 @@ impl TaskProgressSessionPort for SlackProgressReporterSession {
         let rendered_update_chunks = build_progress_chunks(update.clone());
         self.update_active_scope_state(&update);
 
+        if self.lifecycle.needs_initial_start() {
+            self.lifecycle.start(rendered_update_chunks).await;
+            return;
+        }
+
         if let Some(reason) = self
             .lifecycle
             .rotation_reason_for_append(&rendered_update_chunks)
