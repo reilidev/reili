@@ -12,7 +12,6 @@ use super::stream_lifecycle::{
 };
 use super::{
     SlackAnyChunk, SlackProgressStreamApiPort, SlackProgressStreamLifecycle, build_progress_chunks,
-    build_stream_start_chunks,
 };
 use crate::outbound::slack::SlackProgressStreamAdapter;
 use crate::outbound::slack::slack_web_api_client::SlackWebApiClient;
@@ -184,13 +183,19 @@ impl SlackProgressReporterSession {
 #[async_trait]
 impl TaskProgressSessionPort for SlackProgressReporterSession {
     async fn start(&mut self) {
-        self.lifecycle.start(build_stream_start_chunks()).await;
+        // Start lazily on the first semantic progress update so we do not post an empty
+        // hourglass-only stream message.
     }
 
     async fn apply(&mut self, update: TaskProgressUpdate) {
         let active_scopes_before_update = self.active_scopes.clone();
         let rendered_update_chunks = build_progress_chunks(update.clone());
         self.update_active_scope_state(&update);
+
+        if self.lifecycle.needs_initial_start() {
+            self.lifecycle.start(rendered_update_chunks).await;
+            return;
+        }
 
         if let Some(reason) = self
             .lifecycle
@@ -447,6 +452,7 @@ mod tests {
         let mut session = create_session(Arc::clone(&api), Arc::clone(&logger));
 
         session.start().await;
+        assert!(api.start_calls.lock().expect("lock start").is_empty());
         session
             .apply(scope_started("progress-step-1", "Inspect logs\n"))
             .await;
@@ -457,7 +463,7 @@ mod tests {
             .await;
 
         assert_eq!(api.start_calls.lock().expect("lock start").len(), 1);
-        assert_eq!(api.append_calls.lock().expect("lock append").len(), 1);
+        assert!(api.append_calls.lock().expect("lock append").is_empty());
         assert_eq!(api.stop_calls.lock().expect("lock stop").len(), 1);
     }
 
@@ -476,7 +482,7 @@ mod tests {
         session
             .apply(scope_started(
                 "progress-step-1",
-                &format!("{}\n", "a".repeat(2600)),
+                &format!("{}\n", "a".repeat(2650)),
             ))
             .await;
         session
@@ -509,15 +515,15 @@ mod tests {
                 "progress-step-1",
                 "Collect evidence",
                 SlackTaskUpdateStatus::InProgress,
-                Some(&format!("{}\n", "a".repeat(2600))),
+                Some(&format!("{}\n", "a".repeat(2650))),
                 None,
             )])
         );
 
         let append_calls = api.append_calls.lock().expect("lock append calls");
-        assert_eq!(append_calls.len(), 2);
+        assert_eq!(append_calls.len(), 1);
         assert_eq!(
-            append_calls[1].chunks,
+            append_calls[0].chunks,
             Some(vec![task_update_chunk(
                 "progress-step-1",
                 "Collect evidence",
@@ -534,7 +540,6 @@ mod tests {
         api.push_start_response(Ok(SlackStartStreamOutput {
             stream_ts: "stream-2".to_string(),
         }));
-        api.push_append_response(Ok(()));
         api.push_append_response(Err(PortError::service_error(
             "msg_too_long",
             "Error: An API error occurred: msg_too_long",
@@ -582,9 +587,9 @@ mod tests {
         );
 
         let append_calls = api.append_calls.lock().expect("lock append calls");
-        assert_eq!(append_calls.len(), 3);
+        assert_eq!(append_calls.len(), 2);
         assert_eq!(
-            append_calls[2].chunks,
+            append_calls[1].chunks,
             Some(vec![task_update_chunk(
                 "progress-step-1",
                 "Collect evidence",
@@ -647,9 +652,9 @@ mod tests {
         );
 
         let append_calls = api.append_calls.lock().expect("lock append calls");
-        assert_eq!(append_calls.len(), 2);
+        assert_eq!(append_calls.len(), 1);
         assert_eq!(
-            append_calls[1].chunks,
+            append_calls[0].chunks,
             Some(vec![task_update_chunk(
                 "progress-step-1",
                 "Collect evidence",

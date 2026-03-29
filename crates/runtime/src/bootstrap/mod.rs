@@ -16,8 +16,8 @@ use reili_adapters::outbound::datadog::{
 use reili_adapters::outbound::github::{GitHubSearchAdapter, GitHubSearchAdapterConfig};
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
-    SlackProgressReporter, SlackProgressReporterInput, SlackThreadHistoryAdapter,
-    SlackThreadReplyAdapter, SlackWebApiClient, SlackWebApiClientConfig,
+    SlackProgressReporter, SlackProgressReporterInput, SlackReactionAdapter,
+    SlackThreadHistoryAdapter, SlackThreadReplyAdapter, SlackWebApiClient, SlackWebApiClientConfig,
 };
 use reili_adapters::outbound::vertex_ai::{
     VertexAiWebSearchAdapter, VertexAiWebSearchAdapterConfig,
@@ -34,7 +34,9 @@ use reili_application::{
 use reili_core::error::PortError;
 use reili_core::knowledge::WebSearchPort;
 use reili_core::messaging::slack::SlackMessageHandlerPort;
-use reili_core::messaging::slack::{SlackThreadHistoryPort, SlackThreadReplyPort};
+use reili_core::messaging::slack::{
+    SlackReactionPort, SlackThreadHistoryPort, SlackThreadReplyPort,
+};
 use reili_core::monitoring::datadog::{
     DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
     DatadogMetricCatalogPort, DatadogMetricQueryPort,
@@ -99,6 +101,8 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let slack_reply_port: Arc<dyn SlackThreadReplyPort> = Arc::new(SlackThreadReplyAdapter::new(
         Arc::clone(&slack_web_api_client),
     ));
+    let slack_reaction_port: Arc<dyn SlackReactionPort> =
+        Arc::new(SlackReactionAdapter::new(Arc::clone(&slack_web_api_client)));
     let task_progress_session_factory_port: Arc<dyn TaskProgressSessionFactoryPort> =
         Arc::new(SlackProgressReporter::new(SlackProgressReporterInput {
             client: Arc::clone(&slack_web_api_client),
@@ -175,6 +179,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
+            slack_reaction_port,
             slack_reply_port: Arc::clone(&slack_reply_port),
             logger: Arc::clone(&logger),
         }),
