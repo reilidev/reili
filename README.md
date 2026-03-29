@@ -1,11 +1,9 @@
 <div align="center">
   <h1>Reili</h1>
   <img src="./reili.png" alt="Reili logo" width="240" />
-  <p><strong>A Slack-native AI agent for DevOps tasks, currently focused on investigations</strong></p>
+  <p><strong>An AI team member for SRE and DevOps, currently focused on investigations</strong></p>
   <p>
-    Investigate alerts quickly across Datadog, GitHub, and Slack threads.
-    <br />
-    Operate with a simple database-free architecture.
+    Investigate alerts quickly from Slack with Datadog telemetry and GitHub context.
   </p>
 </div>
 
@@ -13,10 +11,10 @@
 
 Reili is an AI team member for your SRE and DevOps team.
 
-Add Reili to your on-call rotation — it investigates alerts by pulling logs
-and metrics from Datadog, checking recent changes on GitHub, and reporting
-back with what it found. Today Reili handles investigation; over time it
-will grow into more of the responsibilities your team carries.
+Give Reili a task — it investigates by pulling logs and metrics from
+Datadog, checking recent changes on GitHub, and reporting back with what
+it found. Today Reili handles investigation; over time it will grow into
+more of the responsibilities your team carries.
 
 ## Why Reili
 

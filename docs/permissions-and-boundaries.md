@@ -110,6 +110,8 @@ Slack boundary:
 ## Datadog Permissions and API Usage
 
 Reili uses Datadog as an evidence source during current investigation tasks.
+Its Datadog integration surface is the Datadog-hosted remote MCP Server, and the runtime uses
+Datadog-provided read-only MCP tools rather than a separate direct Datadog client layer.
 
 Required Datadog credentials:
 
