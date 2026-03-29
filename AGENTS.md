@@ -19,6 +19,7 @@ Reili is a Slack-native AI agent for read-only DevOps investigations. It respond
 * Write tests together with implementation changes.
 * Place Rust tests in the same module/file scope with `#[cfg(test)]` or sibling `tests` modules.
 * Keep tests deterministic and isolated from external services.
+* Do not add tests that only verify logging; prefer tests that assert observable behavior instead.
 * When you modify Rust code, run `cargo test --workspace` in `crates/`.
 
 ## Format

@@ -86,7 +86,7 @@ Common settings for both modes:
 
 | Slack screen | Required setting | Why |
 | --- | --- | --- |
-| `OAuth & Permissions` | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `channels:history`, `groups:history` | Receive `app_mention`, reply in threads, and read channel/private-channel thread context |
+| `OAuth & Permissions` | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write` (required for the reaction indicator), `channels:history`, `groups:history` | Receive `app_mention`, mark accepted requests, reply in threads, and read channel/private-channel thread context |
 | `Event Subscriptions` | Turn on events and add the bot event `app_mention` | `app_mention` is the intake trigger in both modes |
 | `Install App` / `OAuth & Permissions` | Install or reinstall the app after any scope change | Slack does not apply updated scopes until reinstall |
 | Slack workspace | Invite the app to every public or private channel where it should respond | The app must be present in the conversation to receive mentions and post replies |
@@ -175,6 +175,7 @@ Required Bot OAuth scopes:
 
 - `app_mentions:read`: receive `app_mention` events
 - `chat:write`: post progress and final replies into the originating thread
+- `reactions:write`: add an `:eyes:` reaction to the triggering message once the task is queued
 - `channels:history`: read public channel thread history when additional context is needed
 - `groups:history`: read private channel thread history when additional context is needed
 
@@ -195,6 +196,7 @@ Slack API methods currently used by the runtime:
 - `auth.test`: resolves the bot user ID at startup
 - `conversations.replies`: loads thread context when the triggering message is a thread reply
 - `chat.postMessage`: posts queue failures and the final task summary
+- `reactions.add`: adds an `:eyes:` reaction to the triggering message after enqueue succeeds
 - `chat.startStream`, `chat.appendStream`, `chat.stopStream`: posts incremental task
   progress in the same thread
 
