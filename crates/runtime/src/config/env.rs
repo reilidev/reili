@@ -180,7 +180,7 @@ fn load_app_config_with_env(env: &dyn EnvironmentReader) -> Result<AppConfig, En
 fn read_slack_connection_mode(
     env: &dyn EnvironmentReader,
 ) -> Result<SlackConnectionMode, EnvConfigError> {
-    let socket_mode = read_or_default(env, "SLACK_SOCKET_MODE", "false");
+    let socket_mode = read_or_default(env, "SLACK_SOCKET_MODE", "true");
     if socket_mode == "true" {
         let app_token = read_required_env(env, "SLACK_APP_TOKEN")?;
         if !app_token.starts_with("xapp-") {
@@ -356,6 +356,7 @@ mod tests {
     fn environment_reader_mock(overrides: &[(&str, &str)]) -> MockEnvironmentReader {
         let mut values = HashMap::from([
             ("SLACK_BOT_TOKEN".to_string(), "xoxb-test".to_string()),
+            ("SLACK_APP_TOKEN".to_string(), "xapp-test-token".to_string()),
             (
                 "SLACK_SIGNING_SECRET".to_string(),
                 "signing-secret".to_string(),
@@ -506,12 +507,17 @@ mod tests {
     }
 
     #[test]
-    fn defaults_to_http_mode_when_socket_mode_not_set() {
+    fn defaults_to_socket_mode_when_socket_mode_not_set() {
         let env = environment_reader_mock(&[]);
 
         let config = load_app_config_with_env(&env).expect("load app config");
 
-        assert_eq!(config.slack_connection_mode, SlackConnectionMode::Http);
+        match &config.slack_connection_mode {
+            SlackConnectionMode::SocketMode { app_token } => {
+                assert_eq!(app_token.expose(), "xapp-test-token");
+            }
+            SlackConnectionMode::Http => panic!("expected SocketMode"),
+        }
         assert_eq!(
             config.slack_signing_secret,
             Some("signing-secret".to_string())
@@ -536,8 +542,25 @@ mod tests {
     }
 
     #[test]
+    fn default_socket_mode_requires_app_token() {
+        let env = environment_reader_mock_without_keys(&[], &["SLACK_APP_TOKEN"]);
+
+        let error = load_app_config_with_env(&env).expect_err("missing SLACK_APP_TOKEN");
+
+        assert_eq!(
+            error,
+            super::EnvConfigError::MissingRequired {
+                name: "SLACK_APP_TOKEN".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn socket_mode_requires_app_token() {
-        let env = environment_reader_mock(&[("SLACK_SOCKET_MODE", "true")]);
+        let env = environment_reader_mock_without_keys(
+            &[("SLACK_SOCKET_MODE", "true")],
+            &["SLACK_APP_TOKEN"],
+        );
 
         let error = load_app_config_with_env(&env).expect_err("missing SLACK_APP_TOKEN");
 
@@ -564,6 +587,19 @@ mod tests {
                 name: "SLACK_APP_TOKEN".to_string(),
                 value: "must start with xapp-".to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn disables_socket_mode_when_explicitly_false() {
+        let env = environment_reader_mock(&[("SLACK_SOCKET_MODE", "false")]);
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        assert_eq!(config.slack_connection_mode, SlackConnectionMode::Http);
+        assert_eq!(
+            config.slack_signing_secret,
+            Some("signing-secret".to_string())
         );
     }
 
@@ -610,7 +646,10 @@ mod tests {
 
     #[test]
     fn http_mode_requires_signing_secret() {
-        let env = environment_reader_mock_without_keys(&[], &["SLACK_SIGNING_SECRET"]);
+        let env = environment_reader_mock_without_keys(
+            &[("SLACK_SOCKET_MODE", "false")],
+            &["SLACK_SIGNING_SECRET"],
+        );
 
         let error = load_app_config_with_env(&env).expect_err("missing signing secret");
 
@@ -624,7 +663,10 @@ mod tests {
 
     #[test]
     fn http_mode_rejects_empty_signing_secret() {
-        let env = environment_reader_mock(&[("SLACK_SIGNING_SECRET", "")]);
+        let env = environment_reader_mock(&[
+            ("SLACK_SOCKET_MODE", "false"),
+            ("SLACK_SIGNING_SECRET", ""),
+        ]);
 
         let error = load_app_config_with_env(&env).expect_err("empty signing secret");
 
@@ -638,7 +680,10 @@ mod tests {
 
     #[test]
     fn http_mode_rejects_whitespace_signing_secret() {
-        let env = environment_reader_mock(&[("SLACK_SIGNING_SECRET", "   ")]);
+        let env = environment_reader_mock(&[
+            ("SLACK_SOCKET_MODE", "false"),
+            ("SLACK_SIGNING_SECRET", "   "),
+        ]);
 
         let error = load_app_config_with_env(&env).expect_err("whitespace signing secret");
 
@@ -668,6 +713,7 @@ mod tests {
     ) -> MockEnvironmentReader {
         let mut values = HashMap::from([
             ("SLACK_BOT_TOKEN".to_string(), "xoxb-test".to_string()),
+            ("SLACK_APP_TOKEN".to_string(), "xapp-test-token".to_string()),
             (
                 "SLACK_SIGNING_SECRET".to_string(),
                 "signing-secret".to_string(),
