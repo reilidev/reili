@@ -29,3 +29,9 @@ When you modify Rust code, run `cargo fmt --all` in `crates/`.
 ## Linting
 
 When you modify Rust code, run `cargo clippy --workspace --all-targets -- -D warnings` in `crates/`.
+
+## Documentation
+
+When you add or change code, check whether `README.md` also needs to be updated. If the behavior,
+configuration, permissions, setup steps, or operational expectations changed, update `README.md` in
+the same work.
