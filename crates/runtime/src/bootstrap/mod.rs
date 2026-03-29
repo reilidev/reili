@@ -48,7 +48,7 @@ use reili_core::task::{TaskProgressSessionFactoryPort, TaskResources, TaskRunner
 use serde_json::{Value, json};
 use thiserror::Error;
 
-use crate::config::env::{AppConfig, LlmProviderConfig};
+use crate::config::env::{AppConfig, LlmProviderConfig, SlackConnectionMode};
 
 const DATADOG_API_RETRY: DatadogApiRetryConfig = DatadogApiRetryConfig {
     enabled: true,
@@ -58,7 +58,7 @@ const DATADOG_API_RETRY: DatadogApiRetryConfig = DatadogApiRetryConfig {
 };
 
 pub struct RuntimeDeps {
-    pub slack_signature_verifier: Arc<SlackSignatureVerifier>,
+    pub slack_signature_verifier: Option<Arc<SlackSignatureVerifier>>,
     pub bot_user_id: String,
     pub slack_message_handler: Arc<dyn SlackMessageHandlerPort>,
     pub worker_runner: StartTaskWorkerRunnerUseCase,
@@ -193,9 +193,10 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         job_max_retry: config.job_max_retry,
         job_backoff_ms: config.job_backoff_ms,
     });
-    let slack_signature_verifier = Arc::new(SlackSignatureVerifier::new(
-        config.slack_signing_secret.clone(),
-    )?);
+    let slack_signature_verifier = build_slack_signature_verifier(
+        &config.slack_connection_mode,
+        config.slack_signing_secret.as_deref(),
+    )?;
 
     Ok(RuntimeDeps {
         slack_signature_verifier,
@@ -204,6 +205,20 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         worker_runner,
         logger,
     })
+}
+
+fn build_slack_signature_verifier(
+    connection_mode: &SlackConnectionMode,
+    slack_signing_secret: Option<&str>,
+) -> Result<Option<Arc<SlackSignatureVerifier>>, PortError> {
+    match connection_mode {
+        SlackConnectionMode::Http => slack_signing_secret
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| SlackSignatureVerifier::new(value.to_string()))
+            .transpose()
+            .map(|verifier| verifier.map(Arc::new)),
+        SlackConnectionMode::SocketMode { .. } => Ok(None),
+    }
 }
 
 async fn create_provider_ports(
@@ -303,4 +318,40 @@ async fn resolve_slack_bot_user_id(
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .ok_or(RuntimeBootstrapError::MissingSlackBotUserId)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_slack_signature_verifier;
+    use crate::config::env::{SecretString, SlackConnectionMode};
+
+    #[test]
+    fn socket_mode_does_not_build_signature_verifier_even_with_secret() {
+        let verifier = build_slack_signature_verifier(
+            &SlackConnectionMode::SocketMode {
+                app_token: SecretString::new("xapp-test-token".to_string()),
+            },
+            Some("signing-secret"),
+        )
+        .expect("build verifier");
+
+        assert!(verifier.is_none());
+    }
+
+    #[test]
+    fn http_mode_builds_signature_verifier_with_non_empty_secret() {
+        let verifier =
+            build_slack_signature_verifier(&SlackConnectionMode::Http, Some("signing-secret"))
+                .expect("build verifier");
+
+        assert!(verifier.is_some());
+    }
+
+    #[test]
+    fn http_mode_ignores_whitespace_only_secret() {
+        let verifier = build_slack_signature_verifier(&SlackConnectionMode::Http, Some("   "))
+            .expect("build verifier");
+
+        assert!(verifier.is_none());
+    }
 }

@@ -11,10 +11,14 @@ path = "src/main.rs"
 [dependencies]
 mockall.workspace = true
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+futures = "0.3"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reili_adapters = { path = "../adapters" }
 reili_application = { path = "../application" }
 reili_core = { path = "../core" }
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 tracing = "0.1"

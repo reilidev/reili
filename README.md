@@ -33,23 +33,18 @@ Its current task focus is triage, investigation, and communicating findings.
 
 ### 1. Prerequisites
 
-- Slack App (Bot Token / Signing Secret)
+- Slack App (Bot Token, plus Signing Secret for HTTP mode or App-Level Token for Socket Mode)
 - Datadog API Key + APP Key
 - OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call Vertex AI partner models
 - GitHub App (App ID / Private Key / Installation ID)
 
-### 2. Install
-
-```bash
-cp .env.example .env
-```
-
-### 3. Configure Environment Variables
+### 2. Configure Environment Variables
 
 Required:
 
 - `SLACK_BOT_TOKEN`
-- `SLACK_SIGNING_SECRET`
+- `SLACK_SIGNING_SECRET` when `SLACK_SOCKET_MODE` is unset or `false` (HTTP mode)
+- `SLACK_SOCKET_MODE=true` and `SLACK_APP_TOKEN` when using Socket Mode
 - `DATADOG_API_KEY`
 - `DATADOG_APP_KEY`
 - `LLM_PROVIDER`
@@ -69,6 +64,9 @@ Common optional variables:
 - `DATADOG_SITE` (default: `datadoghq.com`)
 - `LANGUAGE` (default: `English`)
 
+`SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`. When Socket Mode is
+enabled, `SLACK_SIGNING_SECRET` is not used.
+
 When `LLM_PROVIDER=bedrock`, AWS credentials and region are loaded from the standard AWS SDK environment or profile chain. Set `AWS_PROFILE` to use a named AWS profile such as an AWS SSO profile, and set `AWS_REGION` if the selected profile does not already define a region.
 
 When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Default Credentials.
@@ -77,46 +75,43 @@ When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Def
 - Use the exact Vertex AI Anthropic model id, including the published version suffix when Google provides one.
 - If Vertex AI returns `RESOURCE_EXHAUSTED`, verify your project quotas in Google Cloud Quotas (`https://console.cloud.google.com/iam-admin/quotas`) and adjust them if needed.
 
-### 4. Configure Slack App
+### 3. Configure Slack App
 
-- Set Event Subscriptions Request URL to `https://<your-host>/slack/events`
-- Subscribe to `app_mention`
-- Grant the minimum Bot OAuth scopes required by the current implementation:
-  `app_mentions:read`, `chat:write`, `channels:history`, `groups:history`
-- Do not enable extra message event subscriptions or DM/private-conversation scopes unless you
-  intentionally want to expand the support boundary beyond the current product policy
+Configure the Slack app in two steps:
 
-### 5. Run locally
+1. Apply the common settings below
+2. Choose exactly one runtime mode: `Socket Mode` or `HTTP mode`
 
-Single-process runtime:
+Common settings for both modes:
 
-```bash
-cd crates
-bash -lc 'set -a; source ../.env; set +a; APP_VERSION=local cargo run -p reili_runtime'
-```
+| Slack screen | Required setting | Why |
+| --- | --- | --- |
+| `OAuth & Permissions` | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `channels:history`, `groups:history` | Receive `app_mention`, reply in threads, and read channel/private-channel thread context |
+| `Event Subscriptions` | Turn on events and add the bot event `app_mention` | `app_mention` is the intake trigger in both modes |
+| `Install App` / `OAuth & Permissions` | Install or reinstall the app after any scope change | Slack does not apply updated scopes until reinstall |
+| Slack workspace | Invite the app to every public or private channel where it should respond | The app must be present in the conversation to receive mentions and post replies |
 
-If you use `cargo-watch`:
+If you choose `Socket Mode` (`SLACK_SOCKET_MODE=true`):
 
-```bash
-cd crates
-bash -lc 'set -a; source ../.env; set +a; APP_VERSION=local cargo watch -x "run -p reili_runtime"'
-```
+- Enable `Socket Mode` in the Slack app settings
+- In `Basic Information`, create an App-Level Token with the `connections:write` scope
+- Set `SLACK_APP_TOKEN` to that App-Level Token (`xapp-...`)
+- Set `SLACK_BOT_TOKEN` to the installed bot token (`xoxb-...`)
+- Keep `Event Subscriptions` enabled with `app_mention`
+- Do not configure an `Event Subscriptions Request URL`; Socket Mode does not use it
 
-### 6. Run with Docker
+If you choose `HTTP mode` (`SLACK_SOCKET_MODE` unset or `false`):
 
-Build a local image:
+- Set `SLACK_BOT_TOKEN`
+- Set `SLACK_SIGNING_SECRET`
+- In `Event Subscriptions`, configure the Request URL as `https://<your-host>/slack/events`
+- Do not create or set `SLACK_APP_TOKEN`
+- Do not enable Socket Mode
 
-```bash
-docker build --build-arg APP_VERSION=local -t reili:local .
-docker run --env-file .env -p 3000:3000 reili:local
-```
+Current product boundary:
 
-To consume the published GitHub Container Registry image after release, set the image name in
-`compose.example.yaml` and start it with Docker Compose:
-
-```bash
-docker compose -f compose.example.yaml up -d
-```
+- `app_mention` does not cover direct messages; DM and group DM support remain out of scope
+- Do not enable extra message event subscriptions or DM/private-conversation scopes unless you intentionally want to expand the support boundary beyond the current product policy
 
 ## Usage
 
@@ -161,12 +156,20 @@ Reili uses Slack as both its entry point and its reporting surface.
 
 Required Slack credentials:
 
-- `SLACK_SIGNING_SECRET`: verifies incoming requests on `/slack/events`
 - `SLACK_BOT_TOKEN`: calls Slack Web API methods
+- `SLACK_SIGNING_SECRET`: verifies incoming requests on `/slack/events` in HTTP mode
+- `SLACK_APP_TOKEN`: opens the Socket Mode WebSocket in Socket Mode (`xapp-...` App-Level Token)
 
 Required Event Subscriptions:
 
+- Enable Events
 - `app_mention`: starts a task when someone mentions the bot
+
+Required Slack app settings for Socket Mode:
+
+- Enable Socket Mode
+- Create an App-Level Token with the `connections:write` scope
+- Keep `Event Subscriptions` enabled; Socket Mode replaces the Request URL, not the event subscription itself
 
 Required Bot OAuth scopes:
 
@@ -174,6 +177,10 @@ Required Bot OAuth scopes:
 - `chat:write`: post progress and final replies into the originating thread
 - `channels:history`: read public channel thread history when additional context is needed
 - `groups:history`: read private channel thread history when additional context is needed
+
+Required App-Level Token scope for Socket Mode:
+
+- `connections:write`: call `apps.connections.open` to obtain the temporary WebSocket URL
 
 Not in scope for Slack:
 
@@ -184,6 +191,7 @@ Not in scope for Slack:
 
 Slack API methods currently used by the runtime:
 
+- `apps.connections.open`: obtains a temporary WebSocket URL when Socket Mode is enabled
 - `auth.test`: resolves the bot user ID at startup
 - `conversations.replies`: loads thread context when the triggering message is a thread reply
 - `chat.postMessage`: posts queue failures and the final task summary
