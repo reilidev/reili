@@ -1,3 +1,4 @@
+pub mod cancellation;
 pub mod context;
 pub mod job;
 pub mod progress_event;
@@ -6,6 +7,7 @@ pub mod request;
 pub mod task_runner;
 pub mod telemetry;
 
+pub use cancellation::TaskCancellation;
 pub use context::{TaskContext, TaskResources, TaskRuntime};
 pub use job::{TaskJob, TaskJobPayload};
 pub use progress_event::{
@@ -17,7 +19,9 @@ pub use progress_reporting::{
     TaskProgressUpdate,
 };
 pub use request::TaskRequest;
-pub use task_runner::{LlmExecutionMetadata, RunTaskInput, TaskRunReport, TaskRunnerPort};
+pub use task_runner::{
+    LlmExecutionMetadata, RunTaskInput, TaskRunOutcome, TaskRunReport, TaskRunnerPort,
+};
 pub use telemetry::LlmUsageSnapshot;
 
 #[cfg(any(test, feature = "test-support"))]

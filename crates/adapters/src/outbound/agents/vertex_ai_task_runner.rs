@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
-use reili_core::task::{RunTaskInput, TaskRunReport, TaskRunnerPort};
+use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 
 use super::datadog_mcp_tools::DatadogMcpToolConfig;
 use super::llm_provider_settings::{
@@ -43,7 +43,7 @@ impl VertexAiTaskRunner {
 
 #[async_trait]
 impl TaskRunnerPort for VertexAiTaskRunner {
-    async fn run(&self, input: RunTaskInput) -> Result<TaskRunReport, AgentRunFailedError> {
+    async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
         run_llm_task(RunLlmTaskInput {
             client: self.client.clone(),
             settings: self.provider_settings.clone(),

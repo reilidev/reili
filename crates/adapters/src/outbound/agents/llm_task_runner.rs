@@ -4,9 +4,10 @@ use reili_core::error::AgentRunFailedError;
 use reili_core::logger::Logger;
 use reili_core::task::{
     LlmExecutionMetadata, LlmUsageSnapshot, RunTaskInput, TASK_RUNNER_PROGRESS_OWNER_ID,
-    TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort, TaskRunReport,
+    TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort, TaskRunOutcome,
+    TaskRunReport,
 };
-use rig::completion::Prompt;
+use rig::completion::{Prompt, PromptError};
 use rig::prelude::CompletionClient;
 
 use super::agent_execution_hook::AgentExecutionHook;
@@ -29,14 +30,19 @@ where
 
 pub async fn run_llm_task<C>(
     input: RunLlmTaskInput<C>,
-) -> Result<TaskRunReport, AgentRunFailedError>
+) -> Result<TaskRunOutcome, AgentRunFailedError>
 where
     C: CompletionClient + Clone,
     C::CompletionModel: 'static,
 {
+    if input.run.context.cancellation.is_cancelled() {
+        return Ok(TaskRunOutcome::Cancelled);
+    }
+
     let usage_collector = LlmUsageCollector::new();
     let runtime = input.run.context.runtime.clone();
     let task_runner_prompt_hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
+        cancellation: input.run.context.cancellation.clone(),
         logger: Arc::clone(&input.run.logger),
         on_progress_event: Arc::clone(&input.run.on_progress_event),
         runtime: runtime.clone(),
@@ -65,24 +71,34 @@ where
         github_scope_org: input.github_scope_org,
         logger: Arc::clone(&input.run.logger),
         runtime,
+        cancellation: input.run.context.cancellation.clone(),
         on_progress_event: Arc::clone(&input.run.on_progress_event),
         language: input.language,
         usage_collector: usage_collector.clone(),
     });
 
-    let prompt_response = task_agent
+    let prompt_response_result = task_agent
         .prompt(task_prompt)
         .max_turns(input.settings.task_runner_max_turns)
         .with_tool_concurrency(input.settings.tool_concurrency)
         .with_hook(task_runner_prompt_hook)
         .extended_details()
-        .await
-        .map_err(|error| {
-            create_failed_error(CreateTaskRunnerFailedErrorInput {
+        .await;
+
+    let prompt_response = match prompt_response_result {
+        Ok(response) => response,
+        Err(PromptError::PromptCancelled { .. }) => return Ok(TaskRunOutcome::Cancelled),
+        Err(error) => {
+            return Err(create_failed_error(CreateTaskRunnerFailedErrorInput {
                 usage: usage_collector.snapshot(),
                 cause_message: error.to_string(),
-            })
-        })?;
+            }));
+        }
+    };
+
+    if input.run.context.cancellation.is_cancelled() {
+        return Ok(TaskRunOutcome::Cancelled);
+    }
 
     publish_message_output_created_event(PublishMessageOutputCreatedEventInput {
         on_progress_event: Arc::clone(&input.run.on_progress_event),
@@ -90,14 +106,14 @@ where
     })
     .await?;
 
-    Ok(TaskRunReport {
+    Ok(TaskRunOutcome::Succeeded(TaskRunReport {
         result_text: prompt_response.output,
         usage: usage_collector.snapshot(),
         execution: LlmExecutionMetadata {
             provider: input.settings.provider,
             model: input.settings.task_runner_model,
         },
-    })
+    }))
 }
 
 struct PublishMessageOutputCreatedEventInput {
@@ -106,6 +122,7 @@ struct PublishMessageOutputCreatedEventInput {
 }
 
 struct CreateTaskRunnerPromptHookInput {
+    cancellation: reili_core::task::TaskCancellation,
     logger: Arc<dyn Logger>,
     on_progress_event: Arc<dyn TaskProgressEventPort>,
     runtime: reili_core::task::TaskRuntime,
@@ -116,6 +133,7 @@ fn create_task_runner_prompt_hook(input: CreateTaskRunnerPromptHookInput) -> Age
     AgentExecutionHook::new(
         TASK_RUNNER_PROGRESS_OWNER_ID.to_string(),
         input.runtime,
+        input.cancellation,
         input.logger,
         input.on_progress_event,
         input.usage_collector,
@@ -157,8 +175,8 @@ mod tests {
 
     use reili_core::logger::{LogEntry, Logger, MockLogger};
     use reili_core::task::{
-        MockTaskProgressEventPort, TASK_RUNNER_PROGRESS_OWNER_ID, TaskProgressEvent,
-        TaskProgressEventInput, TaskRuntime,
+        MockTaskProgressEventPort, TASK_RUNNER_PROGRESS_OWNER_ID, TaskCancellation,
+        TaskProgressEvent, TaskProgressEventInput, TaskRuntime,
     };
     use rig::agent::{PromptHook, ToolCallHookAction};
     use rig::providers::openai;
@@ -204,6 +222,7 @@ mod tests {
                 Ok(())
             });
         let hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
+            cancellation: TaskCancellation::new(),
             logger: logger_with_log_count(1),
             on_progress_event: Arc::new(progress_event_port),
             runtime: sample_runtime(),
@@ -237,6 +256,7 @@ mod tests {
         let mut progress_event_port = MockTaskProgressEventPort::new();
         progress_event_port.expect_publish().times(0);
         let hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
+            cancellation: TaskCancellation::new(),
             logger: logger_with_log_count(1),
             on_progress_event: Arc::new(progress_event_port),
             runtime: sample_runtime(),

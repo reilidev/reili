@@ -98,6 +98,7 @@ When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Def
 
 Configure the Slack app using the requirements in
 [Slack Permissions and API Usage](./docs/permissions-and-boundaries.md#slack-permissions-and-api-usage).
+Enable Slack Interactivity as well so Reili can receive `Cancel` button clicks for running tasks.
 
 ### 3. Run Reili
 
@@ -114,8 +115,9 @@ If you are using HTTP mode, publish the application port as well:
 docker run --rm --env-file .env -p 3000:3000 ghcr.io/reilidev/reili:latest
 ```
 
-For HTTP mode, Slack must be able to reach your `/slack/events` endpoint. In local development, use a public tunnel such
-as `ngrok` or `Cloudflare Tunnel` and set the Slack Event Subscriptions Request URL to that public HTTPS URL.
+For HTTP mode, Slack must be able to reach both `/slack/events` and `/slack/interactions`. In
+local development, use a public tunnel such as `ngrok` or `Cloudflare Tunnel` and set both the
+Slack Event Subscriptions Request URL and the Interactivity Request URL to that public HTTPS URL.
 
 ## Usage
 
@@ -127,9 +129,13 @@ Mention the bot in Slack with a task request:
 
 What happens:
 
-1. It posts task progress in the thread
-2. It investigates across Datadog and GitHub
-3. It replies with an evidence-backed summary
+1. It posts a task control message with a `Cancel` button in the thread
+2. It posts task progress in the thread
+3. It investigates across Datadog and GitHub
+4. It replies with an evidence-backed summary
+
+If you need to stop a queued or running investigation, click `Cancel` on that task's control
+message in the same Slack thread.
 
 ## Permissions and Tool Transparency
 

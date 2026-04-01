@@ -17,7 +17,8 @@ use reili_adapters::outbound::github::{GitHubSearchAdapter, GitHubSearchAdapterC
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
     SlackProgressReporter, SlackProgressReporterInput, SlackReactionAdapter,
-    SlackThreadHistoryAdapter, SlackThreadReplyAdapter, SlackWebApiClient, SlackWebApiClientConfig,
+    SlackTaskControlMessageAdapter, SlackThreadHistoryAdapter, SlackThreadReplyAdapter,
+    SlackWebApiClient, SlackWebApiClientConfig,
 };
 use reili_adapters::outbound::vertex_ai::{
     VertexAiWebSearchAdapter, VertexAiWebSearchAdapterConfig,
@@ -28,12 +29,15 @@ use reili_application::task::{
     TaskExecutionDeps, TaskLogger,
 };
 use reili_application::{
-    EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, StartTaskWorkerRunnerUseCase,
+    EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
+    HandleSlackInteractionUseCaseDeps, StartTaskWorkerRunnerUseCase,
     StartTaskWorkerRunnerUseCaseDeps,
 };
 use reili_core::error::PortError;
 use reili_core::knowledge::WebSearchPort;
-use reili_core::messaging::slack::SlackMessageHandlerPort;
+use reili_core::messaging::slack::{
+    SlackInteractionHandlerPort, SlackMessageHandlerPort, SlackTaskControlMessagePort,
+};
 use reili_core::messaging::slack::{
     SlackReactionPort, SlackThreadHistoryPort, SlackThreadReplyPort,
 };
@@ -63,6 +67,7 @@ pub struct RuntimeDeps {
     pub slack_signature_verifier: Option<Arc<SlackSignatureVerifier>>,
     pub bot_user_id: String,
     pub slack_message_handler: Arc<dyn SlackMessageHandlerPort>,
+    pub slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort>,
     pub worker_runner: StartTaskWorkerRunnerUseCase,
     pub logger: Arc<dyn TaskLogger>,
 }
@@ -103,6 +108,9 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     ));
     let slack_reaction_port: Arc<dyn SlackReactionPort> =
         Arc::new(SlackReactionAdapter::new(Arc::clone(&slack_web_api_client)));
+    let slack_task_control_message_port: Arc<dyn SlackTaskControlMessagePort> = Arc::new(
+        SlackTaskControlMessageAdapter::new(Arc::clone(&slack_web_api_client)),
+    );
     let task_progress_session_factory_port: Arc<dyn TaskProgressSessionFactoryPort> =
         Arc::new(SlackProgressReporter::new(SlackProgressReporterInput {
             client: Arc::clone(&slack_web_api_client),
@@ -112,6 +120,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         SlackThreadHistoryAdapter::new(Arc::clone(&slack_web_api_client)),
     );
     let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
+    let in_flight_job_registry = reili_application::task::services::InFlightJobRegistry::new();
 
     let datadog_http_client = Arc::new(DatadogHttpClient::new(DatadogHttpClientConfig {
         api_key: config.datadog_api_key.clone(),
@@ -180,12 +189,23 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
             slack_reaction_port,
+            slack_task_control_message_port: Arc::clone(&slack_task_control_message_port),
             slack_reply_port: Arc::clone(&slack_reply_port),
+            logger: Arc::clone(&logger),
+        }),
+    );
+    let slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort> = Arc::new(
+        HandleSlackInteractionUseCase::new(HandleSlackInteractionUseCaseDeps {
+            job_queue: Arc::clone(&job_queue),
+            in_flight_job_registry: in_flight_job_registry.clone(),
+            slack_task_control_message_port: Arc::clone(&slack_task_control_message_port),
             logger: Arc::clone(&logger),
         }),
     );
     let worker_runner = StartTaskWorkerRunnerUseCase::new(StartTaskWorkerRunnerUseCaseDeps {
         job_queue,
+        in_flight_job_registry,
+        slack_task_control_message_port,
         task_execution_deps: TaskExecutionDeps {
             slack_reply_port,
             task_progress_session_factory_port,
@@ -207,6 +227,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         slack_signature_verifier,
         bot_user_id,
         slack_message_handler,
+        slack_interaction_handler,
         worker_runner,
         logger,
     })

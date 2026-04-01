@@ -5,7 +5,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use reili_core::error::PortError;
 use reili_core::queue::{
-    CompleteJobInput, FailJobInput, JobFailResult, JobFailStatus, JobQueuePort, QueueJob,
+    CancelJobInput, CancelJobResult, CompleteJobInput, FailJobInput, JobFailResult, JobFailStatus,
+    JobQueuePort, QueueJob,
 };
 use tokio::sync::Mutex;
 use tokio::time::Instant;
@@ -131,6 +132,38 @@ where
         Ok(Some(next_job))
     }
 
+    async fn cancel(&self, input: CancelJobInput) -> Result<CancelJobResult<TJob>, PortError> {
+        let mut state = self.state.lock().await;
+        Self::promote_ready_delayed_jobs(&mut state);
+
+        if let Some(index) = state
+            .pending_jobs
+            .iter()
+            .position(|job| job.job_id() == input.job_id)
+        {
+            let job = state
+                .pending_jobs
+                .remove(index)
+                .expect("pending job index should exist");
+            return Ok(CancelJobResult::Cancelled(job));
+        }
+
+        if let Some(index) = state
+            .delayed_jobs
+            .iter()
+            .position(|job| job.job.job_id() == input.job_id)
+        {
+            let delayed_job = state.delayed_jobs.remove(index);
+            return Ok(CancelJobResult::Cancelled(delayed_job.job));
+        }
+
+        if state.claimed_jobs.contains_key(&input.job_id) {
+            return Ok(CancelJobResult::AlreadyClaimed);
+        }
+
+        Ok(CancelJobResult::NotFound)
+    }
+
     async fn complete(&self, input: CompleteJobInput) -> Result<(), PortError> {
         let mut state = self.state.lock().await;
         state.claimed_jobs.remove(&input.job_id);
@@ -195,7 +228,8 @@ fn current_timestamp() -> String {
 mod tests {
     use super::InMemoryJobQueue;
     use reili_core::queue::{
-        CompleteJobInput, FailJobInput, JobFailStatus, JobQueuePort, QueueJob,
+        CancelJobInput, CancelJobResult, CompleteJobInput, FailJobInput, JobFailStatus,
+        JobQueuePort, QueueJob,
     };
     use tokio::time::{Duration, advance, pause};
 
@@ -342,6 +376,38 @@ mod tests {
         assert_eq!(state.dead_letter_jobs[0].reason, "fatal");
         assert_eq!(state.dead_letter_jobs[0].job.job_id, "job-1");
         assert!(!state.dead_letter_jobs[0].failed_at.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancel_removes_pending_job() {
+        let queue = InMemoryJobQueue::new();
+        queue.enqueue(test_job("job-1", 0)).await.expect("enqueue");
+
+        let result = queue
+            .cancel(CancelJobInput {
+                job_id: "job-1".to_string(),
+            })
+            .await
+            .expect("cancel");
+
+        assert_eq!(result, CancelJobResult::Cancelled(test_job("job-1", 0)));
+        assert_eq!(queue.get_depth().await.expect("depth"), 0);
+    }
+
+    #[tokio::test]
+    async fn cancel_returns_already_claimed_for_running_job() {
+        let queue = InMemoryJobQueue::new();
+        queue.enqueue(test_job("job-1", 0)).await.expect("enqueue");
+        let _ = queue.claim().await.expect("claim").expect("job");
+
+        let result = queue
+            .cancel(CancelJobInput {
+                job_id: "job-1".to_string(),
+            })
+            .await
+            .expect("cancel");
+
+        assert_eq!(result, CancelJobResult::AlreadyClaimed);
     }
 
     #[tokio::test]

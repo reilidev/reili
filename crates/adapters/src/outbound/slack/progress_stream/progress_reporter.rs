@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use reili_core::logger::Logger;
 use reili_core::task::{
     CompleteTaskProgressSessionInput, StartTaskProgressSessionInput, TaskProgressScopeStatus,
-    TaskProgressSessionFactoryPort, TaskProgressSessionPort, TaskProgressUpdate,
+    TaskProgressSessionCompletionStatus, TaskProgressSessionFactoryPort, TaskProgressSessionPort,
+    TaskProgressUpdate,
 };
 
 use super::stream_lifecycle::{
@@ -14,6 +15,7 @@ use super::{
     SlackAnyChunk, SlackProgressStreamApiPort, SlackProgressStreamLifecycle, build_progress_chunks,
 };
 use crate::outbound::slack::SlackProgressStreamAdapter;
+use crate::outbound::slack::progress_stream::{SlackTaskUpdateChunk, SlackTaskUpdateStatus};
 use crate::outbound::slack::slack_web_api_client::SlackWebApiClient;
 
 pub struct SlackProgressReporterInput {
@@ -178,6 +180,32 @@ impl SlackProgressReporterSession {
             active_scope.owner_id == scope.owner_id && active_scope.step_id == scope.step_id
         })
     }
+
+    fn build_stop_chunks(
+        &self,
+        status: TaskProgressSessionCompletionStatus,
+    ) -> Option<Vec<SlackAnyChunk>> {
+        if status != TaskProgressSessionCompletionStatus::Cancelled {
+            return None;
+        }
+
+        let chunks = self
+            .active_scopes
+            .iter()
+            .map(|scope| {
+                SlackAnyChunk::TaskUpdate(SlackTaskUpdateChunk {
+                    id: scope.step_id.clone(),
+                    title: scope.title.clone(),
+                    status: SlackTaskUpdateStatus::Error,
+                    details: scope.detail.clone(),
+                    output: Some("cancelled".to_string()),
+                    sources: None,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        (!chunks.is_empty()).then_some(chunks)
+    }
 }
 
 #[async_trait]
@@ -224,8 +252,10 @@ impl TaskProgressSessionPort for SlackProgressReporterSession {
         }
     }
 
-    async fn complete(&mut self, _input: CompleteTaskProgressSessionInput) {
-        self.lifecycle.stop().await;
+    async fn complete(&mut self, input: CompleteTaskProgressSessionInput) {
+        self.lifecycle
+            .stop(self.build_stop_chunks(input.status))
+            .await;
     }
 }
 

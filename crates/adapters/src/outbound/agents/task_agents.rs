@@ -3,7 +3,8 @@ use std::sync::Arc;
 use chrono::{DateTime, SecondsFormat, Utc};
 use reili_core::logger::Logger;
 use reili_core::task::{
-    TASK_RUNNER_PROGRESS_OWNER_ID, TaskProgressEventPort, TaskRequest, TaskResources, TaskRuntime,
+    TASK_RUNNER_PROGRESS_OWNER_ID, TaskCancellation, TaskProgressEventPort, TaskRequest,
+    TaskResources, TaskRuntime,
 };
 use rig::agent::Agent;
 use rig::prelude::CompletionClient;
@@ -38,6 +39,7 @@ where
     pub github_scope_org: String,
     pub logger: Arc<dyn Logger>,
     pub runtime: TaskRuntime,
+    pub cancellation: TaskCancellation,
     pub on_progress_event: Arc<dyn TaskProgressEventPort>,
     pub language: String,
     pub usage_collector: LlmUsageCollector,
@@ -60,6 +62,7 @@ where
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: DATADOG_PROGRESS_OWNER_ID.to_string(),
         runtime: input.runtime.clone(),
+        cancellation: input.cancellation.clone(),
         usage_collector: input.usage_collector.clone(),
     });
     let github_agent = build_github_agent(BuildSpecialistAgentInput {
@@ -73,6 +76,7 @@ where
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: GITHUB_PROGRESS_OWNER_ID.to_string(),
         runtime: input.runtime.clone(),
+        cancellation: input.cancellation.clone(),
         usage_collector: input.usage_collector.clone(),
     });
 
@@ -229,6 +233,7 @@ where
     on_progress_event: Arc<dyn TaskProgressEventPort>,
     owner_id: String,
     runtime: TaskRuntime,
+    cancellation: TaskCancellation,
     usage_collector: LlmUsageCollector,
 }
 
@@ -248,6 +253,7 @@ where
         .hook(AgentExecutionHook::new(
             input.owner_id.clone(),
             input.runtime,
+            input.cancellation,
             input.logger,
             Arc::clone(&input.on_progress_event),
             input.usage_collector,
@@ -280,6 +286,7 @@ where
         .hook(AgentExecutionHook::new(
             input.owner_id.clone(),
             input.runtime,
+            input.cancellation,
             input.logger,
             Arc::clone(&input.on_progress_event),
             input.usage_collector,
@@ -450,6 +457,7 @@ mod tests {
                 ts: "1710000000.000001".to_string(),
                 user: Some("U123".to_string()),
                 text: "thread context".to_string(),
+                metadata: None,
             }],
         };
         let prompt = build_task_prompt(&request);
@@ -480,6 +488,7 @@ mod tests {
                 ts: "1710000000.000010".to_string(),
                 user: Some("U999".to_string()),
                 text: "I started investigation".to_string(),
+                metadata: None,
             }],
         };
         let prompt = build_task_prompt(&request);
@@ -496,11 +505,13 @@ mod tests {
                     ts: "1710000000.000001".to_string(),
                     user: Some("U123".to_string()),
                     text: "First message".to_string(),
+                    metadata: None,
                 },
                 SlackThreadMessage {
                     ts: "1710000000.000002".to_string(),
                     user: None,
                     text: " follow-up from bot ".to_string(),
+                    metadata: None,
                 },
             ],
         };

@@ -2,8 +2,6 @@ use reili_core::error::PortError;
 use reili_core::messaging::slack::{SlackMessage, SlackTriggerType};
 use serde::Deserialize;
 
-use crate::json_utils::read_non_empty_string;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedSlackEvent {
     UrlVerification { challenge: String },
@@ -17,7 +15,8 @@ pub fn parse_slack_event(payload: &[u8], bot_user_id: &str) -> Result<ParsedSlac
     })?;
 
     if envelope.envelope_type == "url_verification" {
-        let challenge = read_non_empty_string(envelope.challenge)
+        let challenge = envelope
+            .challenge
             .ok_or_else(|| PortError::new("Slack url_verification payload missing challenge"))?;
         return Ok(ParsedSlackEvent::UrlVerification { challenge });
     }
@@ -26,7 +25,7 @@ pub fn parse_slack_event(payload: &[u8], bot_user_id: &str) -> Result<ParsedSlac
         return Ok(ParsedSlackEvent::Ignored);
     }
 
-    let event_id = match read_non_empty_string(envelope.event_id) {
+    let event_id = match envelope.event_id {
         Some(value) => value,
         None => return Ok(ParsedSlackEvent::Ignored),
     };
@@ -73,7 +72,7 @@ fn parse_message_event(
         return Ok(ParsedSlackEvent::Ignored);
     }
 
-    let user = match read_non_empty_string(input.event.user) {
+    let user = match input.event.user {
         Some(value) => value,
         None => return Ok(ParsedSlackEvent::Ignored),
     };
@@ -81,28 +80,28 @@ fn parse_message_event(
         return Ok(ParsedSlackEvent::Ignored);
     }
 
-    let channel = match read_non_empty_string(input.event.channel) {
+    let channel = match input.event.channel {
         Some(value) => value,
         None => return Ok(ParsedSlackEvent::Ignored),
     };
-    let text = match read_non_empty_string(input.event.text) {
+    let text = match input.event.text {
         Some(value) => value,
         None => return Ok(ParsedSlackEvent::Ignored),
     };
-    let ts = match read_non_empty_string(input.event.ts) {
+    let ts = match input.event.ts {
         Some(value) => value,
         None => return Ok(ParsedSlackEvent::Ignored),
     };
 
     Ok(ParsedSlackEvent::Message(SlackMessage {
         slack_event_id: input.event_id,
-        team_id: read_non_empty_string(input.team_id),
+        team_id: input.team_id,
         trigger,
         channel,
         user,
         text,
         ts,
-        thread_ts: read_non_empty_string(input.event.thread_ts),
+        thread_ts: input.event.thread_ts,
     }))
 }
 

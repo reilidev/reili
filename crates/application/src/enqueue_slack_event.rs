@@ -7,7 +7,9 @@ use reili_core::error::PortError;
 use reili_core::messaging::slack::SlackMessage;
 use reili_core::messaging::slack::SlackMessageHandlerPort;
 use reili_core::messaging::slack::{
-    AddSlackReactionInput, SlackReactionPort, SlackThreadReplyInput, SlackThreadReplyPort,
+    AddSlackReactionInput, PostTaskControlMessageInput, SlackReactionPort,
+    SlackTaskControlMessagePort, SlackTaskControlState, SlackThreadReplyInput,
+    SlackThreadReplyPort, UpdateTaskControlMessageInput,
 };
 use reili_core::queue::TaskJobQueuePort;
 use reili_core::task::{TaskJob, TaskJobPayload};
@@ -21,6 +23,7 @@ const SLACK_ALREADY_REACTED_ERROR_CODE: &str = "already_reacted";
 pub struct EnqueueSlackEventUseCaseDeps {
     pub job_queue: Arc<TaskJobQueuePort>,
     pub slack_reaction_port: Arc<dyn SlackReactionPort>,
+    pub slack_task_control_message_port: Arc<dyn SlackTaskControlMessagePort>,
     pub slack_reply_port: Arc<dyn SlackThreadReplyPort>,
     pub logger: Arc<dyn TaskLogger>,
 }
@@ -40,9 +43,49 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
     async fn handle(&self, message: SlackMessage) -> Result<(), PortError> {
         let event_started_at = Instant::now();
         let thread_ts = message.thread_ts_or_ts().to_string();
+        let job_id = Uuid::new_v4().to_string();
+        let control_message_ts = match post_task_control_message(PostTaskControlMessageInputStage {
+            slack_task_control_message_port: Arc::clone(&self.deps.slack_task_control_message_port),
+            logger: Arc::clone(&self.deps.logger),
+            channel: message.channel.clone(),
+            thread_ts: thread_ts.clone(),
+            job_id: job_id.clone(),
+        })
+        .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                self.deps.logger.error(
+                    "Failed to post task control message before enqueue",
+                    string_log_meta([
+                        ("slackEventId", message.slack_event_id.clone()),
+                        ("jobId", job_id.clone()),
+                        ("channel", message.channel.clone()),
+                        ("threadTs", thread_ts.clone()),
+                        ("error", error.message.clone()),
+                        (
+                            "ingress_ack_latency_ms",
+                            event_started_at.elapsed().as_millis().to_string(),
+                        ),
+                    ]),
+                );
+
+                return self
+                    .deps
+                    .slack_reply_port
+                    .post_thread_reply(SlackThreadReplyInput {
+                        channel: message.channel,
+                        thread_ts,
+                        text: format!("Failed to start task: {}", error.message),
+                    })
+                    .await;
+            }
+        };
         let job = build_task_job(BuildTaskJobInput {
+            job_id: job_id.clone(),
             message: message.clone(),
             received_at: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            control_message_ts: control_message_ts.clone(),
         });
 
         match self.deps.job_queue.enqueue(job.clone()).await {
@@ -83,6 +126,18 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
                 Ok(())
             }
             Err(enqueue_error) => {
+                update_task_control_message(UpdateTaskControlMessageStage {
+                    slack_task_control_message_port: Arc::clone(
+                        &self.deps.slack_task_control_message_port,
+                    ),
+                    logger: Arc::clone(&self.deps.logger),
+                    channel: message.channel.clone(),
+                    thread_ts: thread_ts.clone(),
+                    message_ts: control_message_ts,
+                    job_id: job.job_id.clone(),
+                    state: SlackTaskControlState::Failed,
+                })
+                .await;
                 self.deps.logger.error(
                     "Failed to enqueue task job",
                     string_log_meta([
@@ -98,14 +153,7 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
                     ]),
                 );
 
-                self.deps
-                    .slack_reply_port
-                    .post_thread_reply(SlackThreadReplyInput {
-                        channel: message.channel,
-                        thread_ts,
-                        text: format!("Failed to queue task: {}", enqueue_error.message),
-                    })
-                    .await
+                Ok(())
             }
         }
     }
@@ -116,6 +164,79 @@ struct AddQueueAcceptedReactionInput {
     logger: Arc<dyn TaskLogger>,
     slack_event_id: String,
     reaction: AddSlackReactionInput,
+}
+
+struct PostTaskControlMessageInputStage {
+    slack_task_control_message_port: Arc<dyn SlackTaskControlMessagePort>,
+    logger: Arc<dyn TaskLogger>,
+    channel: String,
+    thread_ts: String,
+    job_id: String,
+}
+
+async fn post_task_control_message(
+    input: PostTaskControlMessageInputStage,
+) -> Result<String, PortError> {
+    let result = input
+        .slack_task_control_message_port
+        .post_task_control_message(PostTaskControlMessageInput {
+            channel: input.channel.clone(),
+            thread_ts: input.thread_ts.clone(),
+            job_id: input.job_id.clone(),
+            state: SlackTaskControlState::Queued,
+        })
+        .await;
+
+    match result {
+        Ok(output) => Ok(output.message_ts),
+        Err(error) => {
+            input.logger.warn(
+                "task_control_message_post_failed",
+                string_log_meta([
+                    ("jobId", input.job_id),
+                    ("channel", input.channel),
+                    ("threadTs", input.thread_ts),
+                    ("error", error.message.clone()),
+                ]),
+            );
+            Err(error)
+        }
+    }
+}
+
+struct UpdateTaskControlMessageStage {
+    slack_task_control_message_port: Arc<dyn SlackTaskControlMessagePort>,
+    logger: Arc<dyn TaskLogger>,
+    channel: String,
+    thread_ts: String,
+    message_ts: String,
+    job_id: String,
+    state: SlackTaskControlState,
+}
+
+async fn update_task_control_message(input: UpdateTaskControlMessageStage) {
+    if let Err(error) = input
+        .slack_task_control_message_port
+        .update_task_control_message(UpdateTaskControlMessageInput {
+            channel: input.channel.clone(),
+            thread_ts: input.thread_ts.clone(),
+            message_ts: input.message_ts.clone(),
+            job_id: input.job_id.clone(),
+            state: input.state,
+        })
+        .await
+    {
+        input.logger.warn(
+            "task_control_message_update_failed",
+            string_log_meta([
+                ("jobId", input.job_id),
+                ("channel", input.channel),
+                ("threadTs", input.thread_ts),
+                ("messageTs", input.message_ts),
+                ("error", error.message),
+            ]),
+        );
+    }
 }
 
 async fn add_queue_accepted_reaction(input: AddQueueAcceptedReactionInput) {
@@ -166,19 +287,22 @@ async fn read_worker_queue_depth(input: ReadWorkerQueueDepthInput) -> String {
 }
 
 struct BuildTaskJobInput {
+    job_id: String,
     message: SlackMessage,
     received_at: String,
+    control_message_ts: String,
 }
 
 fn build_task_job(input: BuildTaskJobInput) -> TaskJob {
     let slack_event_id = input.message.slack_event_id.clone();
 
     TaskJob {
-        job_id: Uuid::new_v4().to_string(),
+        job_id: input.job_id,
         received_at: input.received_at,
         payload: TaskJobPayload {
             slack_event_id,
             message: input.message,
+            control_message_ts: input.control_message_ts,
         },
         retry_count: 0,
     }
@@ -192,13 +316,13 @@ mod tests {
     };
     use reili_core::logger::LogEntry;
     use reili_core::messaging::slack::{
-        AddSlackReactionInput, MockSlackReactionPort, MockSlackThreadReplyPort, SlackReactionPort,
-        SlackTriggerType,
+        AddSlackReactionInput, MockSlackReactionPort, MockSlackTaskControlMessagePort,
+        MockSlackThreadReplyPort, PostTaskControlMessageOutput, SlackReactionPort,
+        SlackTaskControlMessagePort, SlackTriggerType,
     };
     use reili_core::queue::{MockJobQueuePort, TaskJobQueuePort};
-    use std::sync::{Arc, Mutex};
-
     use reili_core::task::TaskJob;
+    use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
     struct NoopLogger;
@@ -220,7 +344,6 @@ mod tests {
         let posted_replies = Arc::new(Mutex::new(Vec::new()));
         let mut job_queue = MockJobQueuePort::<TaskJob>::new();
         let enqueue_result = input.enqueue_result.clone();
-        let should_post_reply = input.enqueue_result.is_err();
         let enqueue_calls = Arc::clone(&enqueued_jobs);
         job_queue
             .expect_enqueue()
@@ -261,24 +384,29 @@ mod tests {
         }
 
         let mut slack_reply_port = MockSlackThreadReplyPort::new();
-        if should_post_reply {
-            let reply_calls = Arc::clone(&posted_replies);
-            slack_reply_port
-                .expect_post_thread_reply()
-                .times(1)
-                .returning(move |input: SlackThreadReplyInput| {
-                    reply_calls.lock().expect("lock posted replies").push(input);
-                    Ok(())
-                });
-        } else {
-            slack_reply_port.expect_post_thread_reply().times(0);
-        }
+        slack_reply_port.expect_post_thread_reply().times(0);
+
+        let mut slack_task_control_message_port = MockSlackTaskControlMessagePort::new();
+        slack_task_control_message_port
+            .expect_post_task_control_message()
+            .times(1)
+            .returning(|_| {
+                Ok(PostTaskControlMessageOutput {
+                    message_ts: "1710000000.000099".to_string(),
+                })
+            });
+        slack_task_control_message_port
+            .expect_update_task_control_message()
+            .times(if input.enqueue_result.is_err() { 1 } else { 0 })
+            .returning(|_| Ok(()));
 
         let logger = Arc::new(NoopLogger);
 
         let use_case = EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::new(job_queue) as Arc<TaskJobQueuePort>,
             slack_reaction_port: Arc::new(slack_reaction_port) as Arc<dyn SlackReactionPort>,
+            slack_task_control_message_port: Arc::new(slack_task_control_message_port)
+                as Arc<dyn SlackTaskControlMessagePort>,
             slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
             logger: Arc::clone(&logger) as Arc<dyn TaskLogger>,
         });
@@ -428,7 +556,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn posts_slack_reply_when_enqueue_fails() {
+    async fn updates_control_message_when_enqueue_fails() {
         let context = create_use_case(CreateUseCaseInput {
             enqueue_result: Err(PortError::new("fail-1")),
             reaction_result: Ok(()),
@@ -446,10 +574,7 @@ mod tests {
             .lock()
             .expect("lock posted replies")
             .clone();
-        assert_eq!(posted_replies.len(), 1);
-        assert_eq!(posted_replies[0].channel, "C001");
-        assert_eq!(posted_replies[0].thread_ts, "1710000000.000001");
-        assert_eq!(posted_replies[0].text, "Failed to queue task: fail-1");
+        assert!(posted_replies.is_empty());
         assert!(
             context
                 .added_reactions

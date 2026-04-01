@@ -10,12 +10,6 @@ pub(crate) fn read_non_empty_json_string(value: Option<&Value>) -> Option<String
         .map(ToString::to_string)
 }
 
-pub(crate) fn read_non_empty_string(value: Option<String>) -> Option<String> {
-    value
-        .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty())
-}
-
 pub(crate) fn truncate_for_error(value: &str) -> String {
     let mut chars = value.chars();
     let preview: String = chars.by_ref().take(MAX_ERROR_BODY_PREVIEW_CHARS).collect();
@@ -30,17 +24,7 @@ pub(crate) fn truncate_for_error(value: &str) -> String {
 mod tests {
     use serde_json::json;
 
-    use super::{read_non_empty_json_string, read_non_empty_string, truncate_for_error};
-
-    #[test]
-    fn trims_and_filters_owned_strings() {
-        assert_eq!(
-            read_non_empty_string(Some("  value  ".to_string())),
-            Some("value".to_string())
-        );
-        assert_eq!(read_non_empty_string(Some("   ".to_string())), None);
-        assert_eq!(read_non_empty_string(None), None);
-    }
+    use super::{read_non_empty_json_string, truncate_for_error};
 
     #[test]
     fn trims_and_filters_json_strings() {

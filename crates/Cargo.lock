@@ -516,6 +516,7 @@ checksum = "8b52af3cb4058c895d37317bb27508dccc8e5f2d39454016b297bf4a400597b8"
 dependencies = [
  "axum-core",
  "bytes",
+ "form_urlencoded",
  "futures-util",
  "http 1.4.0",
  "http-body 1.0.1",
@@ -531,6 +532,7 @@ dependencies = [
  "serde_core",
  "serde_json",
  "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tower 0.5.3",
@@ -2594,6 +2596,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2623,6 +2626,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

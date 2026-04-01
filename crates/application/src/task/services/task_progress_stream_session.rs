@@ -39,6 +39,7 @@ pub trait TaskProgressStreamSession: Send {
     async fn post_message_output_created(&mut self, input: RecordMessageOutputCreated);
     async fn stop_as_succeeded(&mut self);
     async fn stop_as_failed(&mut self);
+    async fn stop_as_cancelled(&mut self);
 }
 
 #[cfg_attr(test, mockall::automock)]
@@ -203,6 +204,11 @@ impl TaskProgressStreamSession for TaskProgressStreamSessionFacade {
 
     async fn stop_as_failed(&mut self) {
         self.complete(TaskProgressSessionCompletionStatus::Failed)
+            .await;
+    }
+
+    async fn stop_as_cancelled(&mut self) {
+        self.complete(TaskProgressSessionCompletionStatus::Cancelled)
             .await;
     }
 }

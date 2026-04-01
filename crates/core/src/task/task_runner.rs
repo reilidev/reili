@@ -20,6 +20,12 @@ pub struct TaskRunReport {
     pub execution: LlmExecutionMetadata,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskRunOutcome {
+    Succeeded(TaskRunReport),
+    Cancelled,
+}
+
 pub struct RunTaskInput {
     pub request: TaskRequest,
     pub context: TaskContext,
@@ -30,5 +36,5 @@ pub struct RunTaskInput {
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 #[async_trait]
 pub trait TaskRunnerPort: Send + Sync {
-    async fn run(&self, input: RunTaskInput) -> Result<TaskRunReport, AgentRunFailedError>;
+    async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError>;
 }

@@ -8,9 +8,9 @@ use reili_core::messaging::slack::{
     SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
 };
 use reili_core::task::{
-    LlmExecutionMetadata, LlmUsageSnapshot, RunTaskInput, TaskContext, TaskJobPayload,
-    TaskProgressEventInput, TaskProgressEventPort, TaskProgressSessionFactoryPort, TaskRequest,
-    TaskResources, TaskRunnerPort, TaskRuntime,
+    LlmExecutionMetadata, LlmUsageSnapshot, RunTaskInput, TaskCancellation, TaskContext,
+    TaskJobPayload, TaskProgressEventInput, TaskProgressEventPort, TaskProgressSessionFactoryPort,
+    TaskRequest, TaskResources, TaskRunOutcome, TaskRunnerPort, TaskRuntime,
 };
 use tokio::sync::{Mutex, mpsc};
 
@@ -41,10 +41,19 @@ pub struct ExecuteTaskJobInput {
     pub job_id: String,
     pub retry_count: u32,
     pub payload: TaskJobPayload,
+    pub task_cancellation: TaskCancellation,
     pub deps: TaskExecutionDeps,
 }
 
-pub async fn execute_task_job(input: ExecuteTaskJobInput) -> Result<(), ExecuteTaskJobError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskExecutionOutcome {
+    Succeeded,
+    Cancelled,
+}
+
+pub async fn execute_task_job(
+    input: ExecuteTaskJobInput,
+) -> Result<TaskExecutionOutcome, ExecuteTaskJobError> {
     let thread_ts = input.payload.message.thread_ts_or_ts().to_string();
     let started_at = Instant::now();
     let started_at_iso = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
@@ -108,31 +117,52 @@ pub async fn execute_task_job(input: ExecuteTaskJobInput) -> Result<(), ExecuteT
         Ok(success) => {
             {
                 let mut session = progress_session.lock().await;
-                session.stop_as_succeeded().await;
+                match success {
+                    TaskExecutionSuccess::Succeeded(success) => {
+                        session.stop_as_succeeded().await;
+                        drop(session);
+
+                        post_slack_reply_stage(
+                            Arc::clone(&input.deps.slack_reply_port),
+                            input.payload.message.channel.clone(),
+                            thread_ts,
+                            success.report_text,
+                            success.llm_usage.clone(),
+                        )
+                        .await?;
+
+                        let duration_ms = started_at.elapsed().as_millis();
+                        let mut meta = merge_log_meta(
+                            &base_log_meta,
+                            &build_llm_token_log_meta(&success.llm_usage),
+                        );
+                        meta = merge_log_meta(
+                            &meta,
+                            &build_llm_execution_log_meta(&success.llm_execution),
+                        );
+                        meta.insert(
+                            "worker_job_duration_ms".to_string(),
+                            LogFieldValue::from(duration_ms),
+                        );
+                        meta.insert("latencyMs".to_string(), LogFieldValue::from(duration_ms));
+                        input.deps.logger.info("Processed task job", meta);
+                        return Ok(TaskExecutionOutcome::Succeeded);
+                    }
+                    TaskExecutionSuccess::Cancelled => {
+                        session.stop_as_cancelled().await;
+                    }
+                }
             }
-
-            post_slack_reply_stage(
-                Arc::clone(&input.deps.slack_reply_port),
-                input.payload.message.channel.clone(),
-                thread_ts,
-                success.report_text,
-                success.llm_usage.clone(),
-            )
-            .await?;
-
             let duration_ms = started_at.elapsed().as_millis();
-            let mut meta = merge_log_meta(
-                &base_log_meta,
-                &build_llm_token_log_meta(&success.llm_usage),
-            );
-            meta = merge_log_meta(&meta, &build_llm_execution_log_meta(&success.llm_execution));
+            let mut meta = base_log_meta.clone();
             meta.insert(
                 "worker_job_duration_ms".to_string(),
                 LogFieldValue::from(duration_ms),
             );
             meta.insert("latencyMs".to_string(), LogFieldValue::from(duration_ms));
-            input.deps.logger.info("Processed task job", meta);
-            Ok(())
+            meta.insert("status".to_string(), LogFieldValue::from("cancelled"));
+            input.deps.logger.info("Cancelled task job", meta);
+            Ok(TaskExecutionOutcome::Cancelled)
         }
         Err(error) => {
             {
@@ -162,7 +192,12 @@ pub async fn execute_task_job(input: ExecuteTaskJobInput) -> Result<(), ExecuteT
     }
 }
 
-struct TaskExecutionSuccess {
+enum TaskExecutionSuccess {
+    Succeeded(TaskExecutionRunSuccess),
+    Cancelled,
+}
+
+struct TaskExecutionRunSuccess {
     report_text: String,
     llm_usage: LlmUsageSnapshot,
     llm_execution: LlmExecutionMetadata,
@@ -198,6 +233,7 @@ async fn run_task(
     let context = TaskContext {
         resources: input.deps.task_resources.clone(),
         runtime,
+        cancellation: input.task_cancellation.clone(),
     };
 
     {
@@ -205,17 +241,40 @@ async fn run_task(
         session.start().await;
     }
 
-    let task_report = input
-        .deps
-        .task_runner
-        .run(RunTaskInput {
-            request,
-            context,
-            on_progress_event: Arc::clone(&on_progress_event),
-            logger: Arc::clone(&input.deps.logger),
-        })
-        .await
-        .map_err(ExecuteTaskJobError::from)?;
+    let task_runner_future = input.deps.task_runner.run(RunTaskInput {
+        request,
+        context,
+        on_progress_event: Arc::clone(&on_progress_event),
+        logger: Arc::clone(&input.deps.logger),
+    });
+    tokio::pin!(task_runner_future);
+
+    let task_runner_result = tokio::select! {
+        result = &mut task_runner_future => Some(result),
+        _ = input.task_cancellation.wait_for_cancellation() => None,
+    };
+
+    let task_outcome = match task_runner_result {
+        Some(Ok(outcome)) => {
+            if input.task_cancellation.is_cancelled() {
+                TaskRunOutcome::Cancelled
+            } else {
+                outcome
+            }
+        }
+        Some(Err(error)) => {
+            if input.task_cancellation.is_cancelled() {
+                return Ok(TaskExecutionSuccess::Cancelled);
+            }
+            return Err(ExecuteTaskJobError::from(error));
+        }
+        None => return Ok(TaskExecutionSuccess::Cancelled),
+    };
+
+    let task_report = match task_outcome {
+        TaskRunOutcome::Succeeded(report) => report,
+        TaskRunOutcome::Cancelled => return Ok(TaskExecutionSuccess::Cancelled),
+    };
 
     let report_text = if task_report.result_text.is_empty() {
         FALLBACK_REPORT_TEXT.to_string()
@@ -223,11 +282,11 @@ async fn run_task(
         task_report.result_text
     };
 
-    Ok(TaskExecutionSuccess {
+    Ok(TaskExecutionSuccess::Succeeded(TaskExecutionRunSuccess {
         report_text,
         llm_usage: task_report.usage,
         llm_execution: task_report.execution,
-    })
+    }))
 }
 
 fn build_llm_execution_log_meta(execution: &LlmExecutionMetadata) -> TaskLogMeta {
@@ -333,9 +392,9 @@ mod tests {
     };
     use reili_core::task::{
         LlmExecutionMetadata, LlmUsageSnapshot, MockTaskProgressSessionFactoryPort,
-        MockTaskProgressSessionPort, MockTaskRunnerPort, RunTaskInput, TaskJobPayload,
-        TaskProgressSessionFactoryPort, TaskProgressSessionPort, TaskRequest, TaskResources,
-        TaskRunReport, TaskRunnerPort, TaskRuntime,
+        MockTaskProgressSessionPort, MockTaskRunnerPort, RunTaskInput, TaskCancellation,
+        TaskJobPayload, TaskProgressSessionFactoryPort, TaskProgressSessionPort, TaskRequest,
+        TaskResources, TaskRunOutcome, TaskRunReport, TaskRunnerPort, TaskRuntime,
     };
 
     use super::{ExecuteTaskJobInput, TaskExecutionDeps, execute_task_job};
@@ -420,6 +479,7 @@ mod tests {
                 ts: ts.to_string(),
                 thread_ts: thread_ts.map(ToString::to_string),
             },
+            control_message_ts: "1710000000.000002".to_string(),
         }
     }
 
@@ -483,14 +543,14 @@ mod tests {
                         runtime: input.context.runtime,
                     });
 
-                Ok(TaskRunReport {
+                Ok(TaskRunOutcome::Succeeded(TaskRunReport {
                     result_text: "task_runner result".to_string(),
                     usage: USAGE_SNAPSHOT,
                     execution: LlmExecutionMetadata {
                         provider: "openai".to_string(),
                         model: "gpt-test".to_string(),
                     },
-                })
+                }))
             });
 
         let deps = TaskExecutionDeps {
@@ -517,6 +577,7 @@ mod tests {
             ts: "1710000000.000001".to_string(),
             user: Some("U999".to_string()),
             text: "thread context".to_string(),
+            metadata: None,
         }])));
         let ExecutionFixtures {
             deps,
@@ -533,6 +594,7 @@ mod tests {
                 Some("1710000000.000001"),
                 Some("<@U999> monitor alert"),
             ),
+            task_cancellation: TaskCancellation::new(),
             deps,
         })
         .await;
@@ -584,6 +646,7 @@ mod tests {
             job_id: "job-2".to_string(),
             retry_count: 0,
             payload: create_payload("1710000000.000100", None, None),
+            task_cancellation: TaskCancellation::new(),
             deps,
         })
         .await;
@@ -612,6 +675,7 @@ mod tests {
             job_id: "job-3".to_string(),
             retry_count: 0,
             payload: create_payload("1710000000.000200", Some("1710000000.000150"), None),
+            task_cancellation: TaskCancellation::new(),
             deps,
         })
         .await;

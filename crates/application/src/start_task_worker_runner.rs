@@ -3,18 +3,28 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use reili_core::error::PortError;
-use reili_core::messaging::slack::{SlackThreadReplyInput, SlackThreadReplyPort};
+use reili_core::messaging::slack::{
+    SlackTaskControlMessagePort, SlackTaskControlState, SlackThreadReplyInput,
+    SlackThreadReplyPort, UpdateTaskControlMessageInput,
+};
 use reili_core::queue::{CompleteJobInput, FailJobInput, JobFailStatus, TaskJobQueuePort};
-use reili_core::task::TaskJob;
+use reili_core::task::{TaskCancellation, TaskJob};
 use tokio::task::spawn;
 use tokio::time::sleep;
 
-use crate::task::{ExecuteTaskJobInput, TaskExecutionDeps, execute_task_job, string_log_meta};
+use crate::task::services::{
+    AttachCancellationResult, InFlightJobCancellationInfo, InFlightJobRegistry,
+};
+use crate::task::{
+    ExecuteTaskJobInput, TaskExecutionDeps, TaskExecutionOutcome, execute_task_job, string_log_meta,
+};
 
 const IDLE_WAIT_MS: u64 = 150;
 
 pub struct StartTaskWorkerRunnerUseCaseDeps {
     pub job_queue: Arc<TaskJobQueuePort>,
+    pub in_flight_job_registry: InFlightJobRegistry,
+    pub slack_task_control_message_port: Arc<dyn SlackTaskControlMessagePort>,
     pub task_execution_deps: TaskExecutionDeps,
     pub worker_concurrency: u32,
     pub job_max_retry: u32,
@@ -113,16 +123,51 @@ struct ProcessClaimedJobInput {
 
 async fn process_claimed_job(input: ProcessClaimedJobInput) {
     let started_at = Instant::now();
+    let _ = input
+        .deps
+        .in_flight_job_registry
+        .register_claimed(input.job.job_id.clone())
+        .await;
+    let task_cancellation = TaskCancellation::new();
+    let attach_result = input
+        .deps
+        .in_flight_job_registry
+        .attach_cancellation(&input.job.job_id, task_cancellation.clone())
+        .await;
+
+    match attach_result {
+        AttachCancellationResult::Running(_) => {
+            update_task_control_message(
+                Arc::clone(&input.deps.slack_task_control_message_port),
+                Arc::clone(&input.deps.task_execution_deps.logger),
+                &input.job,
+                SlackTaskControlState::Running,
+            )
+            .await;
+        }
+        AttachCancellationResult::CancelRequested(handle) => {
+            complete_cancelled_claimed_job(CompleteCancelledClaimedJobInput {
+                deps: Arc::clone(&input.deps),
+                worker_index: input.worker_index,
+                job: input.job,
+                started_at,
+                handle: Some(handle),
+            })
+            .await;
+            return;
+        }
+    }
 
     match execute_task_job(ExecuteTaskJobInput {
         job_id: input.job.job_id.clone(),
         retry_count: input.job.retry_count,
         payload: input.job.payload.clone(),
+        task_cancellation,
         deps: input.deps.task_execution_deps.clone(),
     })
     .await
     {
-        Ok(()) => {
+        Ok(TaskExecutionOutcome::Succeeded) => {
             match input
                 .deps
                 .job_queue
@@ -132,6 +177,18 @@ async fn process_claimed_job(input: ProcessClaimedJobInput) {
                 .await
             {
                 Ok(()) => {
+                    let _ = input
+                        .deps
+                        .in_flight_job_registry
+                        .remove(&input.job.job_id)
+                        .await;
+                    update_task_control_message(
+                        Arc::clone(&input.deps.slack_task_control_message_port),
+                        Arc::clone(&input.deps.task_execution_deps.logger),
+                        &input.job,
+                        SlackTaskControlState::Completed,
+                    )
+                    .await;
                     let queue_depth = read_worker_queue_depth(ReadWorkerQueueDepthInput {
                         deps: Arc::clone(&input.deps),
                         worker_index: input.worker_index,
@@ -174,6 +231,16 @@ async fn process_claimed_job(input: ProcessClaimedJobInput) {
                 }
             }
         }
+        Ok(TaskExecutionOutcome::Cancelled) => {
+            complete_cancelled_claimed_job(CompleteCancelledClaimedJobInput {
+                deps: Arc::clone(&input.deps),
+                worker_index: input.worker_index,
+                job: input.job,
+                started_at,
+                handle: None,
+            })
+            .await;
+        }
         Err(error) => {
             handle_failed_claimed_job(HandleFailedClaimedJobInput {
                 deps: Arc::clone(&input.deps),
@@ -205,6 +272,88 @@ struct HandleFailedClaimedJobInput {
     started_at: Instant,
     error_message: String,
     failure_disposition: FailureDisposition,
+}
+
+struct CompleteCancelledClaimedJobInput {
+    deps: Arc<StartTaskWorkerRunnerUseCaseDeps>,
+    worker_index: u32,
+    job: TaskJob,
+    started_at: Instant,
+    handle: Option<InFlightJobCancellationInfo>,
+}
+
+async fn complete_cancelled_claimed_job(input: CompleteCancelledClaimedJobInput) {
+    match input
+        .deps
+        .job_queue
+        .complete(CompleteJobInput {
+            job_id: input.job.job_id.clone(),
+        })
+        .await
+    {
+        Ok(()) => {
+            let handle = input
+                .deps
+                .in_flight_job_registry
+                .remove(&input.job.job_id)
+                .await
+                .or(input.handle);
+
+            if let Some(handle) = handle.as_ref() {
+                update_task_control_message(
+                    Arc::clone(&input.deps.slack_task_control_message_port),
+                    Arc::clone(&input.deps.task_execution_deps.logger),
+                    &input.job,
+                    SlackTaskControlState::Cancelled {
+                        cancelled_by_user_id: handle
+                            .cancel_requested_by_user_id
+                            .clone()
+                            .unwrap_or_default(),
+                    },
+                )
+                .await;
+            }
+
+            let queue_depth = read_worker_queue_depth(ReadWorkerQueueDepthInput {
+                deps: Arc::clone(&input.deps),
+                worker_index: input.worker_index,
+            })
+            .await;
+
+            input.deps.task_execution_deps.logger.info(
+                "Cancelled worker job",
+                string_log_meta([
+                    ("workerIndex", input.worker_index.to_string()),
+                    ("slackEventId", input.job.payload.slack_event_id),
+                    ("jobId", input.job.job_id),
+                    ("channel", input.job.payload.message.channel.clone()),
+                    (
+                        "threadTs",
+                        input.job.payload.message.thread_ts_or_ts().to_string(),
+                    ),
+                    (
+                        "attempt",
+                        input.job.retry_count.saturating_add(1).to_string(),
+                    ),
+                    (
+                        "worker_job_duration_ms",
+                        input.started_at.elapsed().as_millis().to_string(),
+                    ),
+                    ("worker_queue_depth", queue_depth),
+                ]),
+            );
+        }
+        Err(error) => {
+            input.deps.task_execution_deps.logger.error(
+                "Failed to complete cancelled worker job",
+                string_log_meta([
+                    ("workerIndex", input.worker_index.to_string()),
+                    ("jobId", input.job.job_id),
+                    ("error", error.message),
+                ]),
+            );
+        }
+    }
 }
 
 async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
@@ -252,6 +401,30 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
             return;
         }
     };
+
+    match fail_result.status {
+        JobFailStatus::Requeued => {
+            let _ = input
+                .deps
+                .in_flight_job_registry
+                .remove(&input.job.job_id)
+                .await;
+        }
+        JobFailStatus::DeadLetter => {
+            let _ = input
+                .deps
+                .in_flight_job_registry
+                .remove(&input.job.job_id)
+                .await;
+            update_task_control_message(
+                Arc::clone(&input.deps.slack_task_control_message_port),
+                Arc::clone(&input.deps.task_execution_deps.logger),
+                &input.job,
+                SlackTaskControlState::Failed,
+            )
+            .await;
+        }
+    }
 
     let queue_depth = read_worker_queue_depth(ReadWorkerQueueDepthInput {
         deps: Arc::clone(&input.deps),
@@ -314,6 +487,38 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
                         .to_string(),
                 ),
                 ("error", dead_letter_error.message),
+            ]),
+        );
+    }
+}
+
+async fn update_task_control_message(
+    slack_task_control_message_port: Arc<dyn SlackTaskControlMessagePort>,
+    logger: Arc<dyn crate::task::TaskLogger>,
+    job: &TaskJob,
+    state: SlackTaskControlState,
+) {
+    if let Err(error) = slack_task_control_message_port
+        .update_task_control_message(UpdateTaskControlMessageInput {
+            channel: job.payload.message.channel.clone(),
+            thread_ts: job.payload.message.thread_ts_or_ts().to_string(),
+            message_ts: job.payload.control_message_ts.clone(),
+            job_id: job.job_id.clone(),
+            state,
+        })
+        .await
+    {
+        logger.warn(
+            "task_control_message_update_failed",
+            string_log_meta([
+                ("jobId", job.job_id.clone()),
+                ("channel", job.payload.message.channel.clone()),
+                (
+                    "threadTs",
+                    job.payload.message.thread_ts_or_ts().to_string(),
+                ),
+                ("messageTs", job.payload.control_message_ts.clone()),
+                ("error", error.message),
             ]),
         );
     }
@@ -382,8 +587,8 @@ mod tests {
     use reili_core::knowledge::{MockWebSearchPort, WebSearchPort};
     use reili_core::logger::{LogEntry as CoreLogEntry, LogLevel};
     use reili_core::messaging::slack::{
-        MockSlackThreadHistoryPort, MockSlackThreadReplyPort, SlackMessage, SlackThreadHistoryPort,
-        SlackTriggerType,
+        MockSlackTaskControlMessagePort, MockSlackThreadHistoryPort, MockSlackThreadReplyPort,
+        SlackMessage, SlackTaskControlMessagePort, SlackThreadHistoryPort, SlackTriggerType,
     };
     use reili_core::monitoring::datadog::{
         DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
@@ -399,11 +604,12 @@ mod tests {
     use reili_core::task::{
         LlmExecutionMetadata, LlmUsageSnapshot, MockTaskProgressSessionFactoryPort,
         MockTaskProgressSessionPort, MockTaskRunnerPort, RunTaskInput, TaskJobPayload,
-        TaskProgressSessionFactoryPort, TaskProgressSessionPort, TaskResources, TaskRunReport,
-        TaskRunnerPort,
+        TaskProgressSessionFactoryPort, TaskProgressSessionPort, TaskResources, TaskRunOutcome,
+        TaskRunReport, TaskRunnerPort,
     };
     use std::sync::Mutex;
 
+    use crate::task::services::InFlightJobRegistry;
     use crate::task::{LogFieldValue, TaskLogger};
 
     const USAGE_SNAPSHOT: LlmUsageSnapshot = LlmUsageSnapshot {
@@ -545,18 +751,30 @@ mod tests {
             .expect_run()
             .times(1)
             .returning(|_: RunTaskInput| {
-                Ok(TaskRunReport {
+                Ok(TaskRunOutcome::Succeeded(TaskRunReport {
                     result_text: "task_runner result".to_string(),
                     usage: USAGE_SNAPSHOT,
                     execution: LlmExecutionMetadata {
                         provider: "openai".to_string(),
                         model: "gpt-test".to_string(),
                     },
-                })
+                }))
             });
+
+        let mut slack_task_control_message_port = MockSlackTaskControlMessagePort::new();
+        slack_task_control_message_port
+            .expect_post_task_control_message()
+            .times(0);
+        slack_task_control_message_port
+            .expect_update_task_control_message()
+            .times(2)
+            .returning(|_| Ok(()));
 
         let deps = Arc::new(StartTaskWorkerRunnerUseCaseDeps {
             job_queue: Arc::new(job_queue) as Arc<TaskJobQueuePort>,
+            in_flight_job_registry: InFlightJobRegistry::new(),
+            slack_task_control_message_port: Arc::new(slack_task_control_message_port)
+                as Arc<dyn SlackTaskControlMessagePort>,
             task_execution_deps: TaskExecutionDeps {
                 slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
                 task_progress_session_factory_port: create_progress_session_factory_for_execution(),
@@ -592,6 +810,7 @@ mod tests {
         let mut job_queue = MockJobQueuePort::<TaskJob>::new();
         job_queue.expect_complete().times(0);
         let fail_calls = Arc::clone(&fail_inputs);
+        let updates_dead_letter = fail_result.status == JobFailStatus::DeadLetter;
         job_queue
             .expect_fail()
             .times(1)
@@ -618,8 +837,20 @@ mod tests {
                 });
         }
 
+        let mut slack_task_control_message_port = MockSlackTaskControlMessagePort::new();
+        slack_task_control_message_port
+            .expect_post_task_control_message()
+            .times(0);
+        slack_task_control_message_port
+            .expect_update_task_control_message()
+            .times(if updates_dead_letter { 1 } else { 0 })
+            .returning(|_| Ok(()));
+
         let deps = Arc::new(StartTaskWorkerRunnerUseCaseDeps {
             job_queue: Arc::new(job_queue) as Arc<TaskJobQueuePort>,
+            in_flight_job_registry: InFlightJobRegistry::new(),
+            slack_task_control_message_port: Arc::new(slack_task_control_message_port)
+                as Arc<dyn SlackTaskControlMessagePort>,
             task_execution_deps: TaskExecutionDeps {
                 slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
                 task_progress_session_factory_port: Arc::new(
@@ -662,6 +893,7 @@ mod tests {
                     ts: "1710000000.000001".to_string(),
                     thread_ts: input.thread_ts,
                 },
+                control_message_ts: "1710000000.000002".to_string(),
             },
             retry_count: input.retry_count,
         }

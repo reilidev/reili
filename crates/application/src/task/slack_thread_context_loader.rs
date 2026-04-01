@@ -69,7 +69,10 @@ impl SlackThreadContextLoader {
             })
             .await
         {
-            Ok(history) => history,
+            Ok(history) => history
+                .into_iter()
+                .filter(|message| !is_task_control_message(message))
+                .collect(),
             Err(error) => {
                 let log_input = ThreadContextFetchFailedLogInput {
                     base_log_meta: input.base_log_meta,
@@ -90,6 +93,13 @@ fn is_thread_reply_message(message: &SlackMessage) -> bool {
         .thread_ts
         .as_ref()
         .is_some_and(|thread_ts| thread_ts != &message.ts)
+}
+
+fn is_task_control_message(message: &SlackThreadMessage) -> bool {
+    message
+        .metadata
+        .as_ref()
+        .is_some_and(|metadata| metadata.event_type == "task_control_message_posted")
 }
 
 #[cfg(test)]
@@ -151,6 +161,7 @@ mod tests {
                     ts: "1710000000.000001".to_string(),
                     user: Some("U001".to_string()),
                     text: "context".to_string(),
+                    metadata: None,
                 }])
             });
         let thread_history_port = Arc::new(thread_history_port);
@@ -181,6 +192,7 @@ mod tests {
                 ts: "1710000000.000001".to_string(),
                 user: Some("U001".to_string()),
                 text: "context".to_string(),
+                metadata: None,
             }]
         );
     }

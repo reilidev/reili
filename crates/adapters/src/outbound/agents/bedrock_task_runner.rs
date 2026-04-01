@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use reili_core::error::AgentRunFailedError;
-use reili_core::task::{RunTaskInput, TaskRunReport, TaskRunnerPort};
+use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig_bedrock::client::Client;
 
 use super::datadog_mcp_tools::DatadogMcpToolConfig;
@@ -41,7 +41,7 @@ impl BedrockTaskRunner {
 
 #[async_trait]
 impl TaskRunnerPort for BedrockTaskRunner {
-    async fn run(&self, input: RunTaskInput) -> Result<TaskRunReport, AgentRunFailedError> {
+    async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
         let client = create_bedrock_client().await;
 
         run_llm_task(RunLlmTaskInput {
