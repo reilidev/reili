@@ -7,6 +7,7 @@ use crate::messaging::slack::SlackMessage;
 pub struct TaskJobPayload {
     pub slack_event_id: String,
     pub message: SlackMessage,
+    pub control_message_ts: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +41,7 @@ mod tests {
                     ts: "123.456".to_string(),
                     thread_ts: Some("123.450".to_string()),
                 },
+                control_message_ts: "123.457".to_string(),
             },
             retry_count: 0,
         };

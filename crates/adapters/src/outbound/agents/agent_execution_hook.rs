@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use reili_core::logger::{LogFieldValue, Logger, log_fields};
 use reili_core::task::{
-    TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort, TaskRuntime,
+    TaskCancellation, TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort, TaskRuntime,
 };
 use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
 use rig::completion::CompletionModel;
@@ -13,11 +13,13 @@ use super::llm_usage_collector::LlmUsageCollector;
 
 const REPORT_PROGRESS_TOOL_NAME: &str = "report_progress";
 const TOOL_RESULT_ERROR_PREFIXES: [&str; 2] = ["ToolCallError:", "JsonError:"];
+const TASK_CANCELLED_REASON: &str = "task_cancelled";
 
 #[derive(Clone)]
 pub struct AgentExecutionHook {
     owner_id: String,
     runtime: TaskRuntime,
+    cancellation: TaskCancellation,
     logger: Arc<dyn Logger>,
     on_progress_event: Arc<dyn TaskProgressEventPort>,
     usage_collector: LlmUsageCollector,
@@ -27,6 +29,7 @@ impl AgentExecutionHook {
     pub fn new(
         owner_id: String,
         runtime: TaskRuntime,
+        cancellation: TaskCancellation,
         logger: Arc<dyn Logger>,
         on_progress_event: Arc<dyn TaskProgressEventPort>,
         usage_collector: LlmUsageCollector,
@@ -34,6 +37,7 @@ impl AgentExecutionHook {
         Self {
             owner_id,
             runtime,
+            cancellation,
             logger,
             on_progress_event,
             usage_collector,
@@ -137,6 +141,10 @@ impl AgentExecutionHook {
     fn track_completion_response(&self, usage: rig::completion::Usage) {
         self.usage_collector.record_usage(&usage);
     }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
 }
 
 fn classify_tool_result(raw_result: &str) -> &'static str {
@@ -162,6 +170,9 @@ where
         let hook = self.clone();
 
         async move {
+            if hook.is_cancelled() {
+                return HookAction::terminate(TASK_CANCELLED_REASON);
+            }
             hook.track_completion_call();
             HookAction::cont()
         }
@@ -177,6 +188,9 @@ where
 
         async move {
             hook.track_completion_response(usage);
+            if hook.is_cancelled() {
+                return HookAction::terminate(TASK_CANCELLED_REASON);
+            }
             HookAction::cont()
         }
     }
@@ -193,6 +207,9 @@ where
         let tool_name = tool_name.to_string();
 
         async move {
+            if hook.is_cancelled() {
+                return ToolCallHookAction::terminate(TASK_CANCELLED_REASON);
+            }
             hook.log_tool_started(&tool_name, &task_id);
             hook.publish_tool_started(&tool_name, &task_id).await;
             ToolCallHookAction::cont()
@@ -215,6 +232,56 @@ where
         async move {
             hook.log_tool_completed(&tool_name, &task_id, &result);
             hook.publish_tool_completed(&tool_name, &task_id).await;
+            if hook.is_cancelled() {
+                return HookAction::terminate(TASK_CANCELLED_REASON);
+            }
+            HookAction::cont()
+        }
+    }
+
+    fn on_text_delta(
+        &self,
+        _text_delta: &str,
+        _aggregated_text: &str,
+    ) -> impl Future<Output = HookAction> + Send {
+        let hook = self.clone();
+
+        async move {
+            if hook.is_cancelled() {
+                return HookAction::terminate(TASK_CANCELLED_REASON);
+            }
+            HookAction::cont()
+        }
+    }
+
+    fn on_tool_call_delta(
+        &self,
+        _tool_call_id: &str,
+        _internal_call_id: &str,
+        _tool_name: Option<&str>,
+        _tool_call_delta: &str,
+    ) -> impl Future<Output = HookAction> + Send {
+        let hook = self.clone();
+
+        async move {
+            if hook.is_cancelled() {
+                return HookAction::terminate(TASK_CANCELLED_REASON);
+            }
+            HookAction::cont()
+        }
+    }
+
+    fn on_stream_completion_response_finish(
+        &self,
+        _prompt: &Message,
+        _response: &<M as CompletionModel>::StreamingResponse,
+    ) -> impl Future<Output = HookAction> + Send {
+        let hook = self.clone();
+
+        async move {
+            if hook.is_cancelled() {
+                return HookAction::terminate(TASK_CANCELLED_REASON);
+            }
             HookAction::cont()
         }
     }
@@ -226,7 +293,8 @@ mod tests {
 
     use reili_core::logger::{LogEntry, LogFieldValue, LogLevel, Logger, MockLogger};
     use reili_core::task::{
-        MockTaskProgressEventPort, TaskProgressEvent, TaskProgressEventInput, TaskRuntime,
+        MockTaskProgressEventPort, TaskCancellation, TaskProgressEvent, TaskProgressEventInput,
+        TaskRuntime,
     };
     use rig::agent::{PromptHook, ToolCallHookAction};
     use rig::providers::openai;
@@ -251,6 +319,10 @@ mod tests {
             thread_ts: "1710000000.123456".to_string(),
             retry_count: 2,
         }
+    }
+
+    fn sample_cancellation() -> TaskCancellation {
+        TaskCancellation::new()
     }
 
     fn logger_with_entries(entries: Arc<Mutex<Vec<LogEntry>>>, times: usize) -> Arc<dyn Logger> {
@@ -287,6 +359,7 @@ mod tests {
         let hook = AgentExecutionHook::new(
             "investigate_datadog".to_string(),
             sample_runtime(),
+            sample_cancellation(),
             logger_with_entries(Arc::new(Mutex::new(Vec::new())), 0),
             Arc::new(progress_event_port),
             LlmUsageCollector::new(),
@@ -322,6 +395,7 @@ mod tests {
         let hook = AgentExecutionHook::new(
             "investigate_datadog".to_string(),
             sample_runtime(),
+            sample_cancellation(),
             logger_with_entries(Arc::new(Mutex::new(Vec::new())), 0),
             Arc::new(progress_event_port),
             LlmUsageCollector::new(),
@@ -350,6 +424,7 @@ mod tests {
         let hook = AgentExecutionHook::new(
             "investigate_github".to_string(),
             sample_runtime(),
+            sample_cancellation(),
             logger_with_entries(log_entries, 2),
             Arc::new(progress_event_port),
             LlmUsageCollector::new(),
@@ -386,6 +461,7 @@ mod tests {
         let hook = AgentExecutionHook::new(
             "investigate_datadog".to_string(),
             sample_runtime(),
+            sample_cancellation(),
             logger_with_entries(log_entries, 0),
             Arc::new(progress_event_port),
             collector.clone(),
@@ -419,6 +495,7 @@ mod tests {
         let hook = AgentExecutionHook::new(
             "investigate_datadog".to_string(),
             sample_runtime(),
+            sample_cancellation(),
             logger_with_entries(Arc::clone(&log_entries), 1),
             Arc::new(progress_event_port),
             LlmUsageCollector::new(),
@@ -503,6 +580,7 @@ mod tests {
         let hook = AgentExecutionHook::new(
             "investigate_datadog".to_string(),
             sample_runtime(),
+            sample_cancellation(),
             logger_with_entries(Arc::clone(&log_entries), 1),
             Arc::new(progress_event_port),
             LlmUsageCollector::new(),
@@ -549,6 +627,7 @@ mod tests {
         let hook = AgentExecutionHook::new(
             "investigate_datadog".to_string(),
             sample_runtime(),
+            sample_cancellation(),
             logger_with_entries(Arc::clone(&log_entries), 1),
             Arc::new(progress_event_port),
             LlmUsageCollector::new(),
@@ -585,6 +664,7 @@ mod tests {
         let hook = AgentExecutionHook::new(
             "investigate_datadog".to_string(),
             sample_runtime(),
+            sample_cancellation(),
             logger_with_entries(Arc::clone(&log_entries), 1),
             Arc::new(progress_event_port),
             LlmUsageCollector::new(),

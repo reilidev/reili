@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use reili_core::error::PortError;
-use reili_core::messaging::slack::SlackThreadMessage;
 use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
+use reili_core::messaging::slack::{SlackMessageMetadata, SlackThreadMessage};
 use serde_json::Value;
 
 use super::slack_web_api_client::SlackWebApiClient;
@@ -76,6 +76,7 @@ impl SlackThreadHistoryPort for SlackThreadHistoryAdapter {
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_string(),
+                    metadata: read_message_metadata(page_message.get("metadata")),
                 });
             }
 
@@ -91,6 +92,15 @@ impl SlackThreadHistoryPort for SlackThreadHistoryAdapter {
 
         Ok(messages)
     }
+}
+
+fn read_message_metadata(value: Option<&Value>) -> Option<SlackMessageMetadata> {
+    let value = value?;
+    let event_type = read_non_empty_json_string(value.get("event_type"))?;
+    Some(SlackMessageMetadata {
+        event_type,
+        event_payload: value.get("event_payload").cloned().unwrap_or(Value::Null),
+    })
 }
 
 #[cfg(test)]
@@ -180,16 +190,19 @@ mod tests {
                     ts: "1710000000.000001".to_string(),
                     user: Some("U1".to_string()),
                     text: "first".to_string(),
+                    metadata: None,
                 },
                 SlackThreadMessage {
                     ts: "1710000000.000002".to_string(),
                     user: Some("U2".to_string()),
                     text: "second".to_string(),
+                    metadata: None,
                 },
                 SlackThreadMessage {
                     ts: "1710000000.000003".to_string(),
                     user: Some("U3".to_string()),
                     text: "third".to_string(),
+                    metadata: None,
                 },
             ]
         );

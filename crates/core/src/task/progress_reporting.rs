@@ -40,6 +40,7 @@ pub enum TaskProgressUpdate {
 pub enum TaskProgressSessionCompletionStatus {
     Succeeded,
     Failed,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

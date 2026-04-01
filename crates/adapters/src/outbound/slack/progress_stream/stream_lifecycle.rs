@@ -264,7 +264,7 @@ impl SlackProgressStreamLifecycle {
         self.logger.info("slack_stream_rotated", meta);
     }
 
-    pub(crate) async fn stop(&mut self) {
+    pub(crate) async fn stop(&mut self, chunks: Option<Vec<SlackAnyChunk>>) {
         if self.stream_stopped {
             return;
         }
@@ -282,7 +282,7 @@ impl SlackProgressStreamLifecycle {
                 channel: self.route.channel.clone(),
                 stream_ts: stream_ts.clone(),
                 markdown_text: None,
-                chunks: None,
+                chunks,
                 blocks: None,
             })
             .await;
@@ -767,7 +767,7 @@ mod tests {
 
         lifecycle.start(create_chunk("initial")).await;
         lifecycle.append(create_chunk("Collect evidence")).await;
-        lifecycle.stop().await;
+        lifecycle.stop(None).await;
 
         assert_eq!(api.start_calls.lock().expect("lock start").len(), 2);
         assert_eq!(api.append_calls.lock().expect("lock append").len(), 1);
@@ -809,7 +809,7 @@ mod tests {
         lifecycle
             .rotate(create_rotation_input(chunks, reason))
             .await;
-        lifecycle.stop().await;
+        lifecycle.stop(None).await;
 
         assert_eq!(api.start_calls.lock().expect("lock start").len(), 2);
         assert_eq!(api.append_calls.lock().expect("lock append").len(), 0);
@@ -862,7 +862,7 @@ mod tests {
                 SlackStreamRotationReason::MessageTooLong,
             ))
             .await;
-        lifecycle.stop().await;
+        lifecycle.stop(None).await;
 
         assert_eq!(api.start_calls.lock().expect("lock start").len(), 2);
         assert_eq!(api.append_calls.lock().expect("lock append").len(), 1);
@@ -907,7 +907,7 @@ mod tests {
         lifecycle
             .rotate(create_rotation_input(chunks, reason))
             .await;
-        lifecycle.stop().await;
+        lifecycle.stop(None).await;
 
         assert_eq!(api.start_calls.lock().expect("lock start").len(), 2);
         assert_eq!(api.append_calls.lock().expect("lock append").len(), 0);
@@ -942,7 +942,7 @@ mod tests {
 
         lifecycle.start(create_chunk("initial")).await;
         lifecycle.append(create_chunk("Collect evidence")).await;
-        lifecycle.stop().await;
+        lifecycle.stop(None).await;
 
         assert!(
             logger
@@ -971,7 +971,7 @@ mod tests {
 
         lifecycle.start(create_chunk("initial")).await;
         lifecycle.append(create_chunk("Collect evidence")).await;
-        lifecycle.stop().await;
+        lifecycle.stop(None).await;
 
         let stop_log = logger
             .info_logs()

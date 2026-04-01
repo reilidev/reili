@@ -35,6 +35,12 @@ pub struct CompleteJobInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CancelJobInput {
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FailJobInput {
     pub job_id: String,
     pub reason: String,
@@ -59,6 +65,16 @@ where
     pub job: TJob,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CancelJobResult<TJob>
+where
+    TJob: QueueJob,
+{
+    Cancelled(TJob),
+    AlreadyClaimed,
+    NotFound,
+}
+
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 #[async_trait]
 pub trait JobQueuePort<TJob>: Send + Sync
@@ -67,6 +83,7 @@ where
 {
     async fn enqueue(&self, job: TJob) -> Result<(), PortError>;
     async fn claim(&self) -> Result<Option<TJob>, PortError>;
+    async fn cancel(&self, input: CancelJobInput) -> Result<CancelJobResult<TJob>, PortError>;
     async fn complete(&self, input: CompleteJobInput) -> Result<(), PortError>;
     async fn fail(&self, input: FailJobInput) -> Result<JobFailResult<TJob>, PortError>;
     async fn get_depth(&self) -> Result<usize, PortError>;

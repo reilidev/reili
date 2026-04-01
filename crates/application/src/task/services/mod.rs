@@ -1,3 +1,4 @@
+pub mod in_flight_job_registry;
 pub mod llm_usage_snapshot;
 mod progress_stream_state;
 mod progress_update_commands;
@@ -5,6 +6,10 @@ mod progress_update_projector;
 pub mod task_progress_event_handler;
 pub mod task_progress_stream_session;
 
+pub use in_flight_job_registry::{
+    AttachCancellationResult, InFlightJobCancellationInfo, InFlightJobRegistry,
+    RequestCancelInFlightJobResult,
+};
 pub use llm_usage_snapshot::create_empty_llm_usage_snapshot;
 pub use progress_update_commands::{
     RecordMessageOutputCreated, RecordProgressSummary, RecordToolCallCompleted,

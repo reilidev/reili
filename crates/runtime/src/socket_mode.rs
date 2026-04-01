@@ -4,9 +4,11 @@ use std::time::Duration;
 
 use futures::stream::SplitSink;
 use futures::{SinkExt, StreamExt};
-use reili_adapters::inbound::slack::{ParsedSlackEvent, parse_slack_event};
+use reili_adapters::inbound::slack::{
+    ParsedSlackEvent, ParsedSlackInteraction, parse_slack_event, parse_slack_interaction_value,
+};
 use reili_application::task::{TaskLogger, string_log_meta};
-use reili_core::messaging::slack::SlackMessageHandlerPort;
+use reili_core::messaging::slack::{SlackInteractionHandlerPort, SlackMessageHandlerPort};
 use serde::Deserialize;
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message;
@@ -70,6 +72,7 @@ pub struct SocketModeConfig {
     pub app_token: String,
     pub bot_user_id: String,
     pub slack_message_handler: Arc<dyn SlackMessageHandlerPort>,
+    pub slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort>,
     pub logger: Arc<dyn TaskLogger>,
 }
 
@@ -262,6 +265,37 @@ impl SocketModeClient {
                             self.config.logger.warn(
                                 "Failed to parse Socket Mode event payload",
                                 string_log_meta([("error", e.message)]),
+                            );
+                        }
+                    }
+                }
+                Ok(None)
+            }
+            "interactive" => {
+                if let Some(envelope_id) = &envelope.envelope_id {
+                    let ack = json!({"envelope_id": envelope_id});
+                    ws_sink.send(Message::Text(ack.to_string().into())).await?;
+                }
+
+                if let Some(payload) = envelope.payload {
+                    match parse_slack_interaction_value(payload) {
+                        Ok(ParsedSlackInteraction::Interaction(interaction)) => {
+                            let handler = Arc::clone(&self.config.slack_interaction_handler);
+                            let logger = Arc::clone(&self.config.logger);
+                            tokio::spawn(async move {
+                                if let Err(error) = handler.handle(interaction).await {
+                                    logger.error(
+                                        "Failed to handle Socket Mode interaction",
+                                        string_log_meta([("error", error.message)]),
+                                    );
+                                }
+                            });
+                        }
+                        Ok(ParsedSlackInteraction::Ignored) => {}
+                        Err(error) => {
+                            self.config.logger.warn(
+                                "Failed to parse Socket Mode interaction payload",
+                                string_log_meta([("error", error.message)]),
                             );
                         }
                     }

@@ -49,6 +49,7 @@ Common settings for both modes:
 |---------------------------------------|--------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
 | `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history`, `groups:history` | Receive `app_mention`, mark accepted requests, reply in threads, and read channel/private-channel thread context |
 | `Event Subscriptions`                 | Turn on events and add the bot event `app_mention`                                                                 | `app_mention` is the intake trigger in both modes                                                                |
+| `Interactivity & Shortcuts`           | Turn on interactivity                                                                                              | Receive `block_actions` when a user clicks a task `Cancel` button                                                |
 | `Install App` / `OAuth & Permissions` | Install or reinstall the app after any scope change                                                                | Slack does not apply updated scopes until reinstall                                                              |
 | Slack workspace                       | Invite the app to every public or private channel where it should respond                                          | The app must be present in the conversation to receive mentions and post replies                                 |
 
@@ -68,13 +69,14 @@ Required Slack app settings for HTTP mode:
 - Set `SLACK_BOT_TOKEN`
 - Set `SLACK_SIGNING_SECRET`
 - In `Event Subscriptions`, configure the Request URL as `https://<your-host>/slack/events`
+- In `Interactivity & Shortcuts`, configure the Request URL as `https://<your-host>/slack/interactions`
 - Do not create or set `SLACK_APP_TOKEN`
 - Do not enable Socket Mode
 
 Required Bot OAuth scopes:
 
 - `app_mentions:read`: receive `app_mention` events
-- `chat:write`: post progress and final replies into the originating thread
+- `chat:write`: post progress and final replies into the originating thread, and post/update the task control message
 - `reactions:write`: add an `:eyes:` reaction to the triggering message once the task is queued
 - `channels:history`: read public channel thread history when additional context is needed
 - `groups:history`: read private channel thread history when additional context is needed
@@ -95,7 +97,8 @@ Slack API methods currently used by the runtime:
 - `apps.connections.open`: obtains a temporary WebSocket URL when Socket Mode is enabled
 - `auth.test`: resolves the bot user ID at startup
 - `conversations.replies`: loads thread context when the triggering message is a thread reply
-- `chat.postMessage`: posts queue failures and the final task summary
+- `chat.postMessage`: posts queue failures, the final task summary, and the task control message
+- `chat.update`: updates the task control message as tasks move through running/cancelled/completed/failed states
 - `reactions.add`: adds an `:eyes:` reaction to the triggering message after enqueue succeeds
 - `chat.startStream`, `chat.appendStream`, `chat.stopStream`: posts incremental task progress in the same thread
 

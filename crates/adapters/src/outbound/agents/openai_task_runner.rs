@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
-use reili_core::task::{RunTaskInput, TaskRunReport, TaskRunnerPort};
+use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig::{client::ProviderClient, providers::openai};
 
 use super::datadog_mcp_tools::DatadogMcpToolConfig;
@@ -41,7 +41,7 @@ impl OpenAiTaskRunner {
 
 #[async_trait]
 impl TaskRunnerPort for OpenAiTaskRunner {
-    async fn run(&self, input: RunTaskInput) -> Result<TaskRunReport, AgentRunFailedError> {
+    async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
         run_llm_task(RunLlmTaskInput {
             client: openai::Client::from_val(self.api_key.clone().into()),
             settings: self.provider_settings.clone(),

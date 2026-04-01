@@ -9,6 +9,7 @@ use crate::{
     source_code::github::{
         GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
     },
+    task::TaskCancellation,
 };
 
 #[derive(Clone)]
@@ -35,4 +36,5 @@ pub struct TaskRuntime {
 pub struct TaskContext {
     pub resources: TaskResources,
     pub runtime: TaskRuntime,
+    pub cancellation: TaskCancellation,
 }

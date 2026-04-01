@@ -5,7 +5,9 @@ pub mod logger;
 pub mod services;
 pub mod slack_thread_context_loader;
 
-pub use execute_task_job::{ExecuteTaskJobInput, TaskExecutionDeps, execute_task_job};
+pub use execute_task_job::{
+    ExecuteTaskJobInput, TaskExecutionDeps, TaskExecutionOutcome, execute_task_job,
+};
 pub use execution_errors::{
     ExecuteTaskJobError, ResolvedTaskFailureError, resolve_task_failure_error,
 };

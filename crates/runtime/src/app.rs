@@ -1,18 +1,20 @@
 use std::sync::Arc;
 
 use axum::body::Bytes;
-use axum::extract::State;
+use axum::extract::rejection::FormRejection;
+use axum::extract::{Form, State};
 use axum::http::StatusCode;
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use reili_adapters::inbound::slack::{
-    ParsedSlackEvent, parse_slack_event, verify_slack_signature_middleware,
+    ParsedSlackEvent, ParsedSlackInteraction, SlackInteractionForm, parse_slack_event,
+    verify_slack_signature_middleware,
 };
 use reili_adapters::logger::init_json_logger;
 use reili_application::task::{TaskLogger, string_log_meta};
-use reili_core::messaging::slack::SlackMessageHandlerPort;
+use reili_core::messaging::slack::{SlackInteractionHandlerPort, SlackMessageHandlerPort};
 use serde_json::json;
 
 use crate::bootstrap::{RuntimeBootstrapError, build_runtime_deps};
@@ -40,6 +42,7 @@ pub enum AppRunError {
 #[derive(Clone)]
 struct AppHttpState {
     slack_message_handler: Arc<dyn SlackMessageHandlerPort>,
+    slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort>,
     bot_user_id: String,
     logger: Arc<dyn TaskLogger>,
 }
@@ -73,11 +76,13 @@ async fn run_http_server(
 
     let http_state = Arc::new(AppHttpState {
         slack_message_handler: Arc::clone(&deps.slack_message_handler),
+        slack_interaction_handler: Arc::clone(&deps.slack_interaction_handler),
         bot_user_id: deps.bot_user_id.clone(),
         logger: Arc::clone(&deps.logger),
     });
     let app = Router::new()
         .route("/slack/events", post(handle_slack_events))
+        .route("/slack/interactions", post(handle_slack_interactions))
         .route_layer(middleware::from_fn_with_state(
             slack_signature_verifier,
             verify_slack_signature_middleware,
@@ -110,6 +115,7 @@ async fn run_socket_mode(
         app_token: app_token.to_string(),
         bot_user_id: deps.bot_user_id.clone(),
         slack_message_handler: Arc::clone(&deps.slack_message_handler),
+        slack_interaction_handler: Arc::clone(&deps.slack_interaction_handler),
         logger: Arc::clone(&deps.logger),
     });
 
@@ -151,6 +157,39 @@ async fn handle_slack_events(State(state): State<Arc<AppHttpState>>, body: Bytes
             StatusCode::OK.into_response()
         }
         ParsedSlackEvent::Ignored => StatusCode::OK.into_response(),
+    }
+}
+
+async fn handle_slack_interactions(
+    State(state): State<Arc<AppHttpState>>,
+    form: Result<Form<SlackInteractionForm>, FormRejection>,
+) -> Response {
+    let Form(form) = match form {
+        Ok(form) => form,
+        Err(error) => {
+            state.logger.warn(
+                "Failed to parse Slack interaction payload",
+                string_log_meta([("error", error.body_text())]),
+            );
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+    };
+
+    match form.payload {
+        ParsedSlackInteraction::Interaction(interaction) => {
+            let handler = Arc::clone(&state.slack_interaction_handler);
+            let logger = Arc::clone(&state.logger);
+            tokio::spawn(async move {
+                if let Err(error) = handler.handle(interaction).await {
+                    logger.error(
+                        "Failed to handle Slack interaction",
+                        string_log_meta([("error", error.message)]),
+                    );
+                }
+            });
+            StatusCode::OK.into_response()
+        }
+        ParsedSlackInteraction::Ignored => StatusCode::OK.into_response(),
     }
 }
 
