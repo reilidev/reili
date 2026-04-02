@@ -46,7 +46,7 @@ Its current focus is triage, investigation, and communicating findings.
 - OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call
   Vertex AI partner models
 - GitHub App (App ID / Private Key / Installation ID)
-  — [Create one with a single click](https://reilidev.github.io/reili/pages/create-github-app.html)
+  — [Create one with a single click](https://reilidev.github.io/reili/create-github-app.html)
 
 ### 2. Configure Environment Variables
 
