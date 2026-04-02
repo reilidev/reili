@@ -522,6 +522,7 @@ impl TryFrom<VertexAnthropicCompletionResponse>
                 + response.usage.cache_creation_input_tokens.unwrap_or(0)
                 + response.usage.output_tokens,
             cached_input_tokens: response.usage.cache_read_input_tokens.unwrap_or(0),
+            cache_creation_input_tokens: response.usage.cache_creation_input_tokens.unwrap_or(0),
         };
 
         let message_id = Some(response.id.clone());
