@@ -21,7 +21,7 @@ http = "1"
 jsonwebtoken = "9"
 octocrab = "0.39"
 reqwest = { version = "0.13", default-features = false, features = ["json", "query", "rustls"] }
-rig-core = { version = "0.33", features = ["rmcp"] }
+rig-core = { version = "0.34", features = ["rmcp"] }
 rmcp = { version = "0.16", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 ring = "0.17"
 serde = { version = "1", features = ["derive"] }

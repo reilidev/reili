@@ -2590,7 +2590,7 @@ dependencies = [
  "reili_core",
  "reqwest",
  "rig-bedrock",
- "rig-core 0.33.0",
+ "rig-core",
  "ring",
  "rmcp",
  "serde",
@@ -2704,7 +2704,7 @@ dependencies = [
  "aws-smithy-types",
  "base64",
  "nanoid",
- "rig-core 0.34.0",
+ "rig-core",
  "rig-derive",
  "schemars 1.2.1",
  "serde",
@@ -2712,40 +2712,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "rig-core"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a529b9b72f51a46a9ea87c9ba8031e36593de7a89461983f01d8c24462f9eb06"
-dependencies = [
- "as-any",
- "async-stream",
- "base64",
- "bytes",
- "eventsource-stream",
- "fastrand",
- "futures",
- "futures-timer",
- "glob",
- "http 1.4.0",
- "mime",
- "mime_guess",
- "nanoid",
- "ordered-float",
- "pin-project-lite",
- "reqwest",
- "rmcp",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite 0.23.1",
- "tracing",
- "tracing-futures",
- "url",
 ]
 
 [[package]]
@@ -2770,11 +2736,13 @@ dependencies = [
  "ordered-float",
  "pin-project-lite",
  "reqwest",
+ "rmcp",
  "schemars 1.2.1",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-tungstenite 0.23.1",
  "tracing",
  "tracing-futures",
  "url",
