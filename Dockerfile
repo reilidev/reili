@@ -8,7 +8,6 @@ ARG TARGETARCH
 COPY dist/docker/${TARGETARCH}/reili /usr/local/bin/reili
 
 LABEL org.opencontainers.image.title="Reili" \
-      org.opencontainers.image.description="Slack-native AI agent for read-only DevOps investigations" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.licenses="Apache-2.0"
 

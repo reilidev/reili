@@ -1,0 +1,25 @@
+display_information:
+  name: Reili
+features:
+  bot_user:
+    display_name: Reili
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - reactions:write
+      - app_mentions:read
+      - channels:history
+      - channels:read
+      - chat:write
+  pkce_enabled: false
+settings:
+  event_subscriptions:
+    request_url: https://example.com/slack/events
+    bot_events:
+      - app_mention
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

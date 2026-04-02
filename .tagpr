@@ -1,6 +1,6 @@
 [tagpr]
 releaseBranch = main
-versionFile = ""
+versionFile = -
 vPrefix = true
-changelog = true
-changelogFile = CHANGELOG.md
+changelog = false
+commitPrefix = [release]
