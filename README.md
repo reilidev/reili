@@ -35,13 +35,17 @@ Its current focus is triage, investigation, and communicating findings.
 
 - **Investigation-focused**: Reili reads and reports — it never changes your infrastructure
 - **Stateless**: no database, no persistent memory — starts fresh every time
-- **Chat-based**: currently works in Slack, with more channels planned
+- **Chat-based**: currently works in Slack
 
 ## Quick Start
 
 ### 1. Prerequisites
 
-- Slack App (Bot Token, plus App-Level Token for the default Socket Mode, or Signing Secret for HTTP mode)
+- Slack App
+  - Create and install it from the manifest:
+    <a href="https://api.slack.com/apps?new_app=1&amp;manifest_yaml=display_information%3A%0D%0A++name%3A+Reili%0D%0Afeatures%3A%0D%0A++bot_user%3A%0D%0A++++display_name%3A+Reili%0D%0A++++always_online%3A+true%0D%0Aoauth_config%3A%0D%0A++scopes%3A%0D%0A++++bot%3A%0D%0A++++++-+reactions%3Awrite%0D%0A++++++-+app_mentions%3Aread%0D%0A++++++-+channels%3Ahistory%0D%0A++++++-+channels%3Aread%0D%0A++++++-+chat%3Awrite%0D%0A++pkce_enabled%3A+false%0D%0Asettings%3A%0D%0A++event_subscriptions%3A%0D%0A++++request_url%3A+https%3A%2F%2Fexample.com%2Fslack%2Fevents%0D%0A++++bot_events%3A%0D%0A++++++-+app_mention%0D%0A++interactivity%3A%0D%0A++++is_enabled%3A+true%0D%0A++org_deploy_enabled%3A+false%0D%0A++socket_mode_enabled%3A+true%0D%0A++token_rotation_enabled%3A+false%0D%0A">Create App</a>
+  - Configure the required scopes, events, and Interactivity using
+    [Slack Permissions and API Usage](./docs/permissions-and-boundaries.md#slack-permissions-and-api-usage).
 - Datadog API Key + APP Key
 - OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call
   Vertex AI partner models
@@ -57,6 +61,9 @@ cp .env.example .env
 ```
 
 Then fill in the required values below.
+
+- Collect `SLACK_BOT_TOKEN`, plus `SLACK_APP_TOKEN` for the default Socket Mode or
+  `SLACK_SIGNING_SECRET`
 
 Required:
 
@@ -96,14 +103,6 @@ When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Def
 - Use the exact Vertex AI Anthropic model id, including the published version suffix when Google provides one.
 - If Vertex AI returns `RESOURCE_EXHAUSTED`, verify your project quotas in Google Cloud Quotas (
   `https://console.cloud.google.com/iam-admin/quotas`) and adjust them if needed.
-
-Configure the Slack app using the requirements in
-[Slack Permissions and API Usage](./docs/permissions-and-boundaries.md#slack-permissions-and-api-usage).
-Enable Slack Interactivity as well so Reili can receive `Cancel` button clicks for running tasks.
-
-Create the Slack App from the manifest and install it to your workspace:
-
-<a href="https://api.slack.com/apps?new_app=1&amp;manifest_yaml=display_information%3A%0D%0A++name%3A+Reili%0D%0Afeatures%3A%0D%0A++bot_user%3A%0D%0A++++display_name%3A+Reili%0D%0A++++always_online%3A+true%0D%0Aoauth_config%3A%0D%0A++scopes%3A%0D%0A++++bot%3A%0D%0A++++++-+reactions%3Awrite%0D%0A++++++-+app_mentions%3Aread%0D%0A++++++-+channels%3Ahistory%0D%0A++++++-+channels%3Aread%0D%0A++++++-+chat%3Awrite%0D%0A++pkce_enabled%3A+false%0D%0Asettings%3A%0D%0A++event_subscriptions%3A%0D%0A++++request_url%3A+https%3A%2F%2Fexample.com%2Fslack%2Fevents%0D%0A++++bot_events%3A%0D%0A++++++-+app_mention%0D%0A++interactivity%3A%0D%0A++++is_enabled%3A+true%0D%0A++org_deploy_enabled%3A+false%0D%0A++socket_mode_enabled%3A+true%0D%0A++token_rotation_enabled%3A+false%0D%0A">Create App</a>
 
 ### 3. Run Reili
 
