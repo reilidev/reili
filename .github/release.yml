@@ -1,4 +1,33 @@
 changelog:
   exclude:
     labels:
+      - ignore-for-release
       - tagpr
+  categories:
+    - title: ⚡ Breaking Changes
+      labels:
+        - major
+        - breaking-change
+    - title: ✨ Features / Enhancements
+      labels:
+        - feature
+        - enhancement
+    - title: 🐛 Bug Fixes
+      labels:
+        - bug
+    - title: 📚 Documentation
+      labels:
+        - documentation
+    - title: 🤖 CI/CD & Testing
+      labels:
+        - ci-cd
+        - testing
+    - title: 🔧 Maintenance
+      labels:
+        - maintenance
+    - title: 📦 Dependencies
+      labels:
+        - dependencies
+    - title: Other Changes
+      labels:
+        - "*"
