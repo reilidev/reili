@@ -47,7 +47,7 @@ Common settings for both modes:
 
 | Slack screen                          | Required setting                                                                                                   | Why                                                                                                              |
 |---------------------------------------|--------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
-| `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history`, `groups:history` | Receive `app_mention`, mark accepted requests, reply in threads, and read channel/private-channel thread context |
+| `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history` | Receive `app_mention`, mark accepted requests, reply in threads, and read channel thread context |
 | `Event Subscriptions`                 | Turn on events and add the bot event `app_mention`                                                                 | `app_mention` is the intake trigger in both modes                                                                |
 | `Interactivity & Shortcuts`           | Turn on interactivity                                                                                              | Receive `block_actions` when a user clicks a task `Cancel` button                                                |
 | `Install App` / `OAuth & Permissions` | Install or reinstall the app after any scope change                                                                | Slack does not apply updated scopes until reinstall                                                              |
@@ -79,7 +79,6 @@ Required Bot OAuth scopes:
 - `chat:write`: post progress and final replies into the originating thread, and post/update the task control message
 - `reactions:write`: add an `:eyes:` reaction to the triggering message once the task is queued
 - `channels:history`: read public channel thread history when additional context is needed
-- `groups:history`: read private channel thread history when additional context is needed
 
 Required App-Level Token scope for Socket Mode:
 
