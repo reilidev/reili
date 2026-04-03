@@ -16,9 +16,7 @@ pub use bedrock_task_runner::{BedrockTaskRunner, BedrockTaskRunnerInput};
 pub use datadog_mcp_tools::DatadogMcpToolConfig;
 pub use openai_task_runner::{OpenAiTaskRunner, OpenAiTaskRunnerInput};
 pub use tools::{
-    AggregateDatadogLogsByFacetTool, GetPullRequestDiffTool, GetPullRequestTool,
-    GetRepositoryContentTool, ListDatadogMetricsCatalogTool, QueryDatadogMetricsTool,
-    SearchDatadogEventsTool, SearchDatadogLogsTool, SearchGithubCodeTool,
+    GetPullRequestDiffTool, GetPullRequestTool, GetRepositoryContentTool, SearchGithubCodeTool,
     SearchGithubIssuesAndPullRequestsTool, SearchGithubReposTool,
 };
 pub use vertex_ai_anthropic_completion::{VertexAiAnthropicClient, VertexAiAnthropicClientInput};

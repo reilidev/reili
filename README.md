@@ -11,8 +11,8 @@
 
 Reili is an AI team member for your SRE and DevOps team.
 
-Give Reili a task — it investigates by pulling logs and metrics from
-Datadog, checking recent changes on GitHub, and reporting back with what
+Give Reili a task — it investigates by calling Datadog's read-only MCP
+tools, checking recent changes on GitHub, and reporting back with what
 it found. Today Reili handles investigation; over time it will grow into
 more of the responsibilities your team carries.
 
@@ -24,7 +24,7 @@ action is needed. Reili takes that work off your plate.
 
 Give Reili a Slack message or a task, and it will:
 
-- Investigate Datadog logs, metrics, and events
+- Investigate Datadog logs, metrics, and events through Datadog MCP
 - Explore GitHub repositories, PRs, issues, and code — connecting that
   context with Datadog to understand system structure and trace issues
 - Report back with what it found so you can decide what to do next
@@ -46,7 +46,7 @@ Its current focus is triage, investigation, and communicating findings.
     <a href="https://api.slack.com/apps?new_app=1&amp;manifest_yaml=display_information%3A%0D%0A++name%3A+Reili%0D%0Afeatures%3A%0D%0A++bot_user%3A%0D%0A++++display_name%3A+Reili%0D%0A++++always_online%3A+true%0D%0Aoauth_config%3A%0D%0A++scopes%3A%0D%0A++++bot%3A%0D%0A++++++-+reactions%3Awrite%0D%0A++++++-+app_mentions%3Aread%0D%0A++++++-+channels%3Ahistory%0D%0A++++++-+channels%3Aread%0D%0A++++++-+chat%3Awrite%0D%0A++pkce_enabled%3A+false%0D%0Asettings%3A%0D%0A++event_subscriptions%3A%0D%0A++++request_url%3A+https%3A%2F%2Fexample.com%2Fslack%2Fevents%0D%0A++++bot_events%3A%0D%0A++++++-+app_mention%0D%0A++interactivity%3A%0D%0A++++is_enabled%3A+true%0D%0A++org_deploy_enabled%3A+false%0D%0A++socket_mode_enabled%3A+true%0D%0A++token_rotation_enabled%3A+false%0D%0A">Create App</a>
   - Configure the required scopes, events, and Interactivity using
     [Slack Permissions and API Usage](./docs/permissions-and-boundaries.md#slack-permissions-and-api-usage).
-- Datadog API Key + APP Key
+- Datadog API Key + APP Key for the Datadog MCP server
 - OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call
   Vertex AI partner models
 - GitHub App (App ID / Private Key / Installation ID)

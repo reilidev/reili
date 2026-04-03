@@ -401,7 +401,7 @@ mod tests {
             LlmUsageCollector::new(),
         );
 
-        hook.publish_tool_completed("query_datadog_metrics", "task-2")
+        hook.publish_tool_completed("search_datadog_metrics", "task-2")
             .await;
 
         assert_eq!(
@@ -410,7 +410,7 @@ mod tests {
                 owner_id: "investigate_datadog".to_string(),
                 event: TaskProgressEvent::ToolCallCompleted {
                     task_id: "task-2".to_string(),
-                    title: "query_datadog_metrics".to_string(),
+                    title: "search_datadog_metrics".to_string(),
                 },
             }]
         );
