@@ -96,10 +96,13 @@ is not used.
 When `LLM_PROVIDER=bedrock`, AWS credentials and region are loaded from the standard AWS SDK environment or profile
 chain. Set `AWS_PROFILE` to use a named AWS profile such as an AWS SSO profile, and set `AWS_REGION` if the selected
 profile does not already define a region.
+- Web search is currently unavailable with the Bedrock provider. If Reili issues a web search while
+  `LLM_PROVIDER=bedrock`, it returns a `capability_unavailable` result instead of live search results.
 
 When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Default Credentials.
 
 - Set `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `LLM_VERTEX_AI_MODEL_ID`.
+- Anthropic Claude models on Vertex AI are not available for personal-use Google accounts/projects.
 - Use the exact Vertex AI Anthropic model id, including the published version suffix when Google provides one.
 - If Vertex AI returns `RESOURCE_EXHAUSTED`, verify your project quotas in Google Cloud Quotas (
   `https://console.cloud.google.com/iam-admin/quotas`) and adjust them if needed.
