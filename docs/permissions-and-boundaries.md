@@ -126,28 +126,28 @@ Required Datadog permissions:
 
 - `mcp_read`: required because Reili connects to the remote Datadog MCP Server in read-only mode
   ([Datadog RBAC permissions](https://docs.datadoghq.com/account_management/rbac/permissions/))
-- `logs_read_data`: required for `search_datadog_logs` and `analyze_datadog_logs`, and for the direct log search and
-  log aggregate APIs used by the runtime ([Logs RBAC permissions](https://docs.datadoghq.com/logs/guide/logs-rbac-permissions/))
-- `logs_read_index_data`: also required for indexed log access when your organization still uses index-scoped log
-  permissions ([Logs RBAC permissions](https://docs.datadoghq.com/logs/guide/logs-rbac-permissions/))
-- `metrics_read`: required for metric catalog and metric metadata/context reads
-  ([Metrics API docs](https://docs.datadoghq.com/api/latest/metrics/))
-- `timeseries_query`: required for Datadog timeseries metric queries
-  ([Metrics API docs](https://docs.datadoghq.com/api/latest/metrics/))
-- `events_read`: required for Datadog event search ([Events API docs](https://docs.datadoghq.com/api/latest/events/))
-- `monitors_read`: required for Datadog monitor search
+- Additional product read permissions depend on which Datadog MCP tools your organization exposes
+  through the enabled `core` toolset.
+- `logs_read_data` and, in some organizations, `logs_read_index_data`: needed when Reili uses
+  `search_datadog_logs` or `analyze_datadog_logs`
+  ([Logs RBAC permissions](https://docs.datadoghq.com/logs/guide/logs-rbac-permissions/))
+- `metrics_read` and `timeseries_query`: needed when Reili uses metric search, metric detail, or
+  metric context MCP tools ([Metrics API docs](https://docs.datadoghq.com/api/latest/metrics/))
+- `events_read`: needed when Reili uses `search_datadog_events`
+  ([Events API docs](https://docs.datadoghq.com/api/latest/events/))
+- `monitors_read`: needed when Reili uses `search_datadog_monitors`
   ([Monitors API docs](https://docs.datadoghq.com/api/latest/monitors/))
-- `incident_read`: required for Datadog incident search
+- `incident_read`: needed when Reili uses `search_datadog_incidents`
   ([Incidents API docs](https://docs.datadoghq.com/api/latest/incidents/))
-- `apm_service_catalog_read`: recommended for `search_datadog_services` when service discovery is backed by Datadog
-  Service Catalog ([Software Catalog permission docs](https://docs.datadoghq.com/internal_developer_portal/software_catalog/set_up/))
-- `apm_read`: may also be required for `search_datadog_services` in organizations where the available service inventory
-  comes from APM service reads rather than Service Catalog definitions
-  ([APM API docs](https://docs.datadoghq.com/api/latest/apm/), [Datadog RBAC permissions](https://docs.datadoghq.com/account_management/rbac/permissions/))
+- `apm_service_catalog_read` or `apm_read`: may be needed when Reili uses `search_datadog_services`,
+  depending on how service inventory is backed in your Datadog organization
+  ([Software Catalog permission docs](https://docs.datadoghq.com/internal_developer_portal/software_catalog/set_up/),
+  [APM API docs](https://docs.datadoghq.com/api/latest/apm/),
+  [Datadog RBAC permissions](https://docs.datadoghq.com/account_management/rbac/permissions/))
 
 In practice, the API key authenticates the Datadog organization, while the application key
-determines which read operations Reili can perform. Create the application key from a dedicated
-Datadog service account and grant that account only the permissions above.
+determines which MCP-backed read operations Reili can perform. Create the application key from a
+dedicated Datadog service account and grant that account only the minimum read permissions above.
 
 Datadog capabilities currently used by the runtime:
 

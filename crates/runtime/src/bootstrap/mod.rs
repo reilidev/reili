@@ -8,11 +8,6 @@ use reili_adapters::outbound::agents::{
     VertexAiTaskRunner, VertexAiTaskRunnerInput,
 };
 use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
-use reili_adapters::outbound::datadog::DatadogEventSearchAdapter;
-use reili_adapters::outbound::datadog::{
-    DatadogApiRetryConfig, DatadogHttpClient, DatadogHttpClientConfig, DatadogLogAggregateAdapter,
-    DatadogLogSearchAdapter, DatadogMetricCatalogAdapter, DatadogMetricQueryAdapter,
-};
 use reili_adapters::outbound::github::{GitHubSearchAdapter, GitHubSearchAdapterConfig};
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
@@ -41,10 +36,6 @@ use reili_core::messaging::slack::{
 use reili_core::messaging::slack::{
     SlackReactionPort, SlackThreadHistoryPort, SlackThreadReplyPort,
 };
-use reili_core::monitoring::datadog::{
-    DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
-    DatadogMetricCatalogPort, DatadogMetricQueryPort,
-};
 use reili_core::queue::TaskJobQueuePort;
 use reili_core::source_code::github::{
     GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort, GithubScopePolicy,
@@ -55,13 +46,6 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::config::env::{AppConfig, LlmProviderConfig, SlackConnectionMode};
-
-const DATADOG_API_RETRY: DatadogApiRetryConfig = DatadogApiRetryConfig {
-    enabled: true,
-    max_retries: 3,
-    backoff_base_seconds: 2,
-    backoff_multiplier: 2,
-};
 
 pub struct RuntimeDeps {
     pub slack_signature_verifier: Option<Arc<SlackSignatureVerifier>>,
@@ -121,30 +105,6 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     );
     let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
     let in_flight_job_registry = reili_application::task::services::InFlightJobRegistry::new();
-
-    let datadog_http_client = Arc::new(DatadogHttpClient::new(DatadogHttpClientConfig {
-        api_key: config.datadog_api_key.clone(),
-        app_key: config.datadog_app_key.clone(),
-        site: config.datadog_site.clone(),
-        retry: DATADOG_API_RETRY,
-        max_response_bytes: 0,
-        base_url: None,
-    })?);
-    let log_aggregate_port: Arc<dyn DatadogLogAggregatePort> = Arc::new(
-        DatadogLogAggregateAdapter::new(Arc::clone(&datadog_http_client)),
-    );
-    let log_search_port: Arc<dyn DatadogLogSearchPort> = Arc::new(DatadogLogSearchAdapter::new(
-        Arc::clone(&datadog_http_client),
-    ));
-    let metric_catalog_port: Arc<dyn DatadogMetricCatalogPort> = Arc::new(
-        DatadogMetricCatalogAdapter::new(Arc::clone(&datadog_http_client)),
-    );
-    let metric_query_port: Arc<dyn DatadogMetricQueryPort> = Arc::new(
-        DatadogMetricQueryAdapter::new(Arc::clone(&datadog_http_client)),
-    );
-    let event_search_port: Arc<dyn DatadogEventSearchPort> = Arc::new(
-        DatadogEventSearchAdapter::new(Arc::clone(&datadog_http_client)),
-    );
     let github_scope_policy = Arc::new(GithubScopePolicy::new(config.github.scope_org.clone())?);
     let github_adapter = Arc::new(GitHubSearchAdapter::new(GitHubSearchAdapterConfig {
         app_id: config.github.app_id.clone(),
@@ -174,11 +134,6 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     .await?;
 
     let task_resources = TaskResources {
-        log_aggregate_port,
-        log_search_port,
-        metric_catalog_port,
-        metric_query_port,
-        event_search_port,
         github_code_search_port,
         github_repository_content_port,
         github_pull_request_port,

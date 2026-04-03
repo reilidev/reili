@@ -6,7 +6,7 @@ This document is for contributors and maintainers of `Reili`.
 
 - Rust stable toolchain
 - Slack App credentials
-- Datadog API credentials
+- Datadog API credentials for the Datadog MCP server
 - OpenAI API key, AWS credentials for Bedrock, or Google Cloud ADC for Vertex AI
 - GitHub App credentials
 

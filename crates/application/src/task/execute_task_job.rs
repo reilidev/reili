@@ -380,12 +380,6 @@ mod tests {
         SlackMessage, SlackThreadHistoryPort, SlackThreadMessage, SlackThreadReplyInput,
         SlackThreadReplyPort, SlackTriggerType,
     };
-    use reili_core::monitoring::datadog::{
-        DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
-        DatadogMetricCatalogPort, DatadogMetricQueryPort, MockDatadogEventSearchPort,
-        MockDatadogLogAggregatePort, MockDatadogLogSearchPort, MockDatadogMetricCatalogPort,
-        MockDatadogMetricQueryPort,
-    };
     use reili_core::source_code::github::{
         GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
         MockGithubCodeSearchPort, MockGithubPullRequestPort, MockGithubRepositoryContentPort,
@@ -420,16 +414,6 @@ mod tests {
     }
 
     fn create_resources() -> TaskResources {
-        let log_aggregate_port: Arc<dyn DatadogLogAggregatePort> =
-            Arc::new(MockDatadogLogAggregatePort::new());
-        let log_search_port: Arc<dyn DatadogLogSearchPort> =
-            Arc::new(MockDatadogLogSearchPort::new());
-        let metric_catalog_port: Arc<dyn DatadogMetricCatalogPort> =
-            Arc::new(MockDatadogMetricCatalogPort::new());
-        let metric_query_port: Arc<dyn DatadogMetricQueryPort> =
-            Arc::new(MockDatadogMetricQueryPort::new());
-        let event_search_port: Arc<dyn DatadogEventSearchPort> =
-            Arc::new(MockDatadogEventSearchPort::new());
         let github_code_search_port: Arc<dyn GithubCodeSearchPort> =
             Arc::new(MockGithubCodeSearchPort::new());
         let github_repository_content_port: Arc<dyn GithubRepositoryContentPort> =
@@ -439,11 +423,6 @@ mod tests {
         let web_search_port: Arc<dyn WebSearchPort> = Arc::new(MockWebSearchPort::new());
 
         TaskResources {
-            log_aggregate_port,
-            log_search_port,
-            metric_catalog_port,
-            metric_query_port,
-            event_search_port,
             github_code_search_port,
             github_repository_content_port,
             github_pull_request_port,

@@ -108,72 +108,9 @@ mod tests {
     }
 
     fn build_test_resources(web_search_port: Arc<dyn WebSearchPort>) -> TaskResources {
-        use reili_core::monitoring::datadog::{
-            DatadogEventSearchPort, DatadogLogAggregatePort, DatadogLogSearchPort,
-            DatadogMetricCatalogPort, DatadogMetricQueryPort,
-        };
         use reili_core::source_code::github::{
             GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
         };
-
-        struct StubLogAggregate;
-        #[async_trait]
-        impl DatadogLogAggregatePort for StubLogAggregate {
-            async fn aggregate_by_facet(
-                &self,
-                _: reili_core::monitoring::datadog::DatadogLogAggregateParams,
-            ) -> Result<Vec<reili_core::monitoring::datadog::DatadogLogAggregateBucket>, PortError>
-            {
-                Ok(Vec::new())
-            }
-        }
-
-        struct StubLogSearch;
-        #[async_trait]
-        impl DatadogLogSearchPort for StubLogSearch {
-            async fn search_logs(
-                &self,
-                _: reili_core::monitoring::datadog::DatadogLogSearchParams,
-            ) -> Result<Vec<reili_core::monitoring::datadog::DatadogLogSearchResult>, PortError>
-            {
-                unimplemented!()
-            }
-        }
-
-        struct StubMetricCatalog;
-        #[async_trait]
-        impl DatadogMetricCatalogPort for StubMetricCatalog {
-            async fn list_metrics(
-                &self,
-                _: reili_core::monitoring::datadog::DatadogMetricCatalogParams,
-            ) -> Result<Vec<String>, PortError> {
-                Ok(Vec::new())
-            }
-        }
-
-        struct StubMetricQuery;
-        #[async_trait]
-        impl DatadogMetricQueryPort for StubMetricQuery {
-            async fn query_metrics(
-                &self,
-                _: reili_core::monitoring::datadog::DatadogMetricQueryParams,
-            ) -> Result<Vec<reili_core::monitoring::datadog::DatadogMetricQueryResult>, PortError>
-            {
-                unimplemented!()
-            }
-        }
-
-        struct StubEventSearch;
-        #[async_trait]
-        impl DatadogEventSearchPort for StubEventSearch {
-            async fn search_events(
-                &self,
-                _: reili_core::monitoring::datadog::DatadogEventSearchParams,
-            ) -> Result<Vec<reili_core::monitoring::datadog::DatadogEventSearchResult>, PortError>
-            {
-                unimplemented!()
-            }
-        }
 
         struct StubGithubSearch;
         #[async_trait]
@@ -231,11 +168,6 @@ mod tests {
         }
 
         TaskResources {
-            log_aggregate_port: Arc::new(StubLogAggregate),
-            log_search_port: Arc::new(StubLogSearch),
-            metric_catalog_port: Arc::new(StubMetricCatalog),
-            metric_query_port: Arc::new(StubMetricQuery),
-            event_search_port: Arc::new(StubEventSearch),
             github_code_search_port: Arc::new(StubGithubSearch),
             github_repository_content_port: Arc::new(StubGithubSearch),
             github_pull_request_port: Arc::new(StubGithubSearch),
