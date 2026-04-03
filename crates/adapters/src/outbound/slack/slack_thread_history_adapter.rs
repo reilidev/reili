@@ -4,17 +4,27 @@ use async_trait::async_trait;
 use reili_core::error::PortError;
 use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
 use reili_core::messaging::slack::{SlackMessageMetadata, SlackThreadMessage};
+use serde::Serialize;
 use serde_json::Value;
 
 use super::slack_web_api_client::SlackWebApiClient;
 use crate::json_utils::read_non_empty_json_string;
 
-const THREAD_HISTORY_PAGE_LIMIT: usize = 15;
+const THREAD_HISTORY_PAGE_LIMIT: usize = 100;
 const THREAD_HISTORY_MAX_MESSAGES: usize = 200;
 
 #[derive(Debug, Clone)]
 pub struct SlackThreadHistoryAdapter {
     client: Arc<SlackWebApiClient>,
+}
+
+#[derive(Debug, Serialize)]
+struct ConversationsRepliesQuery<'a> {
+    channel: &'a str,
+    ts: &'a str,
+    limit: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<&'a str>,
 }
 
 impl SlackThreadHistoryAdapter {
@@ -35,22 +45,17 @@ impl SlackThreadHistoryPort for SlackThreadHistoryAdapter {
         let mut cursor: Option<String> = None;
 
         loop {
-            let mut payload = serde_json::Map::from_iter([
-                ("channel".to_string(), Value::String(channel.clone())),
-                ("ts".to_string(), Value::String(thread_ts.clone())),
-                (
-                    "limit".to_string(),
-                    Value::Number(serde_json::Number::from(THREAD_HISTORY_PAGE_LIMIT)),
-                ),
-            ]);
-
-            if let Some(cursor_value) = cursor.as_ref() {
-                payload.insert("cursor".to_string(), Value::String(cursor_value.clone()));
-            }
-
             let response = self
                 .client
-                .post("conversations.replies", &Value::Object(payload))
+                .get(
+                    "conversations.replies",
+                    &ConversationsRepliesQuery {
+                        channel: &channel,
+                        ts: &thread_ts,
+                        limit: THREAD_HISTORY_PAGE_LIMIT,
+                        cursor: cursor.as_deref(),
+                    },
+                )
                 .await?;
 
             let page_messages = response
@@ -110,10 +115,10 @@ mod tests {
     use reili_core::messaging::slack::SlackThreadMessage;
     use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
     use serde_json::json;
-    use wiremock::matchers::{body_json, method, path};
+    use wiremock::matchers::{method, path, query_param, query_param_is_missing};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::SlackThreadHistoryAdapter;
+    use super::{SlackThreadHistoryAdapter, THREAD_HISTORY_PAGE_LIMIT};
     use crate::outbound::slack::slack_web_api_client::{
         SlackWebApiClient, SlackWebApiClientConfig,
     };
@@ -121,13 +126,12 @@ mod tests {
     #[tokio::test]
     async fn merges_paginated_replies_in_returned_order() {
         let server = MockServer::start().await;
-        Mock::given(method("POST"))
+        Mock::given(method("GET"))
             .and(path("/conversations.replies"))
-            .and(body_json(json!({
-                "channel": "C123",
-                "ts": "1710000000.000000",
-                "limit": 15,
-            })))
+            .and(query_param("channel", "C123"))
+            .and(query_param("ts", "1710000000.000000"))
+            .and(query_param("limit", THREAD_HISTORY_PAGE_LIMIT.to_string()))
+            .and(query_param_is_missing("cursor"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "ok": true,
                 "messages": [
@@ -144,14 +148,12 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        Mock::given(method("POST"))
+        Mock::given(method("GET"))
             .and(path("/conversations.replies"))
-            .and(body_json(json!({
-                "channel": "C123",
-                "ts": "1710000000.000000",
-                "limit": 15,
-                "cursor": "cursor-2",
-            })))
+            .and(query_param("channel", "C123"))
+            .and(query_param("ts", "1710000000.000000"))
+            .and(query_param("limit", THREAD_HISTORY_PAGE_LIMIT.to_string()))
+            .and(query_param("cursor", "cursor-2"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "ok": true,
                 "messages": [
@@ -221,8 +223,11 @@ mod tests {
             })
             .collect();
 
-        Mock::given(method("POST"))
+        Mock::given(method("GET"))
             .and(path("/conversations.replies"))
+            .and(query_param("channel", "C123"))
+            .and(query_param("ts", "1710000000.000000"))
+            .and(query_param("limit", THREAD_HISTORY_PAGE_LIMIT.to_string()))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "ok": true,
                 "messages": many_messages,

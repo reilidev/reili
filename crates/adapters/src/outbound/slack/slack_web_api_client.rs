@@ -1,8 +1,8 @@
 use reili_core::error::PortError;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::json_utils::{read_non_empty_json_string, truncate_for_error};
+use crate::json_utils::truncate_for_error;
 
 const DEFAULT_BASE_URL: &str = "https://slack.com/api";
 
@@ -17,6 +17,55 @@ pub struct SlackWebApiClient {
     client: reqwest::Client,
     bot_token: String,
     base_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SlackApiEnvelope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ok: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    response_metadata: Option<SlackApiResponseMetadata>,
+    #[serde(flatten)]
+    body: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SlackApiResponseMetadata {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    messages: Vec<String>,
+    #[serde(flatten)]
+    extra: serde_json::Map<String, Value>,
+}
+
+impl SlackApiEnvelope {
+    fn is_error(&self) -> bool {
+        self.ok == Some(false)
+    }
+
+    fn error_code(&self) -> String {
+        self.error
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .unwrap_or("unknown_error")
+            .to_string()
+    }
+
+    fn metadata_messages(&self) -> &[String] {
+        self.response_metadata
+            .as_ref()
+            .map_or(&[], |metadata| metadata.messages.as_slice())
+    }
+
+    fn into_value(self, method_path: &str) -> Result<Value, PortError> {
+        serde_json::to_value(self).map_err(|error| {
+            PortError::invalid_response(format!(
+                "Failed to serialize Slack API response JSON: method={method_path} error={error}"
+            ))
+        })
+    }
 }
 
 impl SlackWebApiClient {
@@ -45,19 +94,40 @@ impl SlackWebApiClient {
     {
         let method_path = normalize_method_path(method);
         let url = format!("{}/{method_path}", self.base_url);
-
-        let response = self
+        let request = self
             .client
             .post(&url)
             .bearer_auth(&self.bot_token)
-            .json(payload)
-            .send()
-            .await
-            .map_err(|error| {
-                PortError::connection_failed(format!(
-                    "Slack API request failed: method={method_path} error={error}"
-                ))
-            })?;
+            .json(payload);
+
+        self.execute(&method_path, request).await
+    }
+
+    pub async fn get<TQuery>(&self, method: &str, query: &TQuery) -> Result<Value, PortError>
+    where
+        TQuery: Serialize + ?Sized,
+    {
+        let method_path = normalize_method_path(method);
+        let url = format!("{}/{method_path}", self.base_url);
+        let request = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.bot_token)
+            .query(query);
+
+        self.execute(&method_path, request).await
+    }
+
+    async fn execute(
+        &self,
+        method_path: &str,
+        request: reqwest::RequestBuilder,
+    ) -> Result<Value, PortError> {
+        let response = request.send().await.map_err(|error| {
+            PortError::connection_failed(format!(
+                "Slack API request failed: method={method_path} error={error}"
+            ))
+        })?;
 
         let status = response.status();
         let bytes = response.bytes().await.map_err(|error| {
@@ -81,23 +151,41 @@ impl SlackWebApiClient {
             return Ok(Value::Null);
         }
 
-        let json: Value = serde_json::from_slice(&bytes).map_err(|error| {
+        let response: SlackApiEnvelope = serde_json::from_slice(&bytes).map_err(|error| {
             PortError::invalid_response(format!(
                 "Failed to parse Slack API response JSON: method={method_path} error={error}"
             ))
         })?;
 
-        if json.get("ok").and_then(Value::as_bool) == Some(false) {
-            let error_code = read_non_empty_json_string(json.get("error"))
-                .unwrap_or_else(|| "unknown_error".to_string());
+        if response.is_error() {
+            let error_code = response.error_code();
             return Err(PortError::service_error(
                 error_code.clone(),
-                format!("Slack API returned error: method={method_path} error={error_code}"),
+                format_slack_service_error_message(
+                    method_path,
+                    &error_code,
+                    response.metadata_messages(),
+                ),
             ));
         }
 
-        Ok(json)
+        response.into_value(method_path)
     }
+}
+
+fn format_slack_service_error_message(
+    method_path: &str,
+    error_code: &str,
+    metadata_messages: &[String],
+) -> String {
+    let mut message = format!("Slack API returned error: method={method_path} error={error_code}");
+    if metadata_messages.is_empty() {
+        return message;
+    }
+
+    message.push_str(" messages=");
+    message.push_str(&truncate_for_error(&metadata_messages.join(" | ")));
+    message
 }
 
 fn normalize_base_url(value: &str) -> Result<String, PortError> {
@@ -117,7 +205,7 @@ fn normalize_method_path(method: &str) -> String {
 mod tests {
     use reqwest::StatusCode;
     use serde_json::json;
-    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::matchers::{body_json, header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::{SlackWebApiClient, SlackWebApiClientConfig};
@@ -155,6 +243,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gets_query_params_with_bearer_token() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/conversations.replies"))
+            .and(header("Authorization", "Bearer xoxb-test"))
+            .and(query_param("channel", "C123"))
+            .and(query_param("ts", "1710000000.000001"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true,
+                "messages": [],
+            })))
+            .mount(&server)
+            .await;
+
+        let client = create_client(&server.uri());
+        client
+            .get(
+                "conversations.replies",
+                &json!({
+                    "channel": "C123",
+                    "ts": "1710000000.000001",
+                }),
+            )
+            .await
+            .expect("get slack api");
+    }
+
+    #[tokio::test]
     async fn returns_error_when_slack_api_response_has_ok_false() {
         let server = MockServer::start().await;
 
@@ -175,6 +292,36 @@ mod tests {
 
         assert!(error.message.contains("invalid_auth"));
         assert_eq!(error.service_error_code(), Some("invalid_auth"));
+    }
+
+    #[tokio::test]
+    async fn includes_response_metadata_messages_in_service_errors() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/chat.update"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": false,
+                "error": "invalid_arguments",
+                "response_metadata": {
+                    "messages": [
+                        "[ERROR] missing required field: channel",
+                        "[ERROR] missing required field: ts"
+                    ]
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = create_client(&server.uri());
+        let error = client
+            .post("chat.update", &json!({}))
+            .await
+            .expect_err("request should fail");
+
+        assert_eq!(error.service_error_code(), Some("invalid_arguments"));
+        assert!(error.message.contains("missing required field: channel"));
+        assert!(error.message.contains("missing required field: ts"));
     }
 
     #[tokio::test]
