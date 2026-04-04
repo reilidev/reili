@@ -11,9 +11,9 @@ use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearc
 use reili_adapters::outbound::github::{GitHubSearchAdapter, GitHubSearchAdapterConfig};
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
-    SlackProgressReporter, SlackProgressReporterInput, SlackReactionAdapter,
-    SlackTaskControlMessageAdapter, SlackThreadHistoryAdapter, SlackThreadReplyAdapter,
-    SlackWebApiClient, SlackWebApiClientConfig,
+    SlackMessageSearchAdapter, SlackProgressReporter, SlackProgressReporterInput,
+    SlackReactionAdapter, SlackTaskControlMessageAdapter, SlackThreadHistoryAdapter,
+    SlackThreadReplyAdapter, SlackWebApiClient, SlackWebApiClientConfig,
 };
 use reili_adapters::outbound::vertex_ai::{
     VertexAiWebSearchAdapter, VertexAiWebSearchAdapterConfig,
@@ -34,7 +34,7 @@ use reili_core::messaging::slack::{
     SlackInteractionHandlerPort, SlackMessageHandlerPort, SlackTaskControlMessagePort,
 };
 use reili_core::messaging::slack::{
-    SlackReactionPort, SlackThreadHistoryPort, SlackThreadReplyPort,
+    SlackMessageSearchPort, SlackReactionPort, SlackThreadHistoryPort, SlackThreadReplyPort,
 };
 use reili_core::queue::TaskJobQueuePort;
 use reili_core::source_code::github::{
@@ -103,6 +103,9 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let slack_thread_history_port: Arc<dyn SlackThreadHistoryPort> = Arc::new(
         SlackThreadHistoryAdapter::new(Arc::clone(&slack_web_api_client)),
     );
+    let slack_message_search_port: Arc<dyn SlackMessageSearchPort> = Arc::new(
+        SlackMessageSearchAdapter::new(Arc::clone(&slack_web_api_client)),
+    );
     let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
     let in_flight_job_registry = reili_application::task::services::InFlightJobRegistry::new();
     let github_scope_policy = Arc::new(GithubScopePolicy::new(config.github.scope_org.clone())?);
@@ -137,6 +140,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         github_code_search_port,
         github_repository_content_port,
         github_pull_request_port,
+        slack_message_search_port,
         web_search_port: provider_ports.web_search_port,
     };
     let task_runner = provider_ports.task_runner;

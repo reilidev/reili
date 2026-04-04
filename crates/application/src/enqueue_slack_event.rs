@@ -429,6 +429,7 @@ mod tests {
         SlackMessage {
             slack_event_id: "Ev001".to_string(),
             team_id: Some("T001".to_string()),
+            action_token: None,
             trigger: SlackTriggerType::Message,
             channel: "C001".to_string(),
             user: "U001".to_string(),

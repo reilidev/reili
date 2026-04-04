@@ -93,16 +93,22 @@ fn parse_message_event(
         None => return Ok(ParsedSlackEvent::Ignored),
     };
 
-    Ok(ParsedSlackEvent::Message(SlackMessage {
+    let message = SlackMessage {
         slack_event_id: input.event_id,
         team_id: input.team_id,
+        action_token: input
+            .event
+            .assistant_thread
+            .and_then(|thread| thread.action_token),
         trigger,
         channel,
         user,
         text,
         ts,
         thread_ts: input.event.thread_ts,
-    }))
+    };
+
+    Ok(ParsedSlackEvent::Message(message))
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,6 +131,12 @@ struct SlackCallbackEvent {
     text: Option<String>,
     ts: Option<String>,
     thread_ts: Option<String>,
+    assistant_thread: Option<SlackAssistantThread>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SlackAssistantThread {
+    action_token: Option<String>,
 }
 
 #[cfg(test)]
@@ -182,6 +194,7 @@ mod tests {
             ParsedSlackEvent::Message(SlackMessage {
                 slack_event_id: "evt-1".to_string(),
                 team_id: Some("T001".to_string()),
+                action_token: None,
                 trigger: SlackTriggerType::Message,
                 channel: "C001".to_string(),
                 user: "U001".to_string(),
@@ -200,6 +213,9 @@ mod tests {
                 "event_id": "evt-2",
                 "event": {
                     "type": "app_mention",
+                    "assistant_thread": {
+                        "action_token": "action-token"
+                    },
                     "channel": "C001",
                     "user": "U002",
                     "text": "<@U-BOT> investigate this alert",
@@ -217,11 +233,51 @@ mod tests {
             ParsedSlackEvent::Message(SlackMessage {
                 slack_event_id: "evt-2".to_string(),
                 team_id: None,
+                action_token: Some("action-token".to_string()),
                 trigger: SlackTriggerType::AppMention,
                 channel: "C001".to_string(),
                 user: "U002".to_string(),
                 text: "<@U-BOT> investigate this alert".to_string(),
                 ts: "1710000000.000002".to_string(),
+                thread_ts: None,
+            })
+        );
+    }
+
+    #[test]
+    fn reads_action_token_from_assistant_thread() {
+        let parsed = parse_slack_event(
+            json!({
+                "type": "event_callback",
+                "event_id": "evt-3",
+                "event": {
+                    "type": "app_mention",
+                    "assistant_thread": {
+                        "action_token": "assistant-thread-token"
+                    },
+                    "channel": "C001",
+                    "user": "U003",
+                    "text": "<@U-BOT> search slack",
+                    "ts": "1710000000.000003"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+            "U-BOT",
+        )
+        .expect("parse event");
+
+        assert_eq!(
+            parsed,
+            ParsedSlackEvent::Message(SlackMessage {
+                slack_event_id: "evt-3".to_string(),
+                team_id: None,
+                action_token: Some("assistant-thread-token".to_string()),
+                trigger: SlackTriggerType::AppMention,
+                channel: "C001".to_string(),
+                user: "U003".to_string(),
+                text: "<@U-BOT> search slack".to_string(),
+                ts: "1710000000.000003".to_string(),
                 thread_ts: None,
             })
         );

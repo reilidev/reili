@@ -108,6 +108,9 @@ mod tests {
     }
 
     fn build_test_resources(web_search_port: Arc<dyn WebSearchPort>) -> TaskResources {
+        use reili_core::messaging::slack::{
+            SlackMessageSearchInput, SlackMessageSearchPort, SlackMessageSearchResult,
+        };
         use reili_core::source_code::github::{
             GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
         };
@@ -167,10 +170,21 @@ mod tests {
             }
         }
 
+        #[async_trait]
+        impl SlackMessageSearchPort for StubGithubSearch {
+            async fn search_messages(
+                &self,
+                _: SlackMessageSearchInput,
+            ) -> Result<SlackMessageSearchResult, PortError> {
+                unimplemented!()
+            }
+        }
+
         TaskResources {
             github_code_search_port: Arc::new(StubGithubSearch),
             github_repository_content_port: Arc::new(StubGithubSearch),
             github_pull_request_port: Arc::new(StubGithubSearch),
+            slack_message_search_port: Arc::new(StubGithubSearch),
             web_search_port,
         }
     }

@@ -14,7 +14,7 @@ use super::datadog_mcp_tools::DatadogMcpToolset;
 use super::tools::{
     GetPullRequestDiffTool, GetPullRequestTool, GetRepositoryContentTool, ReportProgressTool,
     ReportProgressToolInput, SearchGithubCodeTool, SearchGithubIssuesAndPullRequestsTool,
-    SearchGithubReposTool, SearchWebTool,
+    SearchGithubReposTool, SearchSlackMessagesTool, SearchWebTool,
 };
 use super::{
     llm_provider_settings::LlmProviderSettings, llm_usage_collector::LlmUsageCollector,
@@ -43,6 +43,7 @@ where
     pub on_progress_event: Arc<dyn TaskProgressEventPort>,
     pub language: String,
     pub usage_collector: LlmUsageCollector,
+    pub slack_action_token: Option<String>,
 }
 
 #[must_use]
@@ -101,6 +102,10 @@ where
             datadog_agent,
             DATADOG_PROGRESS_OWNER_ID.to_string(),
             Arc::clone(&input.on_progress_event),
+        ))
+        .tool(SearchSlackMessagesTool::new(
+            Arc::clone(&input.resources.slack_message_search_port),
+            input.slack_action_token.clone(),
         ))
         .tool(SearchWebTool::new(Arc::clone(&input.resources)))
         .tool(ProgressReportingSubAgentTool::new(
@@ -359,6 +364,7 @@ You orchestrate investigation end-to-end.
 - Use Datadog MCP tools such as search_datadog_services, search_datadog_metrics, get_datadog_metric_context, and search_datadog_monitors early to understand service scope.
 - Delegate detailed Datadog work to investigate_datadog and GitHub work to investigate_github as needed.
 - Run independent tool calls in parallel where possible.
+- Use search_slack_messages when prior Slack discussion outside the current thread could clarify timelines, alerts, ownership, or prior investigation notes.
 
 Web search:
 - Use search_web to check whether external dependencies (cloud providers, CDNs, DNS, third-party APIs, SaaS platforms) are experiencing outages or degraded performance that could explain the symptoms observed internally.
@@ -440,6 +446,7 @@ mod tests {
         SlackMessage {
             slack_event_id: "Ev001".to_string(),
             team_id: Some("T001".to_string()),
+            action_token: None,
             trigger: SlackTriggerType::AppMention,
             channel: "C001".to_string(),
             user: "U001".to_string(),
@@ -603,6 +610,7 @@ mod tests {
         });
 
         assert!(instructions.contains("search_web"));
+        assert!(instructions.contains("search_slack_messages"));
         assert!(instructions.contains("external dependencies"));
         assert!(instructions.contains("public incident reports or status page"));
     }

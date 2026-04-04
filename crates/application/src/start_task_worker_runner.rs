@@ -587,8 +587,9 @@ mod tests {
     use reili_core::knowledge::{MockWebSearchPort, WebSearchPort};
     use reili_core::logger::{LogEntry as CoreLogEntry, LogLevel};
     use reili_core::messaging::slack::{
-        MockSlackTaskControlMessagePort, MockSlackThreadHistoryPort, MockSlackThreadReplyPort,
-        SlackMessage, SlackTaskControlMessagePort, SlackThreadHistoryPort, SlackTriggerType,
+        MockSlackMessageSearchPort, MockSlackTaskControlMessagePort, MockSlackThreadHistoryPort,
+        MockSlackThreadReplyPort, SlackMessage, SlackMessageSearchPort,
+        SlackTaskControlMessagePort, SlackThreadHistoryPort, SlackTriggerType,
     };
     use reili_core::queue::{CompleteJobInput, FailJobInput, JobFailResult, MockJobQueuePort};
     use reili_core::source_code::github::{
@@ -657,12 +658,15 @@ mod tests {
             Arc::new(MockGithubRepositoryContentPort::new());
         let github_pull_request_port: Arc<dyn GithubPullRequestPort> =
             Arc::new(MockGithubPullRequestPort::new());
+        let slack_message_search_port: Arc<dyn SlackMessageSearchPort> =
+            Arc::new(MockSlackMessageSearchPort::new());
         let web_search_port: Arc<dyn WebSearchPort> = Arc::new(MockWebSearchPort::new());
 
         TaskResources {
             github_code_search_port,
             github_repository_content_port,
             github_pull_request_port,
+            slack_message_search_port,
             web_search_port,
         }
     }
@@ -865,6 +869,7 @@ mod tests {
                 message: SlackMessage {
                     slack_event_id: "Ev001".to_string(),
                     team_id: Some("T001".to_string()),
+                    action_token: None,
                     trigger: SlackTriggerType::Message,
                     channel: "C001".to_string(),
                     user: "U001".to_string(),

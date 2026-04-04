@@ -271,6 +271,7 @@ mod tests {
         SlackMessage {
             slack_event_id: "Ev001".to_string(),
             team_id: None,
+            action_token: None,
             trigger: SlackTriggerType::AppMention,
             channel: "C001".to_string(),
             user: "U001".to_string(),
@@ -284,6 +285,7 @@ mod tests {
         SlackMessage {
             slack_event_id: "Ev001".to_string(),
             team_id: None,
+            action_token: None,
             trigger: SlackTriggerType::AppMention,
             channel: "C001".to_string(),
             user: "U001".to_string(),

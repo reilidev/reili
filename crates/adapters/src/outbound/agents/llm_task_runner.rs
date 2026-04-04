@@ -75,6 +75,7 @@ where
         on_progress_event: Arc::clone(&input.run.on_progress_event),
         language: input.language,
         usage_collector: usage_collector.clone(),
+        slack_action_token: input.run.request.trigger_message.action_token.clone(),
     });
 
     let prompt_response_result = task_agent

@@ -12,6 +12,8 @@ pub enum SlackTriggerType {
 pub struct SlackMessage {
     pub slack_event_id: String,
     pub team_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action_token: Option<String>,
     pub trigger: SlackTriggerType,
     pub channel: String,
     pub user: String,
@@ -35,6 +37,7 @@ mod tests {
         let value = SlackMessage {
             slack_event_id: "evt-1".to_string(),
             team_id: Some("T001".to_string()),
+            action_token: Some("action-token".to_string()),
             trigger: SlackTriggerType::Message,
             channel: "C001".to_string(),
             user: "U001".to_string(),
@@ -55,6 +58,7 @@ mod tests {
         let message = SlackMessage {
             slack_event_id: "evt-1".to_string(),
             team_id: Some("T001".to_string()),
+            action_token: None,
             trigger: SlackTriggerType::Message,
             channel: "C001".to_string(),
             user: "U001".to_string(),
@@ -71,6 +75,7 @@ mod tests {
         let message = SlackMessage {
             slack_event_id: "evt-1".to_string(),
             team_id: Some("T001".to_string()),
+            action_token: None,
             trigger: SlackTriggerType::Message,
             channel: "C001".to_string(),
             user: "U001".to_string(),
@@ -80,5 +85,15 @@ mod tests {
         };
 
         assert_eq!(message.thread_ts_or_ts(), "123.456");
+    }
+
+    #[test]
+    fn deserializes_without_action_token_for_backward_compatibility() {
+        let json = r#"{"slackEventId":"evt-1","teamId":"T001","trigger":"message","channel":"C001","user":"U001","text":"hello","ts":"123.456","threadTs":null}"#;
+
+        let restored: SlackMessage =
+            serde_json::from_str(json).expect("deserialize slack message without action token");
+
+        assert_eq!(restored.action_token, None);
     }
 }

@@ -1,5 +1,6 @@
 mod progress_stream;
 
+pub mod slack_message_search_adapter;
 pub mod slack_progress_stream_adapter;
 pub mod slack_reaction_adapter;
 pub mod slack_task_control_message_adapter;
@@ -8,6 +9,7 @@ pub mod slack_thread_reply_adapter;
 pub mod slack_web_api_client;
 
 pub use progress_stream::{SlackProgressReporter, SlackProgressReporterInput};
+pub use slack_message_search_adapter::SlackMessageSearchAdapter;
 pub use slack_progress_stream_adapter::SlackProgressStreamAdapter;
 pub use slack_reaction_adapter::SlackReactionAdapter;
 pub use slack_task_control_message_adapter::SlackTaskControlMessageAdapter;
