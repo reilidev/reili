@@ -263,6 +263,7 @@ mod tests {
                 message: reili_core::messaging::slack::SlackMessage {
                     slack_event_id: "evt-1".to_string(),
                     team_id: Some("T001".to_string()),
+                    action_token: None,
                     trigger: reili_core::messaging::slack::SlackTriggerType::AppMention,
                     channel: "C001".to_string(),
                     user: "U001".to_string(),

@@ -13,6 +13,7 @@ are the integrations and tools wired in this runtime.
 The task runner can call only the following tool families:
 
 - Slack progress reporting: `report_progress` (primarily used to post progress messages back to Slack)
+- Slack workspace lookup: `search_slack_messages` (searches prior Slack public-channel messages visible to the current invocation context)
 - Datadog MCP reads: `search_datadog_services`, `search_datadog_logs`, `analyze_datadog_logs`,
   `search_datadog_metrics`, `get_datadog_metric`, `get_datadog_metric_context`,
   `search_datadog_events`, `search_datadog_monitors`, `search_datadog_incidents`
@@ -33,10 +34,19 @@ Required Slack credentials:
 - `SLACK_SIGNING_SECRET`: verifies incoming requests on `/slack/events` in HTTP mode
 - `SLACK_APP_TOKEN`: opens the Socket Mode WebSocket in Socket Mode (`xapp-...` App-Level Token)
 
+Additional Slack platform requirement:
+
+- `assistant.search.context` is currently available only to internal Slack apps or apps distributed
+  through Slack Marketplace/App Directory
+- In Slack App settings, open `Agents & AI Apps` and enable `Agent or Assistant` so Slack agent
+  search capabilities are available to the app
+- The current runtime uses the Bot Token + `action_token` flow, which supports public-channel
+  message search through `search:read.public`
+
 Required Event Subscriptions:
 
 - Enable Events
-- `app_mention`: starts a task when someone mentions the bot
+- `app_mention`: starts a task when someone mentions the bot and carries the `action_token` used by `assistant.search.context`
 
 Configure the Slack app in two steps:
 
@@ -47,7 +57,8 @@ Common settings for both modes:
 
 | Slack screen                          | Required setting                                                                                                   | Why                                                                                                              |
 |---------------------------------------|--------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
-| `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history` | Receive `app_mention`, mark accepted requests, reply in threads, and read channel thread context |
+| `Agents & AI Apps`                    | Turn on `Agent or Assistant`                                                                                       | Enables Slack agent search capabilities such as `assistant.search.context`                                       |
+| `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history`, `search:read.public` | Receive `app_mention`, mark accepted requests, reply in threads, read channel thread context, and search Slack public-channel messages |
 | `Event Subscriptions`                 | Turn on events and add the bot event `app_mention`                                                                 | `app_mention` is the intake trigger in both modes                                                                |
 | `Interactivity & Shortcuts`           | Turn on interactivity                                                                                              | Receive `block_actions` when a user clicks a task `Cancel` button                                                |
 | `Install App` / `OAuth & Permissions` | Install or reinstall the app after any scope change                                                                | Slack does not apply updated scopes until reinstall                                                              |
@@ -79,6 +90,7 @@ Required Bot OAuth scopes:
 - `chat:write`: post progress and final replies into the originating thread, and post/update the task control message
 - `reactions:write`: add an `:eyes:` reaction to the triggering message once the task is queued
 - `channels:history`: read public channel thread history when additional context is needed
+- `search:read.public`: call `assistant.search.context` for public-channel Slack message search with a Bot Token
 
 Required App-Level Token scope for Socket Mode:
 
@@ -94,6 +106,7 @@ Not in scope for Slack:
 Slack API methods currently used by the runtime:
 
 - `apps.connections.open`: obtains a temporary WebSocket URL when Socket Mode is enabled
+- `assistant.search.context`: searches Slack public-channel message history using the triggering event's `action_token`
 - `auth.test`: resolves the bot user ID at startup
 - `conversations.replies`: loads thread context when the triggering message is a thread reply
 - `chat.postMessage`: posts queue failures, the final task summary, and the task control message
@@ -104,9 +117,11 @@ Slack API methods currently used by the runtime:
 Slack boundary:
 
 - Reads only the thread where the request was made, and only when additional thread context is needed
+- Searches only Slack public-channel messages permitted by the current app install, bot token scope, and `action_token` context
 - Posts only into the originating thread
 - Intended for channel conversations where the app is present, including public and private channels; DM and group DM
   usage are out of scope
+- Does not search private channels or DMs with the current Bot Token configuration
 - Does not delete messages, edit arbitrary messages, read files, manage channels, or administer the workspace
 
 ## Datadog Permissions and API Usage

@@ -34,6 +34,7 @@ mod tests {
                 message: SlackMessage {
                     slack_event_id: "evt-1".to_string(),
                     team_id: Some("T001".to_string()),
+                    action_token: None,
                     trigger: SlackTriggerType::AppMention,
                     channel: "C001".to_string(),
                     user: "U001".to_string(),
