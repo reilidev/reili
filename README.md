@@ -45,7 +45,8 @@ Its current focus is triage, investigation, and communicating findings.
 ### 1. Prerequisites
 
 - Slack App
-  - Create and install it from [slack-app-manifest.yml](./slack-app-manifest.yml)
+  - Create and install it from [slack-app-manifest.yml](./slack-app-manifest.yml) or 
+  <a href="https://api.slack.com/apps?new_app=1&amp;manifest_yaml=display_information%3A%0D%0A++name%3A+Reili%0D%0Afeatures%3A%0D%0A++bot_user%3A%0D%0A++++display_name%3A+Reili%0D%0A++++always_online%3A+true%0D%0Aoauth_config%3A%0D%0A++scopes%3A%0D%0A++++bot%3A%0D%0A++++++-+reactions%3Awrite%0D%0A++++++-+app_mentions%3Aread%0D%0A++++++-+channels%3Ahistory%0D%0A++++++-+channels%3Aread%0D%0A++++++-+chat%3Awrite%0D%0A++pkce_enabled%3A+false%0D%0Asettings%3A%0D%0A++event_subscriptions%3A%0D%0A++++request_url%3A+https%3A%2F%2Fexample.com%2Fslack%2Fevents%0D%0A++++bot_events%3A%0D%0A++++++-+app_mention%0D%0A++interactivity%3A%0D%0A++++is_enabled%3A+true%0D%0A++org_deploy_enabled%3A+false%0D%0A++socket_mode_enabled%3A+true%0D%0A++token_rotation_enabled%3A+false%0D%0A">Create App from manifest link</a>
   - In Slack App settings, open `Agents & AI Apps` and turn on `Agent or Assistant` so Bot Token based Slack search is available
   - Configure the required scopes, events, and Interactivity using
     [Slack Permissions and API Usage](./docs/permissions-and-boundaries.md#slack-permissions-and-api-usage).
