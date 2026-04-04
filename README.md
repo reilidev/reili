@@ -78,6 +78,8 @@ Required:
 - `DATADOG_APP_KEY`
 - `LLM_PROVIDER`
 - `LLM_OPENAI_API_KEY` when `LLM_PROVIDER=openai`
+- `LLM_ANTHROPIC_API_KEY` when `LLM_PROVIDER=anthropic`
+- `LLM_ANTHROPIC_MODEL` when `LLM_PROVIDER=anthropic`
 - `LLM_BEDROCK_MODEL_ID` when `LLM_PROVIDER=bedrock`
 - `LLM_VERTEX_AI_MODEL_ID` when `LLM_PROVIDER=vertexai`
 - `GOOGLE_CLOUD_LOCATION` when `LLM_PROVIDER=vertexai`
@@ -96,6 +98,13 @@ Common optional variables:
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`. When
 `SLACK_SOCKET_MODE` is unset, Reili starts in Socket Mode. In Socket Mode, `SLACK_SIGNING_SECRET`
 is not used.
+
+When `LLM_PROVIDER=anthropic`, Claude is called through the Anthropic API.
+
+- Set `LLM_ANTHROPIC_API_KEY` and `LLM_ANTHROPIC_MODEL`.
+- `search_web` uses Anthropic's web search server tool. Your Anthropic organization administrator
+  must enable web search in Claude Console, or the tool will return a soft error payload instead of
+  live search results.
 
 When `LLM_PROVIDER=bedrock`, AWS credentials and region are loaded from the standard AWS SDK environment or profile
 chain. Set `AWS_PROFILE` to use a named AWS profile such as an AWS SSO profile, and set `AWS_REGION` if the selected

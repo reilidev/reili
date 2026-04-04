@@ -3,9 +3,12 @@ use std::sync::Arc;
 use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::logger::TracingLogger;
 use reili_adapters::outbound::agents::{
-    BedrockTaskRunner, BedrockTaskRunnerInput, DatadogMcpToolConfig, OpenAiTaskRunner,
-    OpenAiTaskRunnerInput, VertexAiAnthropicClient, VertexAiAnthropicClientInput,
-    VertexAiTaskRunner, VertexAiTaskRunnerInput,
+    AnthropicTaskRunner, AnthropicTaskRunnerInput, BedrockTaskRunner, BedrockTaskRunnerInput,
+    DatadogMcpToolConfig, OpenAiTaskRunner, OpenAiTaskRunnerInput, VertexAiAnthropicClient,
+    VertexAiAnthropicClientInput, VertexAiTaskRunner, VertexAiTaskRunnerInput,
+};
+use reili_adapters::outbound::anthropic::{
+    AnthropicWebSearchAdapter, AnthropicWebSearchAdapterConfig,
 };
 use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
 use reili_adapters::outbound::github::{GitHubSearchAdapter, GitHubSearchAdapterConfig};
@@ -217,6 +220,25 @@ async fn create_provider_ports(
             task_runner: Arc::new(OpenAiTaskRunner::new(OpenAiTaskRunnerInput {
                 api_key: config.api_key.clone(),
                 task_runner_model: config.task_runner_model.clone(),
+                datadog_mcp: DatadogMcpToolConfig {
+                    api_key: input.datadog_api_key,
+                    app_key: input.datadog_app_key,
+                    site: input.datadog_site,
+                },
+                github_scope_org: input.github_scope_org,
+                language: input.language,
+            })),
+        }),
+        LlmProviderConfig::Anthropic(config) => Ok(ProviderPorts {
+            web_search_port: Arc::new(AnthropicWebSearchAdapter::new(
+                AnthropicWebSearchAdapterConfig {
+                    api_key: config.api_key.clone(),
+                    model: config.model.clone(),
+                },
+            )),
+            task_runner: Arc::new(AnthropicTaskRunner::new(AnthropicTaskRunnerInput {
+                api_key: config.api_key.clone(),
+                model: config.model.clone(),
                 datadog_mcp: DatadogMcpToolConfig {
                     api_key: input.datadog_api_key,
                     app_key: input.datadog_app_key,

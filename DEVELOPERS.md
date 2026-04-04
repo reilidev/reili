@@ -26,6 +26,8 @@ cp .env.example .env
 - `DATADOG_APP_KEY`
 - `LLM_PROVIDER`
 - `LLM_OPENAI_API_KEY` when `LLM_PROVIDER=openai`
+- `LLM_ANTHROPIC_API_KEY` when `LLM_PROVIDER=anthropic`
+- `LLM_ANTHROPIC_MODEL` when `LLM_PROVIDER=anthropic`
 - `LLM_BEDROCK_MODEL_ID` when `LLM_PROVIDER=bedrock`
 - `LLM_VERTEX_AI_MODEL_ID` when `LLM_PROVIDER=vertexai`
 - `GOOGLE_CLOUD_LOCATION` when `LLM_PROVIDER=vertexai`
@@ -40,6 +42,10 @@ Optional:
 - `PORT` (default: `3000`)
 - `DATADOG_SITE` (default: `datadoghq.com`)
 - `LANGUAGE` (default: `English`)
+
+When `LLM_PROVIDER=anthropic`, set `LLM_ANTHROPIC_API_KEY` and `LLM_ANTHROPIC_MODEL`. The
+`search_web` tool uses Anthropic's web search server tool, which must be enabled by your Anthropic
+organization administrator in Claude Console.
 
 When `LLM_PROVIDER=bedrock`, AWS credentials and region are loaded from the standard AWS SDK environment or profile chain. Set `AWS_PROFILE` to use a named AWS profile such as an AWS SSO profile, and set `AWS_REGION` if the selected profile does not already define a region.
 

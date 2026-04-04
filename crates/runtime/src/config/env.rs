@@ -72,6 +72,7 @@ pub struct LlmConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LlmProviderConfig {
     OpenAi(OpenAiLlmConfig),
+    Anthropic(AnthropicLlmConfig),
     Bedrock(BedrockLlmConfig),
     VertexAi(VertexAiLlmConfig),
 }
@@ -81,6 +82,7 @@ impl LlmProviderConfig {
     pub fn provider_name(&self) -> &str {
         match self {
             Self::OpenAi(_) => "openai",
+            Self::Anthropic(_) => "anthropic",
             Self::Bedrock(_) => "bedrock",
             Self::VertexAi(_) => "vertexai",
         }
@@ -91,6 +93,12 @@ impl LlmProviderConfig {
 pub struct OpenAiLlmConfig {
     pub api_key: String,
     pub task_runner_model: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnthropicLlmConfig {
+    pub api_key: String,
+    pub model: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,6 +236,7 @@ fn read_llm_config(env: &dyn EnvironmentReader) -> Result<LlmConfig, EnvConfigEr
     let provider = read_required_env(env, "LLM_PROVIDER")?;
     let provider_config = match provider.as_str() {
         "openai" => LlmProviderConfig::OpenAi(read_openai_llm_config(env)?),
+        "anthropic" => LlmProviderConfig::Anthropic(read_anthropic_llm_config(env)?),
         "bedrock" => LlmProviderConfig::Bedrock(read_bedrock_llm_config(env)?),
         "vertexai" | "vertex_ai" => LlmProviderConfig::VertexAi(read_vertex_ai_llm_config(env)?),
         _ => {
@@ -247,6 +256,15 @@ fn read_openai_llm_config(env: &dyn EnvironmentReader) -> Result<OpenAiLlmConfig
     Ok(OpenAiLlmConfig {
         api_key: read_required_env(env, "LLM_OPENAI_API_KEY")?,
         task_runner_model: DEFAULT_OPENAI_TASK_RUNNER_MODEL.to_string(),
+    })
+}
+
+fn read_anthropic_llm_config(
+    env: &dyn EnvironmentReader,
+) -> Result<AnthropicLlmConfig, EnvConfigError> {
+    Ok(AnthropicLlmConfig {
+        api_key: read_required_env(env, "LLM_ANTHROPIC_API_KEY")?,
+        model: read_required_env(env, "LLM_ANTHROPIC_MODEL")?,
     })
 }
 
@@ -437,8 +455,33 @@ mod tests {
                 assert_eq!(provider.api_key, "openai-api-key");
                 assert_eq!(provider.task_runner_model, DEFAULT_OPENAI_TASK_RUNNER_MODEL);
             }
-            LlmProviderConfig::Bedrock(_) | LlmProviderConfig::VertexAi(_) => {
+            LlmProviderConfig::Anthropic(_)
+            | LlmProviderConfig::Bedrock(_)
+            | LlmProviderConfig::VertexAi(_) => {
                 panic!("expected openai provider")
+            }
+        }
+    }
+
+    #[test]
+    fn loads_anthropic_llm_config() {
+        let env = environment_reader_mock(&[
+            ("LLM_PROVIDER", "anthropic"),
+            ("LLM_ANTHROPIC_API_KEY", "anthropic-api-key"),
+            ("LLM_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+        ]);
+
+        let config = load_app_config_with_env(&env).expect("load app config");
+
+        match config.llm.provider {
+            LlmProviderConfig::Anthropic(provider) => {
+                assert_eq!(provider.api_key, "anthropic-api-key");
+                assert_eq!(provider.model, "claude-sonnet-4-20250514");
+            }
+            LlmProviderConfig::OpenAi(_)
+            | LlmProviderConfig::Bedrock(_)
+            | LlmProviderConfig::VertexAi(_) => {
+                panic!("expected anthropic provider")
             }
         }
     }
@@ -462,7 +505,9 @@ mod tests {
                     "anthropic.claude-3-7-sonnet-20250219-v1:0"
                 );
             }
-            LlmProviderConfig::OpenAi(_) | LlmProviderConfig::VertexAi(_) => {
+            LlmProviderConfig::OpenAi(_)
+            | LlmProviderConfig::Anthropic(_)
+            | LlmProviderConfig::VertexAi(_) => {
                 panic!("expected bedrock provider")
             }
         }
@@ -485,7 +530,9 @@ mod tests {
                 assert_eq!(provider.location, "us-east5");
                 assert_eq!(provider.model_id, "claude-sonnet-4-6");
             }
-            LlmProviderConfig::OpenAi(_) | LlmProviderConfig::Bedrock(_) => {
+            LlmProviderConfig::OpenAi(_)
+            | LlmProviderConfig::Anthropic(_)
+            | LlmProviderConfig::Bedrock(_) => {
                 panic!("expected vertexai provider")
             }
         }
