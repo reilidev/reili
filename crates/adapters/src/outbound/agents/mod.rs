@@ -1,4 +1,5 @@
 mod agent_execution_hook;
+mod anthropic_task_runner;
 mod bedrock_task_runner;
 mod datadog_mcp_client;
 mod datadog_mcp_tools;
@@ -12,6 +13,7 @@ pub mod tools;
 mod vertex_ai_anthropic_completion;
 mod vertex_ai_task_runner;
 
+pub use anthropic_task_runner::{AnthropicTaskRunner, AnthropicTaskRunnerInput};
 pub use bedrock_task_runner::{BedrockTaskRunner, BedrockTaskRunnerInput};
 pub use datadog_mcp_tools::DatadogMcpToolConfig;
 pub use openai_task_runner::{OpenAiTaskRunner, OpenAiTaskRunnerInput};
