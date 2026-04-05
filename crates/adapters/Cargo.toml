@@ -9,7 +9,7 @@ mockall.workspace = true
 async-trait = "0.1.89"
 aws-config = { version = "1.8.15", default-features = false, features = ["behavior-version-latest", "sso"] }
 aws-credential-types = "1.2.14"
-aws-sdk-bedrockruntime = { version = "1.128.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-bedrockruntime = { version = "1.129.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
 aws-sigv4 = { version = "1.4.2", features = ["http1"] }
 axum = { version = "0.8.8", default-features = false }
 base64 = "0.22.1"
@@ -17,18 +17,18 @@ chrono = { version = "0.4.44", features = ["clock"] }
 futures = "0.3.32"
 google-cloud-aiplatform-v1 = { version = "1.9.0", default-features = false, features = ["prediction-service"] }
 http = "1.4.0"
-jsonwebtoken = "9.3.1"
-octocrab = "0.39.0"
+jsonwebtoken = "10.3.0"
+octocrab = "0.49.7"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "query", "rustls"] }
 rig-core = { version = "0.34.0", features = ["rmcp"] }
 rig-vertexai = "0.3.3"
-rmcp = { version = "0.16.0", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
+rmcp = { version = "1.3.0", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 ring = "0.17.14"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_urlencoded = "0.7.1"
 reili_core = { path = "../core" }
-tokio = { version = "1.50.0", features = ["macros", "rt", "sync", "test-util", "time"] }
+tokio = { version = "1.51.0", features = ["macros", "rt", "sync", "test-util", "time"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
 rig-bedrock = "0.4.3"
