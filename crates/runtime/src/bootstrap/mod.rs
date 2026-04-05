@@ -4,8 +4,8 @@ use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::logger::TracingLogger;
 use reili_adapters::outbound::agents::{
     AnthropicTaskRunner, AnthropicTaskRunnerInput, BedrockTaskRunner, BedrockTaskRunnerInput,
-    DatadogMcpToolConfig, OpenAiTaskRunner, OpenAiTaskRunnerInput, VertexAiAnthropicClient,
-    VertexAiAnthropicClientInput, VertexAiTaskRunner, VertexAiTaskRunnerInput,
+    DatadogMcpToolConfig, OpenAiTaskRunner, OpenAiTaskRunnerInput, VertexAiGeminiClient,
+    VertexAiTaskRunner, VertexAiTaskRunnerInput,
 };
 use reili_adapters::outbound::anthropic::{
     AnthropicWebSearchAdapter, AnthropicWebSearchAdapterConfig,
@@ -266,33 +266,15 @@ async fn create_provider_ports(
             })),
         }),
         LlmProviderConfig::VertexAi(config) => {
-            let client = VertexAiAnthropicClient::new(VertexAiAnthropicClientInput {
-                project_id: config.project_id.clone(),
-                location: config.location.clone(),
-            })
-            .await
-            .map_err(
-                |error| RuntimeBootstrapError::ProviderClientInitialization {
-                    provider: "vertexai".to_string(),
-                    message: error.to_string(),
-                },
-            )?;
+            let client = build_vertex_ai_client(config)?;
 
             Ok(ProviderPorts {
-                web_search_port: Arc::new(
-                    VertexAiWebSearchAdapter::new(VertexAiWebSearchAdapterConfig {
-                        project_id: config.project_id.clone(),
-                        location: config.location.clone(),
+                web_search_port: Arc::new(VertexAiWebSearchAdapter::new(
+                    VertexAiWebSearchAdapterConfig {
+                        client: client.clone(),
                         model_id: config.model_id.clone(),
-                    })
-                    .await
-                    .map_err(|error| {
-                        RuntimeBootstrapError::ProviderClientInitialization {
-                            provider: "vertexai".to_string(),
-                            message: error,
-                        }
-                    })?,
-                ),
+                    },
+                )),
                 task_runner: Arc::new(VertexAiTaskRunner::new(VertexAiTaskRunnerInput {
                     client,
                     model_id: config.model_id.clone(),
@@ -307,6 +289,21 @@ async fn create_provider_ports(
             })
         }
     }
+}
+
+fn build_vertex_ai_client(
+    config: &crate::config::env::VertexAiLlmConfig,
+) -> Result<VertexAiGeminiClient, RuntimeBootstrapError> {
+    VertexAiGeminiClient::builder()
+        .with_project(&config.project_id)
+        .with_location(&config.location)
+        .build()
+        .map_err(
+            |error| RuntimeBootstrapError::ProviderClientInitialization {
+                provider: "vertexai".to_string(),
+                message: error,
+            },
+        )
 }
 
 pub fn create_task_logger() -> Arc<dyn TaskLogger> {

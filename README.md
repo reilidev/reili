@@ -52,7 +52,7 @@ Its current focus is triage, investigation, and communicating findings.
     [Slack Permissions and API Usage](./docs/permissions-and-boundaries.md#slack-permissions-and-api-usage).
 - Datadog API Key + APP Key for the Datadog MCP server
 - OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call
-  Vertex AI partner models
+  Vertex AI Gemini models
 - GitHub App (App ID / Private Key / Installation ID)
   — [Create one with a single click](https://reilidev.github.io/reili/create-github-app.html)
 
@@ -115,8 +115,8 @@ profile does not already define a region.
 When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Default Credentials.
 
 - Set `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `LLM_VERTEX_AI_MODEL_ID`.
-- Anthropic Claude models on Vertex AI are not available for personal-use Google accounts/projects.
-- Use the exact Vertex AI Anthropic model id, including the published version suffix when Google provides one.
+- For Gemini on Vertex AI, `GOOGLE_CLOUD_LOCATION=global` is usually the best default.
+- Web search uses Vertex AI Gemini Grounding with Google Search.
 - If Vertex AI returns `RESOURCE_EXHAUSTED`, verify your project quotas in Google Cloud Quotas (
   `https://console.cloud.google.com/iam-admin/quotas`) and adjust them if needed.
 

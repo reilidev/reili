@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::slack_web_api_client::SlackWebApiClient;
 
-const MAX_SEARCH_RESULTS: u32 = 20;
+const MAX_SEARCH_RESULTS: u32 = 5;
 
 #[derive(Debug, Clone)]
 pub struct SlackMessageSearchAdapter {
@@ -325,7 +325,7 @@ mod tests {
             .search_messages(SlackMessageSearchInput {
                 query: "search".to_string(),
                 action_token: "action-token".to_string(),
-                limit: 21,
+                limit: 6,
                 include_bots: false,
                 include_context_messages: true,
                 before: None,
@@ -339,7 +339,7 @@ mod tests {
         assert!(
             error
                 .message
-                .contains("Slack search limit must be between 1 and 20")
+                .contains("Slack search limit must be between 1 and 5")
         );
     }
 

@@ -518,8 +518,8 @@ mod tests {
         let env = environment_reader_mock(&[
             ("LLM_PROVIDER", "vertexai"),
             ("GOOGLE_CLOUD_PROJECT", "example-project"),
-            ("GOOGLE_CLOUD_LOCATION", "us-east5"),
-            ("LLM_VERTEX_AI_MODEL_ID", "claude-sonnet-4-6"),
+            ("GOOGLE_CLOUD_LOCATION", "global"),
+            ("LLM_VERTEX_AI_MODEL_ID", "gemini-2.5-pro"),
         ]);
 
         let config = load_app_config_with_env(&env).expect("load app config");
@@ -527,8 +527,8 @@ mod tests {
         match config.llm.provider {
             LlmProviderConfig::VertexAi(provider) => {
                 assert_eq!(provider.project_id, "example-project");
-                assert_eq!(provider.location, "us-east5");
-                assert_eq!(provider.model_id, "claude-sonnet-4-6");
+                assert_eq!(provider.location, "global");
+                assert_eq!(provider.model_id, "gemini-2.5-pro");
             }
             LlmProviderConfig::OpenAi(_)
             | LlmProviderConfig::Anthropic(_)
