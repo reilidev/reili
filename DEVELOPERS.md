@@ -50,7 +50,7 @@ organization administrator in Claude Console.
 When `LLM_PROVIDER=bedrock`, AWS credentials and region are loaded from the standard AWS SDK environment or profile chain. Set `AWS_PROFILE` to use a named AWS profile such as an AWS SSO profile, and set `AWS_REGION` if the selected profile does not already define a region.
 
 
-When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Default Credentials. Set `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and use the exact Vertex AI Anthropic model id for `LLM_VERTEX_AI_MODEL_ID`.
+When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Default Credentials. Set `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `LLM_VERTEX_AI_MODEL_ID`. Vertex AI web search uses Gemini Grounding with Google Search, so the selected model and project must have access to that capability.
 
 ## Local Run
 
@@ -58,14 +58,14 @@ Run the unified runtime in one terminal.
 
 ```bash
 cd crates
-bash -lc 'set -a; source ../.env; set +a; APP_VERSION=local cargo run -p reili_runtime' 2>&1 | tee -a ../.tmp/reili.log
+bash -lc 'set -a; source ../.env; set +a; APP_VERSION=local cargo run -p reili_runtime' 2>&1 | tee ../.tmp/reili.log
 ```
 
 If you use `cargo-watch`:
 
 ```bash
 cd crates
-bash -lc 'set -a; source ../.env; set +a; APP_VERSION=local cargo watch -x "run -p reili_runtime"' 2>&1 | tee -a ../.tmp/reili.log
+bash -lc 'set -a; source ../.env; set +a; APP_VERSION=local cargo watch -x "run -p reili_runtime"' 2>&1 | tee ../.tmp/reili.log
 ```
 
 ## Docker Run

@@ -1,16 +1,16 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
+use rig_vertexai::Client;
 
 use super::datadog_mcp_tools::DatadogMcpToolConfig;
 use super::llm_provider_settings::{
     CreateVertexAiProviderSettingsInput, LlmProviderSettings, create_vertex_ai_provider_settings,
 };
 use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
-use super::vertex_ai_anthropic_completion::VertexAiAnthropicClient;
 
 pub struct VertexAiTaskRunnerInput {
-    pub client: VertexAiAnthropicClient,
+    pub client: Client,
     pub model_id: String,
     pub datadog_mcp: DatadogMcpToolConfig,
     pub github_scope_org: String,
@@ -18,7 +18,7 @@ pub struct VertexAiTaskRunnerInput {
 }
 
 pub struct VertexAiTaskRunner {
-    client: VertexAiAnthropicClient,
+    client: Client,
     provider_settings: LlmProviderSettings,
     datadog_mcp: DatadogMcpToolConfig,
     github_scope_org: String,

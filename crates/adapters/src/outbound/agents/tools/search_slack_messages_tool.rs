@@ -54,7 +54,7 @@ pub struct SearchSlackMessagesArgs {
 }
 
 fn default_search_slack_limit() -> u32 {
-    10
+    5
 }
 
 fn default_include_bots() -> bool {
@@ -95,8 +95,8 @@ impl Tool for SearchSlackMessagesTool {
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 20,
-                        "default": 10,
+                        "maximum": 5,
+                        "default": 5,
                         "description": "Maximum number of message results to return."
                     },
                     "includeBots": {
@@ -277,7 +277,7 @@ mod tests {
         let output = tool
             .call(SearchSlackMessagesArgs {
                 query: "outage".to_string(),
-                limit: 10,
+                limit: 5,
                 include_bots: true,
                 include_context_messages: true,
                 before: None,
@@ -306,6 +306,8 @@ mod tests {
 
         let definition = tool.definition("test".to_string()).await;
         assert_eq!(definition.name, "search_slack_messages");
+        assert_eq!(definition.parameters["properties"]["limit"]["default"], 5);
+        assert_eq!(definition.parameters["properties"]["limit"]["maximum"], 5);
         let required = definition.parameters["required"]
             .as_array()
             .expect("required array");
