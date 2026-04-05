@@ -1,0 +1,14 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:best-practices"],
+  dependencyDashboard: false,
+  addLabels: ["dependencies", "renovate"],
+  branchPrefix: "renovate/",
+  prConcurrentLimit: 10,
+  packageRules: [
+    {
+      matchManagers: ["cargo"],
+      groupName: "rust-deps",
+    },
+  ],
+}
