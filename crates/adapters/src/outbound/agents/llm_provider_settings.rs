@@ -3,6 +3,9 @@ use serde_json::{Value, json};
 const DEFAULT_TASK_RUNNER_MAX_TURNS: usize = 20;
 const DEFAULT_SPECIALIST_MAX_TURNS: usize = 50;
 const DEFAULT_TOOL_CONCURRENCY: usize = 8;
+const ANTHROPIC_OPUS_4_6_MODEL: &str = "claude-opus-4-6";
+const ANTHROPIC_SONNET_4_6_MODEL: &str = "claude-sonnet-4-6";
+const ANTHROPIC_HAIKU_4_5_MODEL: &str = "claude-haiku-4-5";
 
 #[derive(Debug, Clone)]
 pub struct LlmProviderSettings {
@@ -12,6 +15,7 @@ pub struct LlmProviderSettings {
     pub task_runner_max_turns: usize,
     pub specialist_max_turns: usize,
     pub tool_concurrency: usize,
+    pub max_tokens: Option<u64>,
     pub additional_params: Value,
 }
 
@@ -41,6 +45,7 @@ pub fn create_openai_provider_settings(
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
         specialist_max_turns: DEFAULT_SPECIALIST_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
+        max_tokens: None,
         additional_params: json!({
             "reasoning": {
                 "effort": "low",
@@ -59,6 +64,8 @@ pub fn create_openai_provider_settings(
 pub fn create_anthropic_provider_settings(
     input: CreateAnthropicProviderSettingsInput,
 ) -> LlmProviderSettings {
+    let max_tokens = anthropic_max_tokens(&input.model);
+
     LlmProviderSettings {
         provider: "anthropic".to_string(),
         specialist_model: input.model.clone(),
@@ -66,6 +73,7 @@ pub fn create_anthropic_provider_settings(
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
         specialist_max_turns: DEFAULT_SPECIALIST_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
+        max_tokens,
         additional_params: json!({}),
     }
 }
@@ -80,6 +88,7 @@ pub fn create_bedrock_provider_settings(
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
         specialist_max_turns: DEFAULT_SPECIALIST_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
+        max_tokens: None,
         additional_params: json!({}),
     }
 }
@@ -94,6 +103,16 @@ pub fn create_vertex_ai_provider_settings(
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
         specialist_max_turns: DEFAULT_SPECIALIST_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
+        max_tokens: None,
         additional_params: json!({}),
+    }
+}
+
+fn anthropic_max_tokens(model: &str) -> Option<u64> {
+    match model {
+        ANTHROPIC_OPUS_4_6_MODEL => Some(32_000),
+        ANTHROPIC_SONNET_4_6_MODEL => Some(64_000),
+        ANTHROPIC_HAIKU_4_5_MODEL => Some(4_096),
+        _ => None,
     }
 }

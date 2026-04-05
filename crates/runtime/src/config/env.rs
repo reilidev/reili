@@ -9,6 +9,8 @@ const DEFAULT_LANGUAGE: &str = "English";
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
 const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
 const DEFAULT_OPENAI_TASK_RUNNER_MODEL: &str = "gpt-5.3-codex";
+const SUPPORTED_ANTHROPIC_MODELS: &[&str] =
+    &["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"];
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct SecretString(String);
@@ -262,9 +264,17 @@ fn read_openai_llm_config(env: &dyn EnvironmentReader) -> Result<OpenAiLlmConfig
 fn read_anthropic_llm_config(
     env: &dyn EnvironmentReader,
 ) -> Result<AnthropicLlmConfig, EnvConfigError> {
+    let model = read_required_env(env, "LLM_ANTHROPIC_MODEL")?;
+    if !SUPPORTED_ANTHROPIC_MODELS.contains(&model.as_str()) {
+        return Err(EnvConfigError::InvalidValue {
+            name: "LLM_ANTHROPIC_MODEL".to_string(),
+            value: model,
+        });
+    }
+
     Ok(AnthropicLlmConfig {
         api_key: read_required_env(env, "LLM_ANTHROPIC_API_KEY")?,
-        model: read_required_env(env, "LLM_ANTHROPIC_MODEL")?,
+        model,
     })
 }
 
@@ -367,8 +377,8 @@ mod tests {
 
     use super::{
         DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_OPENAI_TASK_RUNNER_MODEL,
-        DEFAULT_WORKER_CONCURRENCY, LlmProviderConfig, MockEnvironmentReader, SecretString,
-        SlackConnectionMode, load_app_config_with_env,
+        DEFAULT_WORKER_CONCURRENCY, EnvConfigError, LlmProviderConfig, MockEnvironmentReader,
+        SecretString, SlackConnectionMode, load_app_config_with_env,
     };
 
     fn environment_reader_mock(overrides: &[(&str, &str)]) -> MockEnvironmentReader {
@@ -468,7 +478,7 @@ mod tests {
         let env = environment_reader_mock(&[
             ("LLM_PROVIDER", "anthropic"),
             ("LLM_ANTHROPIC_API_KEY", "anthropic-api-key"),
-            ("LLM_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+            ("LLM_ANTHROPIC_MODEL", "claude-sonnet-4-6"),
         ]);
 
         let config = load_app_config_with_env(&env).expect("load app config");
@@ -476,7 +486,7 @@ mod tests {
         match config.llm.provider {
             LlmProviderConfig::Anthropic(provider) => {
                 assert_eq!(provider.api_key, "anthropic-api-key");
-                assert_eq!(provider.model, "claude-sonnet-4-20250514");
+                assert_eq!(provider.model, "claude-sonnet-4-6");
             }
             LlmProviderConfig::OpenAi(_)
             | LlmProviderConfig::Bedrock(_)
@@ -484,6 +494,25 @@ mod tests {
                 panic!("expected anthropic provider")
             }
         }
+    }
+
+    #[test]
+    fn rejects_unsupported_anthropic_model() {
+        let env = environment_reader_mock(&[
+            ("LLM_PROVIDER", "anthropic"),
+            ("LLM_ANTHROPIC_API_KEY", "anthropic-api-key"),
+            ("LLM_ANTHROPIC_MODEL", "claude-3-5-haiku-latest"),
+        ]);
+
+        let error = load_app_config_with_env(&env).expect_err("invalid anthropic model");
+
+        assert_eq!(
+            error,
+            EnvConfigError::InvalidValue {
+                name: "LLM_ANTHROPIC_MODEL".to_string(),
+                value: "claude-3-5-haiku-latest".to_string(),
+            }
+        );
     }
 
     #[test]

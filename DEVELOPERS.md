@@ -44,6 +44,8 @@ Optional:
 - `LANGUAGE` (default: `English`)
 
 When `LLM_PROVIDER=anthropic`, set `LLM_ANTHROPIC_API_KEY` and `LLM_ANTHROPIC_MODEL`. The
+supported `LLM_ANTHROPIC_MODEL` values are `claude-opus-4-6`, `claude-sonnet-4-6`, and
+`claude-haiku-4-5`. The
 `search_web` tool uses Anthropic's web search server tool, which must be enabled by your Anthropic
 organization administrator in Claude Console.
 
