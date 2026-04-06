@@ -102,6 +102,8 @@ is not used.
 When `LLM_PROVIDER=anthropic`, Claude is called through the Anthropic API.
 
 - Set `LLM_ANTHROPIC_API_KEY` and `LLM_ANTHROPIC_MODEL`.
+- Supported `LLM_ANTHROPIC_MODEL` values are `claude-opus-4-6`, `claude-sonnet-4-6`, and
+  `claude-haiku-4-5`.
 - `search_web` uses Anthropic's web search server tool. Your Anthropic organization administrator
   must enable web search in Claude Console, or the tool will return a soft error payload instead of
   live search results.

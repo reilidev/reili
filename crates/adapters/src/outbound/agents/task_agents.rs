@@ -81,7 +81,7 @@ where
         usage_collector: input.usage_collector.clone(),
     });
 
-    input
+    let builder = input
         .client
         .agent(input.settings.task_runner_model.clone())
         .name("TaskRunner")
@@ -92,7 +92,10 @@ where
             language: input.language,
         }))
         .default_max_turns(input.settings.task_runner_max_turns)
-        .additional_params(input.settings.additional_params.clone())
+        .additional_params(input.settings.additional_params.clone());
+    let builder = with_max_tokens(builder, input.settings.max_tokens);
+
+    builder
         .tools(input.datadog_mcp_toolset.lead_tools())
         .tool(ReportProgressTool::new(ReportProgressToolInput {
             on_progress_event: Arc::clone(&input.on_progress_event),
@@ -247,14 +250,17 @@ where
     C: CompletionClient,
     C::CompletionModel: 'static,
 {
-    input
+    let builder = input
         .client
         .agent(input.settings.specialist_model.clone())
         .name("investigate_datadog")
         .description("Delegates Datadog logs, metrics, and events investigation tasks.")
         .preamble(&build_datadog_instructions(&input.language))
         .default_max_turns(input.settings.specialist_max_turns)
-        .additional_params(input.settings.additional_params.clone())
+        .additional_params(input.settings.additional_params.clone());
+    let builder = with_max_tokens(builder, input.settings.max_tokens);
+
+    builder
         .hook(AgentExecutionHook::new(
             input.owner_id.clone(),
             input.runtime,
@@ -277,7 +283,7 @@ where
     C: CompletionClient,
     C::CompletionModel: 'static,
 {
-    input
+    let builder = input
         .client
         .agent(input.settings.specialist_model.clone())
         .name("investigate_github")
@@ -287,7 +293,10 @@ where
             github_scope_org: input.github_scope_org.clone(),
         }))
         .default_max_turns(input.settings.specialist_max_turns)
-        .additional_params(input.settings.additional_params.clone())
+        .additional_params(input.settings.additional_params.clone());
+    let builder = with_max_tokens(builder, input.settings.max_tokens);
+
+    builder
         .hook(AgentExecutionHook::new(
             input.owner_id.clone(),
             input.runtime,
@@ -323,6 +332,20 @@ where
         )))
         .tool(SearchWebTool::new(input.resources))
         .build()
+}
+
+fn with_max_tokens<M, H>(
+    builder: rig::agent::AgentBuilder<M, H>,
+    max_tokens: Option<u64>,
+) -> rig::agent::AgentBuilder<M, H>
+where
+    M: rig::completion::CompletionModel,
+    H: rig::agent::PromptHook<M>,
+{
+    match max_tokens {
+        Some(value) => builder.max_tokens(value),
+        None => builder,
+    }
 }
 
 struct BuildTaskInstructionsInput {
@@ -435,7 +458,8 @@ mod tests {
     use serde_json::json;
 
     use super::super::llm_provider_settings::{
-        CreateOpenAiProviderSettingsInput, create_openai_provider_settings,
+        CreateAnthropicProviderSettingsInput, CreateOpenAiProviderSettingsInput,
+        create_anthropic_provider_settings, create_openai_provider_settings,
     };
     use super::{
         BuildGithubInstructionsInput, BuildTaskInstructionsInput, build_datadog_instructions,
@@ -546,6 +570,24 @@ mod tests {
             params.get("text"),
             Some(&json!({ "format": { "type": "text" } }))
         );
+    }
+
+    #[test]
+    fn anthropic_provider_settings_assign_max_tokens_for_supported_models() {
+        let cases = [
+            ("claude-opus-4-6", Some(32_000)),
+            ("claude-sonnet-4-6", Some(64_000)),
+            ("claude-haiku-4-5", Some(4_096)),
+        ];
+
+        for (model, expected_max_tokens) in cases {
+            let settings =
+                create_anthropic_provider_settings(CreateAnthropicProviderSettingsInput {
+                    model: model.to_string(),
+                });
+
+            assert_eq!(settings.max_tokens, expected_max_tokens);
+        }
     }
 
     #[test]
