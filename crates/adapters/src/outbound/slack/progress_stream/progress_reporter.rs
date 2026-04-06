@@ -512,7 +512,7 @@ mod tests {
         session
             .apply(scope_started(
                 "progress-step-1",
-                &format!("{}\n", "a".repeat(2650)),
+                &format!("{}\n", "a".repeat(3200)),
             ))
             .await;
         session
@@ -545,7 +545,7 @@ mod tests {
                 "progress-step-1",
                 "Collect evidence",
                 SlackTaskUpdateStatus::InProgress,
-                Some(&format!("{}\n", "a".repeat(2650))),
+                Some(&format!("{}\n", "a".repeat(3200))),
                 None,
             )])
         );
