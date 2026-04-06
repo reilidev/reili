@@ -8,11 +8,13 @@ use super::llm_provider_settings::{
     CreateOpenAiProviderSettingsInput, LlmProviderSettings, create_openai_provider_settings,
 };
 use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
+use crate::outbound::github::GitHubMcpConfig;
 
 pub struct OpenAiTaskRunnerInput {
     pub api_key: String,
     pub task_runner_model: String,
     pub datadog_mcp: DatadogMcpToolConfig,
+    pub github_mcp: GitHubMcpConfig,
     pub github_scope_org: String,
     pub language: String,
 }
@@ -21,6 +23,7 @@ pub struct OpenAiTaskRunner {
     api_key: String,
     provider_settings: LlmProviderSettings,
     datadog_mcp: DatadogMcpToolConfig,
+    github_mcp: GitHubMcpConfig,
     github_scope_org: String,
     language: String,
 }
@@ -33,6 +36,7 @@ impl OpenAiTaskRunner {
                 task_runner_model: input.task_runner_model,
             }),
             datadog_mcp: input.datadog_mcp,
+            github_mcp: input.github_mcp,
             github_scope_org: input.github_scope_org,
             language: input.language,
         }
@@ -46,6 +50,7 @@ impl TaskRunnerPort for OpenAiTaskRunner {
             client: openai::Client::from_val(self.api_key.clone().into()),
             settings: self.provider_settings.clone(),
             datadog_mcp: self.datadog_mcp.clone(),
+            github_mcp: self.github_mcp.clone(),
             github_scope_org: self.github_scope_org.clone(),
             language: self.language.clone(),
             run: input,

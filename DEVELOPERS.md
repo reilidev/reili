@@ -8,7 +8,7 @@ This document is for contributors and maintainers of `Reili`.
 - Slack App credentials
 - Datadog API credentials for the Datadog MCP server
 - OpenAI API key, AWS credentials for Bedrock, or Google Cloud ADC for Vertex AI
-- GitHub App credentials
+- GitHub MCP token
 
 ## Setup
 
@@ -32,9 +32,6 @@ cp .env.example .env
 - `LLM_VERTEX_AI_MODEL_ID` when `LLM_PROVIDER=vertexai`
 - `GOOGLE_CLOUD_LOCATION` when `LLM_PROVIDER=vertexai`
 - `GOOGLE_CLOUD_PROJECT` when `LLM_PROVIDER=vertexai`
-- `GITHUB_APP_ID`
-- `GITHUB_APP_PRIVATE_KEY`
-- `GITHUB_APP_INSTALLATION_ID`
 - `GITHUB_SEARCH_SCOPE_ORG`
 
 Optional:
@@ -42,6 +39,16 @@ Optional:
 - `PORT` (default: `3000`)
 - `DATADOG_SITE` (default: `datadoghq.com`)
 - `LANGUAGE` (default: `English`)
+- `GITHUB_MCP_URL` (default: `https://api.githubcopilot.com/mcp/`)
+
+GitHub configuration:
+
+- `GITHUB_APP_ID`
+- `GITHUB_APP_PRIVATE_KEY`
+- `GITHUB_APP_INSTALLATION_ID`
+
+The GitHub MCP backend mints short-lived installation tokens from the GitHub App credentials at
+runtime. `GITHUB_MCP_TOKEN` is no longer used.
 
 When `LLM_PROVIDER=anthropic`, set `LLM_ANTHROPIC_API_KEY` and `LLM_ANTHROPIC_MODEL`. The
 supported `LLM_ANTHROPIC_MODEL` values are `claude-opus-4-6`, `claude-sonnet-4-6`, and

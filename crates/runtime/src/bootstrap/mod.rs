@@ -11,7 +11,7 @@ use reili_adapters::outbound::anthropic::{
     AnthropicWebSearchAdapter, AnthropicWebSearchAdapterConfig,
 };
 use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
-use reili_adapters::outbound::github::{GitHubSearchAdapter, GitHubSearchAdapterConfig};
+use reili_adapters::outbound::github::GitHubMcpConfig;
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
     SlackMessageSearchAdapter, SlackProgressReporter, SlackProgressReporterInput,
@@ -22,10 +22,7 @@ use reili_adapters::outbound::vertex_ai::{
     VertexAiWebSearchAdapter, VertexAiWebSearchAdapterConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
-use reili_application::task::{
-    ScopedGithubCodeSearchPort, ScopedGithubPullRequestPort, ScopedGithubRepositoryContentPort,
-    TaskExecutionDeps, TaskLogger,
-};
+use reili_application::task::{TaskExecutionDeps, TaskLogger};
 use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
     HandleSlackInteractionUseCaseDeps, StartTaskWorkerRunnerUseCase,
@@ -40,9 +37,6 @@ use reili_core::messaging::slack::{
     SlackMessageSearchPort, SlackReactionPort, SlackThreadHistoryPort, SlackThreadReplyPort,
 };
 use reili_core::queue::TaskJobQueuePort;
-use reili_core::source_code::github::{
-    GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort, GithubScopePolicy,
-};
 use reili_core::task::TaskJob;
 use reili_core::task::{TaskProgressSessionFactoryPort, TaskResources, TaskRunnerPort};
 use serde_json::{Value, json};
@@ -79,6 +73,7 @@ struct CreateProviderPortsInput<'a> {
     datadog_api_key: String,
     datadog_app_key: String,
     datadog_site: String,
+    github_mcp: GitHubMcpConfig,
     github_scope_org: String,
     language: String,
 }
@@ -111,38 +106,23 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     );
     let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
     let in_flight_job_registry = reili_application::task::services::InFlightJobRegistry::new();
-    let github_scope_policy = Arc::new(GithubScopePolicy::new(config.github.scope_org.clone())?);
-    let github_adapter = Arc::new(GitHubSearchAdapter::new(GitHubSearchAdapterConfig {
-        app_id: config.github.app_id.clone(),
-        private_key: config.github.private_key.clone(),
-        installation_id: config.github.installation_id,
-        base_url: None,
-    })?);
-    let github_code_search_port: Arc<dyn GithubCodeSearchPort> = Arc::new(
-        ScopedGithubCodeSearchPort::new(github_adapter.clone(), Arc::clone(&github_scope_policy)),
-    );
-    let github_repository_content_port: Arc<dyn GithubRepositoryContentPort> =
-        Arc::new(ScopedGithubRepositoryContentPort::new(
-            github_adapter.clone(),
-            Arc::clone(&github_scope_policy),
-        ));
-    let github_pull_request_port: Arc<dyn GithubPullRequestPort> = Arc::new(
-        ScopedGithubPullRequestPort::new(github_adapter, github_scope_policy),
-    );
     let provider_ports = create_provider_ports(CreateProviderPortsInput {
         llm_provider: &config.llm.provider,
         datadog_api_key: config.datadog_api_key.clone(),
         datadog_app_key: config.datadog_app_key.clone(),
         datadog_site: config.datadog_site.clone(),
+        github_mcp: GitHubMcpConfig {
+            url: config.github.url.clone(),
+            app_id: config.github.app_id.clone(),
+            private_key: config.github.private_key.expose().to_string(),
+            installation_id: config.github.installation_id,
+        },
         github_scope_org: config.github.scope_org.clone(),
         language: config.language.clone(),
     })
     .await?;
 
     let task_resources = TaskResources {
-        github_code_search_port,
-        github_repository_content_port,
-        github_pull_request_port,
         slack_message_search_port,
         web_search_port: provider_ports.web_search_port,
     };
@@ -225,6 +205,7 @@ async fn create_provider_ports(
                     app_key: input.datadog_app_key,
                     site: input.datadog_site,
                 },
+                github_mcp: input.github_mcp,
                 github_scope_org: input.github_scope_org,
                 language: input.language,
             })),
@@ -244,6 +225,7 @@ async fn create_provider_ports(
                     app_key: input.datadog_app_key,
                     site: input.datadog_site,
                 },
+                github_mcp: input.github_mcp,
                 github_scope_org: input.github_scope_org,
                 language: input.language,
             })),
@@ -261,6 +243,7 @@ async fn create_provider_ports(
                     app_key: input.datadog_app_key,
                     site: input.datadog_site,
                 },
+                github_mcp: input.github_mcp,
                 github_scope_org: input.github_scope_org,
                 language: input.language,
             })),
@@ -283,6 +266,7 @@ async fn create_provider_ports(
                         app_key: input.datadog_app_key,
                         site: input.datadog_site,
                     },
+                    github_mcp: input.github_mcp,
                     github_scope_org: input.github_scope_org,
                     language: input.language,
                 })),

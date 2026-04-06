@@ -11,10 +11,9 @@ use rig::prelude::CompletionClient;
 
 use super::agent_execution_hook::AgentExecutionHook;
 use super::datadog_mcp_tools::DatadogMcpToolset;
+use super::github_mcp_tools::GitHubMcpToolset;
 use super::tools::{
-    GetPullRequestDiffTool, GetPullRequestTool, GetRepositoryContentTool, ReportProgressTool,
-    ReportProgressToolInput, SearchGithubCodeTool, SearchGithubIssuesAndPullRequestsTool,
-    SearchGithubReposTool, SearchSlackMessagesTool, SearchWebTool,
+    ReportProgressTool, ReportProgressToolInput, SearchSlackMessagesTool, SearchWebTool,
 };
 use super::{
     llm_provider_settings::LlmProviderSettings, llm_usage_collector::LlmUsageCollector,
@@ -36,6 +35,7 @@ where
     pub resources: Arc<TaskResources>,
     pub datadog_site: String,
     pub datadog_mcp_toolset: DatadogMcpToolset,
+    pub github_mcp_toolset: GitHubMcpToolset,
     pub github_scope_org: String,
     pub logger: Arc<dyn Logger>,
     pub runtime: TaskRuntime,
@@ -57,6 +57,7 @@ where
         settings: input.settings.clone(),
         resources: Arc::clone(&input.resources),
         datadog_mcp_toolset: input.datadog_mcp_toolset.clone(),
+        github_mcp_toolset: input.github_mcp_toolset.clone(),
         github_scope_org: String::new(),
         language: input.language.clone(),
         logger: Arc::clone(&input.logger),
@@ -71,6 +72,7 @@ where
         settings: input.settings.clone(),
         resources: Arc::clone(&input.resources),
         datadog_mcp_toolset: input.datadog_mcp_toolset.clone(),
+        github_mcp_toolset: input.github_mcp_toolset.clone(),
         github_scope_org: input.github_scope_org.clone(),
         language: input.language.clone(),
         logger: Arc::clone(&input.logger),
@@ -235,6 +237,7 @@ where
     settings: LlmProviderSettings,
     resources: Arc<TaskResources>,
     datadog_mcp_toolset: DatadogMcpToolset,
+    github_mcp_toolset: GitHubMcpToolset,
     github_scope_org: String,
     language: String,
     logger: Arc<dyn Logger>,
@@ -295,8 +298,7 @@ where
         .default_max_turns(input.settings.specialist_max_turns)
         .additional_params(input.settings.additional_params.clone());
     let builder = with_max_tokens(builder, input.settings.max_tokens);
-
-    builder
+    let builder = builder
         .hook(AgentExecutionHook::new(
             input.owner_id.clone(),
             input.runtime,
@@ -309,29 +311,10 @@ where
             on_progress_event: Arc::clone(&input.on_progress_event),
             owner_id: input.owner_id,
         }))
-        .tool(SearchGithubCodeTool::new(
-            Arc::clone(&input.resources.github_code_search_port),
-            input.github_scope_org.clone(),
-        ))
-        .tool(SearchGithubReposTool::new(
-            Arc::clone(&input.resources.github_code_search_port),
-            input.github_scope_org.clone(),
-        ))
-        .tool(SearchGithubIssuesAndPullRequestsTool::new(
-            Arc::clone(&input.resources.github_code_search_port),
-            input.github_scope_org.clone(),
-        ))
-        .tool(GetRepositoryContentTool::new(Arc::clone(
-            &input.resources.github_repository_content_port,
-        )))
-        .tool(GetPullRequestTool::new(Arc::clone(
-            &input.resources.github_pull_request_port,
-        )))
-        .tool(GetPullRequestDiffTool::new(Arc::clone(
-            &input.resources.github_pull_request_port,
-        )))
-        .tool(SearchWebTool::new(input.resources))
-        .build()
+        .tools(input.github_mcp_toolset.specialist_tools())
+        .tool(SearchWebTool::new(input.resources));
+
+    builder.build()
 }
 
 fn with_max_tokens<M, H>(
@@ -434,18 +417,24 @@ struct BuildGithubInstructionsInput {
 }
 
 fn build_github_instructions(input: BuildGithubInstructionsInput) -> String {
+    let tool_rules = format!(
+        "Use the available GitHub MCP tools to search code, repositories, issues, pull requests, and repository files.
+Mandatory scope rules:
+- Every search_code/search_repositories/search_issues/search_pull_requests call must include org:{github_scope_org}
+- For get_file_contents and pull_request_read, owner must be {github_scope_org}
+- Never omit the org qualifier or switch owners.",
+        github_scope_org = input.github_scope_org
+    );
+
     format!(
         "You are a GitHub analysis specialist.
 Before entering a new investigation step, call report_progress.
 report_progress payload must be short: use title and summary fields.
 Do not post consecutive report_progress calls with identical content.
-Use the available tools to search code, repositories, issues, pull requests, and repository files.
-Mandatory query rule:
-- Every search_github_code/search_github_repos/search_github_issues_and_pull_requests call must include org:{github_scope_org}
-- Never omit the org qualifier.
+{tool_rules}
 Run independent searches in parallel when possible.
 Use {language} for all responses.",
-        github_scope_org = input.github_scope_org,
+        tool_rules = tool_rules,
         language = input.language,
     )
 }
@@ -624,7 +613,7 @@ mod tests {
             github_scope_org: "acme".to_string(),
         });
 
-        for instructions in [datadog_instructions, github_instructions] {
+        for instructions in [datadog_instructions, github_instructions.clone()] {
             assert!(instructions.contains("call report_progress"));
             assert!(instructions.contains("title and summary fields"));
             assert!(instructions.contains("Do not post consecutive report_progress"));
@@ -635,6 +624,12 @@ mod tests {
         assert!(build_datadog_instructions("Japanese").contains("get_datadog_metric_context"));
         assert!(build_datadog_instructions("Japanese").contains("search_datadog_events"));
         assert!(build_datadog_instructions("Japanese").contains("Inspect logs"));
+        assert!(
+            github_instructions
+                .contains("search_code/search_repositories/search_issues/search_pull_requests")
+        );
+        assert!(github_instructions.contains("get_file_contents"));
+        assert!(github_instructions.contains("pull_request_read"));
     }
 
     #[test]

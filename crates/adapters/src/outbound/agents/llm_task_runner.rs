@@ -12,9 +12,11 @@ use rig::prelude::CompletionClient;
 
 use super::agent_execution_hook::AgentExecutionHook;
 use super::datadog_mcp_tools::{DatadogMcpToolConfig, connect_datadog_mcp_toolset};
+use super::github_mcp_tools::connect_github_mcp_toolset;
 use super::llm_provider_settings::LlmProviderSettings;
 use super::llm_usage_collector::LlmUsageCollector;
 use super::task_agents::{BuildTaskAgentInput, build_task_agent, build_task_prompt};
+use crate::outbound::github::GitHubMcpConfig;
 
 pub struct RunLlmTaskInput<C>
 where
@@ -23,6 +25,7 @@ where
     pub client: C,
     pub settings: LlmProviderSettings,
     pub datadog_mcp: DatadogMcpToolConfig,
+    pub github_mcp: GitHubMcpConfig,
     pub github_scope_org: String,
     pub language: String,
     pub run: RunTaskInput,
@@ -61,6 +64,20 @@ where
                 cause_message: error.message,
             })
         })?;
+    let github_mcp_toolset =
+        connect_github_mcp_toolset(&input.github_mcp, input.github_scope_org.clone())
+            .await
+            .map_err(|error| {
+                let usage = usage_collector.snapshot();
+                if error.is_connection_failed() {
+                    return AgentRunFailedError::new_permanent(usage, error.message);
+                }
+
+                create_failed_error(CreateTaskRunnerFailedErrorInput {
+                    usage,
+                    cause_message: error.message,
+                })
+            })?;
     let task_prompt = build_task_prompt(&input.run.request);
     let task_agent = build_task_agent(BuildTaskAgentInput {
         client: input.client,
@@ -68,6 +85,7 @@ where
         resources: Arc::new(input.run.context.resources),
         datadog_site: input.datadog_mcp.site.clone(),
         datadog_mcp_toolset,
+        github_mcp_toolset,
         github_scope_org: input.github_scope_org,
         logger: Arc::clone(&input.run.logger),
         runtime,

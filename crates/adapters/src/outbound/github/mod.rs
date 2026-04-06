@@ -1,3 +1,3 @@
-pub mod github_search_adapter;
+pub(crate) mod github_mcp_client;
 
-pub use github_search_adapter::{GitHubSearchAdapter, GitHubSearchAdapterConfig};
+pub use github_mcp_client::GitHubMcpConfig;

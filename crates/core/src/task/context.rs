@@ -1,19 +1,11 @@
 use std::sync::Arc;
 
 use crate::{
-    knowledge::WebSearchPort,
-    messaging::slack::SlackMessageSearchPort,
-    source_code::github::{
-        GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
-    },
-    task::TaskCancellation,
+    knowledge::WebSearchPort, messaging::slack::SlackMessageSearchPort, task::TaskCancellation,
 };
 
 #[derive(Clone)]
 pub struct TaskResources {
-    pub github_code_search_port: Arc<dyn GithubCodeSearchPort>,
-    pub github_repository_content_port: Arc<dyn GithubRepositoryContentPort>,
-    pub github_pull_request_port: Arc<dyn GithubPullRequestPort>,
     pub slack_message_search_port: Arc<dyn SlackMessageSearchPort>,
     pub web_search_port: Arc<dyn WebSearchPort>,
 }
