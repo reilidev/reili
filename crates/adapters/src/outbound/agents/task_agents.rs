@@ -464,6 +464,7 @@ mod tests {
             channel: "C001".to_string(),
             user: "U001".to_string(),
             text: "Please investigate this alert".to_string(),
+            legacy_attachments: Vec::new(),
             ts: "1710000000.000001".to_string(),
             thread_ts: None,
         }
@@ -477,6 +478,7 @@ mod tests {
                 ts: "1710000000.000001".to_string(),
                 user: Some("U123".to_string()),
                 text: "thread context".to_string(),
+                legacy_attachments: Vec::new(),
                 metadata: None,
             }],
         };
@@ -508,6 +510,7 @@ mod tests {
                 ts: "1710000000.000010".to_string(),
                 user: Some("U999".to_string()),
                 text: "I started investigation".to_string(),
+                legacy_attachments: Vec::new(),
                 metadata: None,
             }],
         };
@@ -525,12 +528,14 @@ mod tests {
                     ts: "1710000000.000001".to_string(),
                     user: Some("U123".to_string()),
                     text: "First message".to_string(),
+                    legacy_attachments: Vec::new(),
                     metadata: None,
                 },
                 SlackThreadMessage {
                     ts: "1710000000.000002".to_string(),
                     user: None,
                     text: " follow-up from bot ".to_string(),
+                    legacy_attachments: Vec::new(),
                     metadata: None,
                 },
             ],

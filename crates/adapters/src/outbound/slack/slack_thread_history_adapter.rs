@@ -3,7 +3,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use reili_core::error::PortError;
 use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
-use reili_core::messaging::slack::{SlackMessageMetadata, SlackThreadMessage};
+use reili_core::messaging::slack::{
+    SlackLegacyAttachment, SlackMessageMetadata, SlackThreadMessage,
+    render_slack_legacy_attachments_text,
+};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -72,15 +75,15 @@ impl SlackThreadHistoryPort for SlackThreadHistoryAdapter {
                     Some(value) => value,
                     None => continue,
                 };
+                let legacy_attachments = read_legacy_attachments(page_message.get("attachments"));
 
                 messages.push(SlackThreadMessage {
                     ts,
                     user: read_non_empty_json_string(page_message.get("user")),
-                    text: page_message
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
+                    text: read_non_empty_json_string(page_message.get("text"))
+                        .or_else(|| render_slack_legacy_attachments_text(&legacy_attachments))
+                        .unwrap_or_default(),
+                    legacy_attachments,
                     metadata: read_message_metadata(page_message.get("metadata")),
                 });
             }
@@ -108,12 +111,22 @@ fn read_message_metadata(value: Option<&Value>) -> Option<SlackMessageMetadata> 
     })
 }
 
+fn read_legacy_attachments(value: Option<&Value>) -> Vec<SlackLegacyAttachment> {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+
+    serde_json::from_value(value.clone()).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use reili_core::messaging::slack::SlackThreadMessage;
     use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
+    use reili_core::messaging::slack::{
+        SlackLegacyAttachment, SlackLegacyAttachmentField, SlackThreadMessage,
+    };
     use serde_json::json;
     use wiremock::matchers::{method, path, query_param, query_param_is_missing};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -192,18 +205,21 @@ mod tests {
                     ts: "1710000000.000001".to_string(),
                     user: Some("U1".to_string()),
                     text: "first".to_string(),
+                    legacy_attachments: Vec::new(),
                     metadata: None,
                 },
                 SlackThreadMessage {
                     ts: "1710000000.000002".to_string(),
                     user: Some("U2".to_string()),
                     text: "second".to_string(),
+                    legacy_attachments: Vec::new(),
                     metadata: None,
                 },
                 SlackThreadMessage {
                     ts: "1710000000.000003".to_string(),
                     user: Some("U3".to_string()),
                     text: "third".to_string(),
+                    legacy_attachments: Vec::new(),
                     metadata: None,
                 },
             ]
@@ -249,6 +265,70 @@ mod tests {
             .expect("fetch thread history");
 
         assert_eq!(result.len(), 200);
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_legacy_attachment_text_when_reply_text_is_empty() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/conversations.replies"))
+            .and(query_param("channel", "C123"))
+            .and(query_param("ts", "1710000000.000000"))
+            .and(query_param("limit", THREAD_HISTORY_PAGE_LIMIT.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true,
+                "messages": [
+                    {
+                        "ts": "1710000000.000001",
+                        "user": "U1",
+                        "text": "",
+                        "attachments": [
+                            {
+                                "title": "Alert",
+                                "text": "Disk usage above threshold",
+                                "fields": [
+                                    {
+                                        "title": "Host",
+                                        "value": "db-1"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let adapter = SlackThreadHistoryAdapter::new(Arc::new(create_client(&server.uri())));
+        let result = adapter
+            .fetch_thread_history(FetchSlackThreadHistoryInput {
+                channel: "C123".to_string(),
+                thread_ts: "1710000000.000000".to_string(),
+            })
+            .await
+            .expect("fetch thread history");
+
+        assert_eq!(
+            result,
+            vec![SlackThreadMessage {
+                ts: "1710000000.000001".to_string(),
+                user: Some("U1".to_string()),
+                text: "<None|Alert|> Disk usage above threshold".to_string(),
+                legacy_attachments: vec![SlackLegacyAttachment {
+                    title: Some("Alert".to_string()),
+                    text: Some("Disk usage above threshold".to_string()),
+                    fields: vec![SlackLegacyAttachmentField {
+                        title: Some("Host".to_string()),
+                        value: Some("db-1".to_string()),
+                        short: None,
+                    }],
+                    ..Default::default()
+                }],
+                metadata: None,
+            }]
+        );
     }
 
     fn create_client(base_url: &str) -> SlackWebApiClient {

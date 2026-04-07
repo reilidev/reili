@@ -446,6 +446,7 @@ mod tests {
                 channel: "C001".to_string(),
                 user: "U001".to_string(),
                 text: text.unwrap_or("monitor alert").to_string(),
+                legacy_attachments: Vec::new(),
                 ts: ts.to_string(),
                 thread_ts: thread_ts.map(ToString::to_string),
             },
@@ -547,6 +548,7 @@ mod tests {
             ts: "1710000000.000001".to_string(),
             user: Some("U999".to_string()),
             text: "thread context".to_string(),
+            legacy_attachments: Vec::new(),
             metadata: None,
         }])));
         let ExecutionFixtures {

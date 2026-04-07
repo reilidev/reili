@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::SlackLegacyAttachment;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SlackTriggerType {
@@ -18,6 +20,8 @@ pub struct SlackMessage {
     pub channel: String,
     pub user: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub legacy_attachments: Vec<SlackLegacyAttachment>,
     pub ts: String,
     pub thread_ts: Option<String>,
 }
@@ -42,6 +46,7 @@ mod tests {
             channel: "C001".to_string(),
             user: "U001".to_string(),
             text: "hello".to_string(),
+            legacy_attachments: Vec::new(),
             ts: "123.456".to_string(),
             thread_ts: None,
         };
@@ -63,6 +68,7 @@ mod tests {
             channel: "C001".to_string(),
             user: "U001".to_string(),
             text: "hello".to_string(),
+            legacy_attachments: Vec::new(),
             ts: "123.456".to_string(),
             thread_ts: Some("123.450".to_string()),
         };
@@ -80,6 +86,7 @@ mod tests {
             channel: "C001".to_string(),
             user: "U001".to_string(),
             text: "hello".to_string(),
+            legacy_attachments: Vec::new(),
             ts: "123.456".to_string(),
             thread_ts: None,
         };
@@ -95,5 +102,6 @@ mod tests {
             serde_json::from_str(json).expect("deserialize slack message without action token");
 
         assert_eq!(restored.action_token, None);
+        assert!(restored.legacy_attachments.is_empty());
     }
 }
