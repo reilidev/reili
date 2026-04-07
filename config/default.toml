@@ -1,0 +1,59 @@
+version = 1
+
+[server]
+port = 3000
+
+[conversation]
+language = "English"
+
+[channel.slack]
+mode = "socket"
+
+[channel.slack.auth]
+bot_token_env = "SLACK_BOT_TOKEN"
+
+[channel.slack.socket]
+app_token_env = "SLACK_APP_TOKEN"
+
+[channel.slack.http]
+signing_secret_env = "SLACK_SIGNING_SECRET"
+
+[ai]
+default_backend = "primary"
+
+# "primary" is an arbitrary backend ID chosen by the config author.
+[ai.backends.primary]
+provider = "openai"
+task_runner_model = "gpt-5.4"
+api_key_env = "LLM_OPENAI_API_KEY"
+
+#[ai.backends.anthropic]
+#provider = "anthropic"
+#model = "claude-haiku-4-5"
+#api_key_env = "LLM_ANTHROPIC_API_KEY"
+
+#[ai.backends.bedrock]
+#provider = "bedrock"
+#model_id = "anthropic.claude-3-7-sonnet-20250219-v1:0"
+# aws_profile = "your-aws-profile"
+# aws_region = "ap-northeast-1"
+
+#[ai.backends.vertex]
+#provider = "vertexai"
+#project_id = "your-gcp-project"
+#location = "global"
+#model_id = "gemini-2.5-flash"
+
+[connector.datadog]
+site = "datadoghq.com"
+api_key_env = "DATADOG_API_KEY"
+app_key_env = "DATADOG_APP_KEY"
+
+[connector.github]
+mcp_url = "https://api.githubcopilot.com/mcp/"
+search_scope_org = "example-org"
+
+[connector.github.app]
+app_id = "123456"
+installation_id = "12345678"
+private_key_env = "GITHUB_APP_PRIVATE_KEY"

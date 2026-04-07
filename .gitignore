@@ -1,7 +1,9 @@
-.env
-dist
-.tmp
-
 # AI tools
 .codex
 .claude
+
+# Project
+.env
+dist
+.tmp
+reili.toml
