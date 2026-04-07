@@ -17,8 +17,8 @@ The task runner can call only the following tool families:
 - Datadog MCP reads: `search_datadog_services`, `search_datadog_logs`, `analyze_datadog_logs`,
   `search_datadog_metrics`, `get_datadog_metric`, `get_datadog_metric_context`,
   `search_datadog_events`, `search_datadog_monitors`, `search_datadog_incidents`
-- GitHub reads: `search_github_code`, `search_github_repos`, `search_github_issues_and_pull_requests`,
-  `get_repository_content`, `get_pull_request`, `get_pull_request_diff`
+- GitHub MCP reads: `search_code`, `search_repositories`, `search_issues`,
+  `search_pull_requests`, `get_file_contents`, `pull_request_read`
 - External web lookup: `search_web`
 
 In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog
@@ -188,17 +188,20 @@ Datadog boundary:
 - It does not acknowledge alerts, mute monitors, change retention, or trigger remediation actions
 - Requests are scoped to task queries generated from the Slack thread context and user prompt
 
-## GitHub App Permissions and Scope
+## GitHub Permissions and Scope
 
-Reili uses a GitHub App installation token. The current runtime only exercises read-only,
-investigation-oriented task capabilities against GitHub.
+Reili reads GitHub through GitHub MCP over Streamable HTTP.
 
-Recommended GitHub App permissions for the current runtime:
+Runtime authentication model:
 
-- Repository metadata: read
-- Contents: read
-- Pull requests: read
-- Issues: read
+- Reili signs a GitHub App JWT with `GITHUB_APP_PRIVATE_KEY`
+- Reili exchanges that JWT for a short-lived installation token using `GITHUB_APP_ID` and `GITHUB_APP_INSTALLATION_ID`
+- The resulting installation token is used as the GitHub MCP bearer token and refreshed before expiry
+
+Recommended permissions for the current runtime:
+
+- GitHub App permissions that can read the repositories Reili investigates
+- Prefer a GitHub App and MCP server configuration that exposes only the minimum read capabilities Reili needs
 
 GitHub capabilities currently used by the runtime:
 
@@ -206,6 +209,15 @@ GitHub capabilities currently used by the runtime:
 - Read repository files or directory listings for a given path and ref
 - Read pull request metadata
 - Read pull request diffs
+
+GitHub MCP boundary:
+
+- The GitHub specialist agent only receives this allowlisted subset of MCP tools:
+  `search_code`, `search_repositories`, `search_issues`, `search_pull_requests`,
+  `get_file_contents`, and `pull_request_read`
+- It does not mint or refresh GitHub MCP tokens; any short-lived token rotation must happen outside the runtime
+- Reili still enforces `GITHUB_SEARCH_SCOPE_ORG` before allowlisted GitHub MCP tool calls are made
+- Raw MCP write tools are not exposed to the GitHub agent in this
 
 GitHub boundary in the current runtime:
 

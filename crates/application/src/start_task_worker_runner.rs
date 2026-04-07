@@ -592,10 +592,6 @@ mod tests {
         SlackTaskControlMessagePort, SlackThreadHistoryPort, SlackTriggerType,
     };
     use reili_core::queue::{CompleteJobInput, FailJobInput, JobFailResult, MockJobQueuePort};
-    use reili_core::source_code::github::{
-        GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
-        MockGithubCodeSearchPort, MockGithubPullRequestPort, MockGithubRepositoryContentPort,
-    };
     use reili_core::task::{
         LlmExecutionMetadata, LlmUsageSnapshot, MockTaskProgressSessionFactoryPort,
         MockTaskProgressSessionPort, MockTaskRunnerPort, RunTaskInput, TaskJobPayload,
@@ -652,20 +648,11 @@ mod tests {
     }
 
     fn create_resources() -> TaskResources {
-        let github_code_search_port: Arc<dyn GithubCodeSearchPort> =
-            Arc::new(MockGithubCodeSearchPort::new());
-        let github_repository_content_port: Arc<dyn GithubRepositoryContentPort> =
-            Arc::new(MockGithubRepositoryContentPort::new());
-        let github_pull_request_port: Arc<dyn GithubPullRequestPort> =
-            Arc::new(MockGithubPullRequestPort::new());
         let slack_message_search_port: Arc<dyn SlackMessageSearchPort> =
             Arc::new(MockSlackMessageSearchPort::new());
         let web_search_port: Arc<dyn WebSearchPort> = Arc::new(MockWebSearchPort::new());
 
         TaskResources {
-            github_code_search_port,
-            github_repository_content_port,
-            github_pull_request_port,
             slack_message_search_port,
             web_search_port,
         }

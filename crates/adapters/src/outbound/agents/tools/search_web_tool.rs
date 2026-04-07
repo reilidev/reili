@@ -111,67 +111,10 @@ mod tests {
         use reili_core::messaging::slack::{
             SlackMessageSearchInput, SlackMessageSearchPort, SlackMessageSearchResult,
         };
-        use reili_core::source_code::github::{
-            GithubCodeSearchPort, GithubPullRequestPort, GithubRepositoryContentPort,
-        };
 
-        struct StubGithubSearch;
+        struct StubSlackMessageSearch;
         #[async_trait]
-        impl GithubCodeSearchPort for StubGithubSearch {
-            async fn search_code(
-                &self,
-                _: reili_core::source_code::github::GithubSearchParams,
-            ) -> Result<Vec<reili_core::source_code::github::GithubCodeSearchResultItem>, PortError>
-            {
-                unimplemented!()
-            }
-            async fn search_repos(
-                &self,
-                _: reili_core::source_code::github::GithubSearchParams,
-            ) -> Result<Vec<reili_core::source_code::github::GithubRepoSearchResultItem>, PortError>
-            {
-                unimplemented!()
-            }
-            async fn search_issues_and_pull_requests(
-                &self,
-                _: reili_core::source_code::github::GithubSearchParams,
-            ) -> Result<Vec<reili_core::source_code::github::GithubIssueSearchResultItem>, PortError>
-            {
-                unimplemented!()
-            }
-        }
-
-        #[async_trait]
-        impl GithubRepositoryContentPort for StubGithubSearch {
-            async fn get_repository_content(
-                &self,
-                _: reili_core::source_code::github::GithubRepositoryContentParams,
-            ) -> Result<reili_core::source_code::github::GithubRepositoryContent, PortError>
-            {
-                unimplemented!()
-            }
-        }
-
-        #[async_trait]
-        impl GithubPullRequestPort for StubGithubSearch {
-            async fn get_pull_request(
-                &self,
-                _: reili_core::source_code::github::GithubPullRequestParams,
-            ) -> Result<reili_core::source_code::github::GithubPullRequestSummary, PortError>
-            {
-                unimplemented!()
-            }
-            async fn get_pull_request_diff(
-                &self,
-                _: reili_core::source_code::github::GithubPullRequestParams,
-            ) -> Result<reili_core::source_code::github::GithubPullRequestDiff, PortError>
-            {
-                unimplemented!()
-            }
-        }
-
-        #[async_trait]
-        impl SlackMessageSearchPort for StubGithubSearch {
+        impl SlackMessageSearchPort for StubSlackMessageSearch {
             async fn search_messages(
                 &self,
                 _: SlackMessageSearchInput,
@@ -181,10 +124,7 @@ mod tests {
         }
 
         TaskResources {
-            github_code_search_port: Arc::new(StubGithubSearch),
-            github_repository_content_port: Arc::new(StubGithubSearch),
-            github_pull_request_port: Arc::new(StubGithubSearch),
-            slack_message_search_port: Arc::new(StubGithubSearch),
+            slack_message_search_port: Arc::new(StubSlackMessageSearch),
             web_search_port,
         }
     }

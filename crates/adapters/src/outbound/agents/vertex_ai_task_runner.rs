@@ -8,11 +8,13 @@ use super::llm_provider_settings::{
     CreateVertexAiProviderSettingsInput, LlmProviderSettings, create_vertex_ai_provider_settings,
 };
 use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
+use crate::outbound::github::GitHubMcpConfig;
 
 pub struct VertexAiTaskRunnerInput {
     pub client: Client,
     pub model_id: String,
     pub datadog_mcp: DatadogMcpToolConfig,
+    pub github_mcp: GitHubMcpConfig,
     pub github_scope_org: String,
     pub language: String,
 }
@@ -21,6 +23,7 @@ pub struct VertexAiTaskRunner {
     client: Client,
     provider_settings: LlmProviderSettings,
     datadog_mcp: DatadogMcpToolConfig,
+    github_mcp: GitHubMcpConfig,
     github_scope_org: String,
     language: String,
 }
@@ -35,6 +38,7 @@ impl VertexAiTaskRunner {
                 },
             ),
             datadog_mcp: input.datadog_mcp,
+            github_mcp: input.github_mcp,
             github_scope_org: input.github_scope_org,
             language: input.language,
         }
@@ -48,6 +52,7 @@ impl TaskRunnerPort for VertexAiTaskRunner {
             client: self.client.clone(),
             settings: self.provider_settings.clone(),
             datadog_mcp: self.datadog_mcp.clone(),
+            github_mcp: self.github_mcp.clone(),
             github_scope_org: self.github_scope_org.clone(),
             language: self.language.clone(),
             run: input,

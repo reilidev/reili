@@ -53,8 +53,7 @@ Its current focus is triage, investigation, and communicating findings.
 - Datadog API Key + APP Key for the Datadog MCP server
 - OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call
   Vertex AI Gemini models
-- GitHub App (App ID / Private Key / Installation ID)
-  — [Create one with a single click](https://reilidev.github.io/reili/create-github-app.html)
+- GitHub MCP token with read access to the repositories Reili investigates
 
 ### 2. Configure Environment Variables
 
@@ -84,9 +83,6 @@ Required:
 - `LLM_VERTEX_AI_MODEL_ID` when `LLM_PROVIDER=vertexai`
 - `GOOGLE_CLOUD_LOCATION` when `LLM_PROVIDER=vertexai`
 - `GOOGLE_CLOUD_PROJECT` when `LLM_PROVIDER=vertexai`
-- `GITHUB_APP_ID`
-- `GITHUB_APP_PRIVATE_KEY`
-- `GITHUB_APP_INSTALLATION_ID`
 - `GITHUB_SEARCH_SCOPE_ORG`
 
 Common optional variables:
@@ -94,6 +90,18 @@ Common optional variables:
 - `PORT` (default: `3000`)
 - `DATADOG_SITE` (default: `datadoghq.com`)
 - `LANGUAGE` (default: `English`)
+- `GITHUB_MCP_URL` (default: `https://api.githubcopilot.com/mcp/`)
+
+GitHub configuration:
+
+- `GITHUB_APP_ID`
+- `GITHUB_APP_PRIVATE_KEY`
+- `GITHUB_APP_INSTALLATION_ID`
+
+The GitHub integration talks to a streamable HTTP MCP server and exposes a small allowlisted set
+of raw GitHub MCP read tools to the GitHub specialist agent. Reili mints short-lived GitHub App
+installation tokens at runtime and uses them as the MCP bearer token, so `GITHUB_MCP_TOKEN` is not
+used.
 
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`. When
 `SLACK_SOCKET_MODE` is unset, Reili starts in Socket Mode. In Socket Mode, `SLACK_SIGNING_SECRET`
@@ -173,7 +181,7 @@ At a high level, the current runtime:
 - is designed to investigate and report, not to change infrastructure, Datadog state, or repository
   state
 
-For the full tool inventory, required Slack scopes, Datadog RBAC permissions, GitHub App
+For the full tool inventory, required Slack scopes, Datadog RBAC permissions, GitHub backend
 permissions, and LLM data boundary, see
 [docs/permissions-and-boundaries.md](./docs/permissions-and-boundaries.md).
 

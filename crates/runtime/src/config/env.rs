@@ -5,6 +5,7 @@ use thiserror::Error;
 const DEFAULT_APP_PORT: u16 = 3000;
 const DEFAULT_WORKER_CONCURRENCY: u32 = 2;
 const DEFAULT_DATADOG_SITE: &str = "datadoghq.com";
+const DEFAULT_GITHUB_MCP_URL: &str = "https://api.githubcopilot.com/mcp/";
 const DEFAULT_LANGUAGE: &str = "English";
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
 const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
@@ -116,11 +117,19 @@ pub struct VertexAiLlmConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitHubAppConfig {
+pub struct GitHubConfig {
+    pub url: String,
     pub app_id: String,
-    pub private_key: String,
+    pub private_key: SecretString,
     pub installation_id: u32,
     pub scope_org: String,
+}
+
+impl GitHubConfig {
+    #[must_use]
+    pub fn scope_org(&self) -> &str {
+        &self.scope_org
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,7 +145,7 @@ pub struct AppConfig {
     pub datadog_app_key: String,
     pub datadog_site: String,
     pub llm: LlmConfig,
-    pub github: GitHubAppConfig,
+    pub github: GitHubConfig,
     pub language: String,
 }
 
@@ -182,7 +191,7 @@ fn load_app_config_with_env(env: &dyn EnvironmentReader) -> Result<AppConfig, En
         datadog_app_key: task_config.datadog_app_key,
         datadog_site: task_config.datadog_site,
         llm: task_config.llm,
-        github: read_github_app_config(env)?,
+        github: read_github_config(env)?,
         language: task_config.language,
     })
 }
@@ -296,13 +305,14 @@ fn read_vertex_ai_llm_config(
     })
 }
 
-fn read_github_app_config(env: &dyn EnvironmentReader) -> Result<GitHubAppConfig, EnvConfigError> {
+fn read_github_config(env: &dyn EnvironmentReader) -> Result<GitHubConfig, EnvConfigError> {
     let private_key = read_required_env(env, "GITHUB_APP_PRIVATE_KEY")?;
     let installation_id_raw = read_required_env(env, "GITHUB_APP_INSTALLATION_ID")?;
 
-    Ok(GitHubAppConfig {
+    Ok(GitHubConfig {
+        url: read_or_default(env, "GITHUB_MCP_URL", DEFAULT_GITHUB_MCP_URL),
         app_id: read_required_env(env, "GITHUB_APP_ID")?,
-        private_key: private_key.replace("\\n", "\n"),
+        private_key: SecretString::new(private_key.replace("\\n", "\n")),
         installation_id: read_required_positive_u32(
             "GITHUB_APP_INSTALLATION_ID",
             &installation_id_raw,
@@ -376,9 +386,10 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY, DEFAULT_OPENAI_TASK_RUNNER_MODEL,
-        DEFAULT_WORKER_CONCURRENCY, EnvConfigError, LlmProviderConfig, MockEnvironmentReader,
-        SecretString, SlackConnectionMode, load_app_config_with_env,
+        DEFAULT_GITHUB_MCP_URL, DEFAULT_JOB_BACKOFF_MS, DEFAULT_JOB_MAX_RETRY,
+        DEFAULT_OPENAI_TASK_RUNNER_MODEL, DEFAULT_WORKER_CONCURRENCY, EnvConfigError,
+        LlmProviderConfig, MockEnvironmentReader, SecretString, SlackConnectionMode,
+        load_app_config_with_env,
     };
 
     fn environment_reader_mock(overrides: &[(&str, &str)]) -> MockEnvironmentReader {
@@ -446,12 +457,20 @@ mod tests {
     }
 
     #[test]
-    fn converts_multiline_github_private_key() {
+    fn loads_github_mcp_config() {
         let env = environment_reader_mock(&[]);
 
         let config = load_app_config_with_env(&env).expect("load app config");
 
-        assert!(config.github.private_key.contains('\n'));
+        let github = config.github;
+        assert_eq!(github.url, DEFAULT_GITHUB_MCP_URL);
+        assert_eq!(github.app_id, "12345");
+        assert_eq!(
+            github.private_key.expose(),
+            "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
+        );
+        assert_eq!(github.installation_id, 123456);
+        assert_eq!(github.scope_org, "example-org");
     }
 
     #[test]
