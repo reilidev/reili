@@ -1,6 +1,7 @@
 pub mod control_message;
 pub mod interaction;
 pub mod interaction_handler;
+pub mod legacy_attachment;
 pub mod message;
 pub mod message_handler;
 pub mod reaction;
@@ -15,6 +16,9 @@ pub use control_message::{
 };
 pub use interaction::{SlackCancelJobInteraction, SlackInteraction};
 pub use interaction_handler::SlackInteractionHandlerPort;
+pub use legacy_attachment::{
+    SlackLegacyAttachment, SlackLegacyAttachmentField, render_slack_legacy_attachments_text,
+};
 pub use message::{SlackMessage, SlackTriggerType};
 pub use message_handler::SlackMessageHandlerPort;
 pub use reaction::{AddSlackReactionInput, SlackReactionPort};

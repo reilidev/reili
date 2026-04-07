@@ -268,6 +268,7 @@ mod tests {
                     channel: "C001".to_string(),
                     user: "U001".to_string(),
                     text: "please investigate".to_string(),
+                    legacy_attachments: Vec::new(),
                     ts: "1710000000.000001".to_string(),
                     thread_ts: None,
                 },

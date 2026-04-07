@@ -1,5 +1,7 @@
 use reili_core::error::PortError;
-use reili_core::messaging::slack::{SlackMessage, SlackTriggerType};
+use reili_core::messaging::slack::{
+    SlackLegacyAttachment, SlackMessage, SlackTriggerType, render_slack_legacy_attachments_text,
+};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +86,8 @@ fn parse_message_event(
         Some(value) => value,
         None => return Ok(ParsedSlackEvent::Ignored),
     };
-    let text = match input.event.text {
+    let legacy_attachments = input.event.attachments.unwrap_or_default();
+    let text = match resolve_message_text(input.event.text, &legacy_attachments) {
         Some(value) => value,
         None => return Ok(ParsedSlackEvent::Ignored),
     };
@@ -104,6 +107,7 @@ fn parse_message_event(
         channel,
         user,
         text,
+        legacy_attachments,
         ts,
         thread_ts: input.event.thread_ts,
     };
@@ -129,6 +133,7 @@ struct SlackCallbackEvent {
     channel: Option<String>,
     user: Option<String>,
     text: Option<String>,
+    attachments: Option<Vec<SlackLegacyAttachment>>,
     ts: Option<String>,
     thread_ts: Option<String>,
     assistant_thread: Option<SlackAssistantThread>,
@@ -139,9 +144,19 @@ struct SlackAssistantThread {
     action_token: Option<String>,
 }
 
+fn resolve_message_text(
+    text: Option<String>,
+    legacy_attachments: &[SlackLegacyAttachment],
+) -> Option<String> {
+    match text {
+        Some(value) if !value.trim().is_empty() => Some(value),
+        _ => render_slack_legacy_attachments_text(legacy_attachments),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use reili_core::messaging::slack::{SlackMessage, SlackTriggerType};
+    use reili_core::messaging::slack::{SlackLegacyAttachment, SlackMessage, SlackTriggerType};
     use serde_json::json;
 
     use super::{ParsedSlackEvent, parse_slack_event};
@@ -199,6 +214,7 @@ mod tests {
                 channel: "C001".to_string(),
                 user: "U001".to_string(),
                 text: "please investigate".to_string(),
+                legacy_attachments: Vec::new(),
                 ts: "1710000000.000001".to_string(),
                 thread_ts: Some("1710000000.000000".to_string()),
             })
@@ -238,6 +254,7 @@ mod tests {
                 channel: "C001".to_string(),
                 user: "U002".to_string(),
                 text: "<@U-BOT> investigate this alert".to_string(),
+                legacy_attachments: Vec::new(),
                 ts: "1710000000.000002".to_string(),
                 thread_ts: None,
             })
@@ -277,7 +294,66 @@ mod tests {
                 channel: "C001".to_string(),
                 user: "U003".to_string(),
                 text: "<@U-BOT> search slack".to_string(),
+                legacy_attachments: Vec::new(),
                 ts: "1710000000.000003".to_string(),
+                thread_ts: None,
+            })
+        );
+    }
+
+    #[test]
+    fn falls_back_to_legacy_attachment_text_when_event_text_is_empty() {
+        let parsed = parse_slack_event(
+            json!({
+                "type": "event_callback",
+                "event_id": "evt-attachment",
+                "event": {
+                    "type": "message",
+                    "channel": "C001",
+                    "user": "U004",
+                    "text": "",
+                    "attachments": [
+                        {
+                            "pretext": "Alert",
+                            "text": "CPU usage is high",
+                            "fields": [
+                                {
+                                    "title": "Service",
+                                    "value": "api"
+                                }
+                            ]
+                        }
+                    ],
+                    "ts": "1710000000.000005"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+            "U-BOT",
+        )
+        .expect("parse attachment event");
+
+        assert_eq!(
+            parsed,
+            ParsedSlackEvent::Message(SlackMessage {
+                slack_event_id: "evt-attachment".to_string(),
+                team_id: None,
+                action_token: None,
+                trigger: SlackTriggerType::Message,
+                channel: "C001".to_string(),
+                user: "U004".to_string(),
+                text: "<None|Alert|> CPU usage is high".to_string(),
+                legacy_attachments: vec![SlackLegacyAttachment {
+                    pretext: Some("Alert".to_string()),
+                    text: Some("CPU usage is high".to_string()),
+                    fields: vec![reili_core::messaging::slack::SlackLegacyAttachmentField {
+                        title: Some("Service".to_string()),
+                        value: Some("api".to_string()),
+                        short: None,
+                    }],
+                    ..Default::default()
+                }],
+                ts: "1710000000.000005".to_string(),
                 thread_ts: None,
             })
         );
