@@ -552,7 +552,7 @@ mod tests {
     #[test]
     fn provider_settings_enable_parallel_tool_calls() {
         let settings = create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
-            task_runner_model: "gpt-5.3-codex".to_string(),
+            model: "gpt-5.3-codex".to_string(),
         });
         let params = settings.additional_params;
 

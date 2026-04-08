@@ -15,6 +15,10 @@ const DEFAULT_WORKER_CONCURRENCY: u32 = 2;
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
 const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
 const SUPPORTED_CONFIG_VERSION: u32 = 1;
+const DEFAULT_SLACK_APP_TOKEN_ENV: &str = "SLACK_APP_TOKEN";
+const DEFAULT_SLACK_SIGNING_SECRET_ENV: &str = "SLACK_SIGNING_SECRET";
+const DEFAULT_OPENAI_API_KEY_ENV: &str = "LLM_OPENAI_API_KEY";
+const DEFAULT_ANTHROPIC_API_KEY_ENV: &str = "LLM_ANTHROPIC_API_KEY";
 const SUPPORTED_ANTHROPIC_MODELS: &[&str] =
     &["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"];
 
@@ -153,20 +157,15 @@ fn resolve_slack_connection_mode(
     slack: &SlackFileConfig,
     env: &dyn EnvironmentReader,
 ) -> Result<ResolvedSlackConfig, ConfigError> {
-    let mode = resolve_slack_mode(slack)?;
-
-    match mode.as_str() {
-        "socket" => {
-            let socket = slack
-                .socket
-                .as_ref()
-                .ok_or_else(|| ConfigError::InvalidValue {
-                    field: "channel.slack.socket".to_string(),
-                    message: "is required when `channel.slack.mode` is `socket`".to_string(),
-                })?;
+    match slack.socket_mode {
+        true => {
             let app_token = read_required_secret(
                 env,
-                socket.app_token_env.as_deref().unwrap_or_default(),
+                slack
+                    .socket
+                    .as_ref()
+                    .and_then(|socket| socket.app_token_env.as_deref())
+                    .unwrap_or(DEFAULT_SLACK_APP_TOKEN_ENV),
                 "channel.slack.socket.app_token_env",
             )?;
             if !app_token.expose().starts_with("xapp-") {
@@ -182,17 +181,14 @@ fn resolve_slack_connection_mode(
                 signing_secret: None,
             })
         }
-        "http" => {
-            let http = slack
-                .http
-                .as_ref()
-                .ok_or_else(|| ConfigError::InvalidValue {
-                    field: "channel.slack.http".to_string(),
-                    message: "is required when `channel.slack.mode` is `http`".to_string(),
-                })?;
+        false => {
             let signing_secret = read_required_secret(
                 env,
-                http.signing_secret_env.as_deref().unwrap_or_default(),
+                slack
+                    .http
+                    .as_ref()
+                    .and_then(|http| http.signing_secret_env.as_deref())
+                    .unwrap_or(DEFAULT_SLACK_SIGNING_SECRET_ENV),
                 "channel.slack.http.signing_secret_env",
             )?;
 
@@ -201,41 +197,6 @@ fn resolve_slack_connection_mode(
                 signing_secret: Some(signing_secret),
             })
         }
-        _ => Err(ConfigError::InvalidValue {
-            field: "channel.slack.mode".to_string(),
-            message: format!("unsupported Slack mode `{mode}`"),
-        }),
-    }
-}
-
-fn resolve_slack_mode(slack: &SlackFileConfig) -> Result<String, ConfigError> {
-    match (
-        slack
-            .mode
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty()),
-        slack.socket_mode,
-    ) {
-        (Some(mode), Some(socket_mode)) => {
-            let alias_mode = if socket_mode { "socket" } else { "http" };
-            if mode != alias_mode {
-                return Err(ConfigError::InvalidValue {
-                    field: "channel.slack".to_string(),
-                    message: format!(
-                        "`mode = \"{mode}\"` conflicts with `socket_mode = {socket_mode}`"
-                    ),
-                });
-            }
-            Ok(mode.to_string())
-        }
-        (Some(mode), None) => Ok(mode.to_string()),
-        (None, Some(true)) => Ok("socket".to_string()),
-        (None, Some(false)) => Ok("http".to_string()),
-        (None, None) => Err(ConfigError::InvalidValue {
-            field: "channel.slack.mode".to_string(),
-            message: "must be set to `socket` or `http`".to_string(),
-        }),
     }
 }
 
@@ -280,13 +241,13 @@ fn resolve_openai_backend(
     Ok(LlmProviderConfig::OpenAi(OpenAiLlmConfig {
         api_key: read_required_secret(
             env,
-            backend.api_key_env.as_deref().unwrap_or_default(),
+            backend
+                .api_key_env
+                .as_deref()
+                .unwrap_or(DEFAULT_OPENAI_API_KEY_ENV),
             &format!("{prefix}.api_key_env"),
         )?,
-        task_runner_model: require_backend_field(
-            backend.task_runner_model.as_deref(),
-            &format!("{prefix}.task_runner_model"),
-        )?,
+        model: require_backend_field(backend.model.as_deref(), &format!("{prefix}.model"))?,
     }))
 }
 
@@ -309,7 +270,10 @@ fn resolve_anthropic_backend(
     Ok(LlmProviderConfig::Anthropic(AnthropicLlmConfig {
         api_key: read_required_secret(
             env,
-            backend.api_key_env.as_deref().unwrap_or_default(),
+            backend
+                .api_key_env
+                .as_deref()
+                .unwrap_or(DEFAULT_ANTHROPIC_API_KEY_ENV),
             &format!("{prefix}.api_key_env"),
         )?,
         model,
@@ -633,7 +597,7 @@ mod tests {
         match config.llm.provider {
             LlmProviderConfig::OpenAi(provider) => {
                 assert_eq!(provider.api_key.expose(), "openai-api-key");
-                assert_eq!(provider.task_runner_model, "gpt-5.3-codex");
+                assert_eq!(provider.model, "gpt-5.3-codex");
             }
             _ => panic!("expected openai provider"),
         }
@@ -653,7 +617,7 @@ port = 3000
 language = "English"
 
 [channel.slack]
-mode = "socket"
+socket_mode = true
 
 [channel.slack.auth]
 bot_token_env = "SLACK_BOT_TOKEN"
@@ -666,7 +630,7 @@ default_backend = "primary"
 
 [ai.backends.primary]
 provider = "openai"
-task_runner_model = "gpt-5.3-codex"
+model = "gpt-5.3-codex"
 api_key_env = "LLM_OPENAI_API_KEY"
 
 [ai.backends.unused]
@@ -797,9 +761,23 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
     }
 
     #[test]
-    fn accepts_legacy_socket_mode_alias() {
+    fn defaults_server_port_at_parse_time_when_omitted() {
         let env = FixedEnvironment::with_overrides(&[]);
-        let file_config = parse_runtime_config(
+        let file_config =
+            parse_runtime_config(&valid_openai_config().replace("[server]\nport = 3000\n\n", ""));
+
+        assert_eq!(file_config.server.port, 3000);
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert_eq!(config.port, 3000);
+    }
+
+    #[test]
+    fn defaults_socket_mode_to_true_when_omitted() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_file_config(
+            Path::new(TEST_PATH),
             r#"
 version = 1
 
@@ -810,20 +788,13 @@ port = 3000
 language = "English"
 
 [channel.slack]
-socket_mode = true
-
-[channel.slack.auth]
-bot_token_env = "SLACK_BOT_TOKEN"
-
-[channel.slack.socket]
-app_token_env = "SLACK_APP_TOKEN"
 
 [ai]
 default_backend = "primary"
 
 [ai.backends.primary]
 provider = "openai"
-task_runner_model = "gpt-5.3-codex"
+model = "gpt-5.3-codex"
 api_key_env = "LLM_OPENAI_API_KEY"
 
 [connector.datadog]
@@ -840,14 +811,99 @@ app_id = "12345"
 installation_id = "67890"
 private_key_env = "GITHUB_APP_PRIVATE_KEY"
 "#,
+        )
+        .expect("parse runtime config");
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.slack_connection_mode {
+            SlackConnectionMode::SocketMode { app_token } => {
+                assert_eq!(app_token.expose(), "xapp-test-token");
+            }
+            SlackConnectionMode::Http => panic!("expected socket mode"),
+        }
+        assert!(config.slack_signing_secret.is_none());
+    }
+
+    #[test]
+    fn defaults_env_reference_fields_when_omitted() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(
+            &valid_openai_config()
+                .replace("[channel.slack.auth]\nbot_token_env = \"SLACK_BOT_TOKEN\"\n\n", "")
+                .replace("[channel.slack.socket]\napp_token_env = \"SLACK_APP_TOKEN\"\n\n", "")
+                .replacen("api_key_env = \"LLM_OPENAI_API_KEY\"\n", "", 1)
+                .replace(
+                    "[connector.datadog]\nsite = \"datadoghq.com\"\napi_key_env = \"DATADOG_API_KEY\"\napp_key_env = \"DATADOG_APP_KEY\"\n\n",
+                    "",
+                )
+                .replace("site = \"datadoghq.com\"\n", "")
+                .replace("mcp_url = \"https://api.githubcopilot.com/mcp/\"\n", "")
+                .replace("private_key_env = \"GITHUB_APP_PRIVATE_KEY\"\n", ""),
         );
 
         let config = resolve_app_config(file_config, &env).expect("resolve config");
 
-        assert!(matches!(
-            config.slack_connection_mode,
-            SlackConnectionMode::SocketMode { .. }
+        assert_eq!(config.slack_bot_token.expose(), "xoxb-test");
+        match config.slack_connection_mode {
+            SlackConnectionMode::SocketMode { app_token } => {
+                assert_eq!(app_token.expose(), "xapp-test-token");
+            }
+            SlackConnectionMode::Http => panic!("expected socket mode"),
+        }
+        assert_eq!(config.datadog_api_key.expose(), "dd-api-key");
+        assert_eq!(config.datadog_app_key.expose(), "dd-app-key");
+        assert_eq!(config.datadog_site, "datadoghq.com");
+        assert_eq!(config.github.url, "https://api.githubcopilot.com/mcp/");
+        assert_eq!(
+            config.github.private_key.expose(),
+            "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
+        );
+
+        match config.llm.provider {
+            LlmProviderConfig::OpenAi(provider) => {
+                assert_eq!(provider.api_key.expose(), "openai-api-key");
+            }
+            _ => panic!("expected openai provider"),
+        }
+    }
+
+    #[test]
+    fn defaults_http_signing_secret_env_when_section_is_omitted() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_http_config().replace(
+            "[channel.slack.http]\nsigning_secret_env = \"SLACK_SIGNING_SECRET\"\n\n",
+            "",
         ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert_eq!(config.slack_connection_mode, SlackConnectionMode::Http);
+        assert_eq!(
+            config
+                .slack_signing_secret
+                .as_ref()
+                .expect("http signing secret")
+                .expose(),
+            "signing-secret"
+        );
+    }
+
+    #[test]
+    fn defaults_anthropic_api_key_env_when_omitted() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(
+            &valid_anthropic_config().replace("api_key_env = \"LLM_ANTHROPIC_API_KEY\"\n", ""),
+        );
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.llm.provider {
+            LlmProviderConfig::Anthropic(provider) => {
+                assert_eq!(provider.api_key.expose(), "anthropic-api-key");
+            }
+            _ => panic!("expected anthropic provider"),
+        }
     }
 
     #[test]
@@ -861,24 +917,6 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
         match error {
             ConfigError::UnsupportedVersion { found } => assert_eq!(found, 2),
             other => panic!("expected unsupported-version error, got {other}"),
-        }
-    }
-
-    #[test]
-    fn rejects_unknown_slack_mode() {
-        let env = FixedEnvironment::with_overrides(&[]);
-        let file_config = parse_runtime_config(
-            &valid_openai_config().replace("mode = \"socket\"", "mode = \"webhook\""),
-        );
-
-        let error = resolve_app_config(file_config, &env).expect_err("invalid slack mode");
-
-        match error {
-            ConfigError::InvalidValue { field, message } => {
-                assert_eq!(field, "channel.slack.mode");
-                assert!(message.contains("unsupported Slack mode"));
-            }
-            other => panic!("expected invalid-value error, got {other}"),
         }
     }
 
@@ -916,7 +954,7 @@ port = 3000
 language = "English"
 
 [channel.slack]
-mode = "socket"
+socket_mode = true
 
 [channel.slack.auth]
 bot_token_env = "SLACK_BOT_TOKEN"
@@ -932,7 +970,7 @@ default_backend = "primary"
 
 [ai.backends.primary]
 provider = "openai"
-task_runner_model = "gpt-5.3-codex"
+model = "gpt-5.3-codex"
 api_key_env = "LLM_OPENAI_API_KEY"
 
 [ai.backends.fast]
@@ -958,7 +996,7 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
     }
 
     fn valid_http_config() -> String {
-        valid_openai_config().replace("mode = \"socket\"", "mode = \"http\"")
+        valid_openai_config().replace("socket_mode = true", "socket_mode = false")
     }
 
     fn valid_anthropic_config() -> String {
@@ -984,7 +1022,7 @@ port = 3000
 language = "English"
 
 [channel.slack]
-mode = "socket"
+socket_mode = true
 
 [channel.slack.auth]
 bot_token_env = "SLACK_BOT_TOKEN"
@@ -1029,7 +1067,7 @@ port = 3000
 language = "English"
 
 [channel.slack]
-mode = "socket"
+socket_mode = true
 
 [channel.slack.auth]
 bot_token_env = "SLACK_BOT_TOKEN"

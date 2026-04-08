@@ -1,35 +1,53 @@
+# Required: config schema version.
 version = 1
 
+# Optional: HTTP server settings.
 [server]
+# Optional: port Reili listens on in HTTP mode. Defaults to 3000 when omitted.
 port = 3000
 
+# Reili conversation settings.
 [conversation]
+# Optional: default language used in Reili responses. Defaults to `English`.
 language = "English"
 
+# Required: Slack channel integration settings.
 [channel.slack]
-mode = "socket"
+# Optional: `true` uses Socket Mode, `false` uses HTTP endpoints. Defaults to `true`.
+socket_mode = true
 
 [channel.slack.auth]
+# Optional: env var name for the Slack bot token. Defaults to `SLACK_BOT_TOKEN`.
 bot_token_env = "SLACK_BOT_TOKEN"
 
 [channel.slack.socket]
+# Optional when `channel.slack.socket_mode = true`: env var name for the Slack App-Level Token.
+# Defaults to `SLACK_APP_TOKEN`.
 app_token_env = "SLACK_APP_TOKEN"
 
 [channel.slack.http]
+# Optional when `channel.slack.socket_mode = false`: env var name for the Slack signing secret.
+# Defaults to `SLACK_SIGNING_SECRET`.
 signing_secret_env = "SLACK_SIGNING_SECRET"
 
+# Required: AI backend selection.
 [ai]
+# Required: backend ID Reili uses for task execution.
 default_backend = "primary"
 
 # "primary" is an arbitrary backend ID chosen by the config author.
 [ai.backends.primary]
+# Required: AI provider for this backend.
 provider = "openai"
-task_runner_model = "gpt-5.4"
+# Required: model Reili uses for this backend.
+model = "gpt-5.4"
+# Optional for OpenAI backends: env var name for the API key. Defaults to `LLM_OPENAI_API_KEY`.
 api_key_env = "LLM_OPENAI_API_KEY"
 
 #[ai.backends.anthropic]
 #provider = "anthropic"
 #model = "claude-haiku-4-5"
+# Optional for Anthropic backends: env var name for the API key. Defaults to `LLM_ANTHROPIC_API_KEY`.
 #api_key_env = "LLM_ANTHROPIC_API_KEY"
 
 #[ai.backends.bedrock]
@@ -44,16 +62,26 @@ api_key_env = "LLM_OPENAI_API_KEY"
 #location = "global"
 #model_id = "gemini-2.5-flash"
 
+# Reili integrations that require credentials or access to external services.
 [connector.datadog]
+# Optional: Datadog site for API access. Defaults to `datadoghq.com`.
 site = "datadoghq.com"
+# Optional: env var name for the Datadog API key. Defaults to `DATADOG_API_KEY`.
 api_key_env = "DATADOG_API_KEY"
+# Optional: env var name for the Datadog application key. Defaults to `DATADOG_APP_KEY`.
 app_key_env = "DATADOG_APP_KEY"
 
 [connector.github]
+# Optional: GitHub MCP endpoint URL. Defaults to `https://api.githubcopilot.com/mcp/`.
 mcp_url = "https://api.githubcopilot.com/mcp/"
+# Required: GitHub organization scope Reili searches within.
 search_scope_org = "example-org"
 
+# GitHub App settings used so Reili can authenticate via GitHub App.
 [connector.github.app]
+# Required: GitHub App ID.
 app_id = "123456"
+# Required: GitHub App installation ID.
 installation_id = "12345678"
+# Optional: env var name for the GitHub App private key. Defaults to `GITHUB_APP_PRIVATE_KEY`.
 private_key_env = "GITHUB_APP_PRIVATE_KEY"

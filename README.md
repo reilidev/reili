@@ -63,6 +63,8 @@ Use [`config/default.toml`](./config/default.toml) as the checked-in template fo
 cp config/default.toml reili.toml
 ```
 
+For a stripped-down example that relies on defaults, see [`config/minimum.toml`](./config/minimum.toml).
+
 Then edit `reili.toml` for your environment.
 
 Non-secret settings live in `reili.toml`, including:
@@ -94,8 +96,8 @@ Then fill in the secret values referenced by `reili.toml`.
 Required secrets depend on your selected Slack mode and backend:
 
 - `SLACK_BOT_TOKEN`
-- `SLACK_APP_TOKEN` when `channel.slack.mode = "socket"`
-- `SLACK_SIGNING_SECRET` when `channel.slack.mode = "http"`
+- `SLACK_APP_TOKEN` when `channel.slack.socket_mode = true`
+- `SLACK_SIGNING_SECRET` when `channel.slack.socket_mode = false`
 - `DATADOG_API_KEY`
 - `DATADOG_APP_KEY`
 - `GITHUB_APP_PRIVATE_KEY`
