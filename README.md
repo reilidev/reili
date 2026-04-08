@@ -53,9 +53,37 @@ Its current focus is triage, investigation, and communicating findings.
 - Datadog API Key + APP Key for the Datadog MCP server
 - OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call
   Vertex AI Gemini models
-- GitHub MCP token with read access to the repositories Reili investigates
+- GitHub App credentials for the repositories Reili investigates
 
-### 2. Configure Environment Variables
+### 2. Configure `reili.toml`
+
+Use [`config/default.toml`](./config/default.toml) as the checked-in template for runtime settings:
+
+```bash
+cp config/default.toml reili.toml
+```
+
+For a stripped-down example that relies on defaults, see [`config/minimum.toml`](./config/minimum.toml).
+
+Then edit `reili.toml` for your environment.
+
+Non-secret settings live in `reili.toml`, including:
+
+- server port
+- conversation language
+- Slack connection mode
+- selected AI backend and backend-specific non-secret settings
+- Datadog site
+- GitHub MCP URL, GitHub App ID, installation ID, and search scope org
+
+Runtime config resolution is:
+
+1. `--config /path/to/reili.toml`
+2. `./reili.toml`
+
+If neither path exists, startup fails.
+
+### 3. Configure Secrets
 
 Use [`.env.example`](./.env.example) as a starting point and copy it to `.env`:
 
@@ -63,86 +91,82 @@ Use [`.env.example`](./.env.example) as a starting point and copy it to `.env`:
 cp .env.example .env
 ```
 
-Then fill in the required values below.
+Then fill in the secret values referenced by `reili.toml`.
 
-- Collect `SLACK_BOT_TOKEN`, plus `SLACK_APP_TOKEN` for the default Socket Mode or
-  `SLACK_SIGNING_SECRET`
-
-Required:
+Required secrets depend on your selected Slack mode and backend:
 
 - `SLACK_BOT_TOKEN`
-- `SLACK_APP_TOKEN` when `SLACK_SOCKET_MODE` is unset or `true` (default Socket Mode)
-- `SLACK_SIGNING_SECRET` when `SLACK_SOCKET_MODE=false` (HTTP mode)
+- `SLACK_APP_TOKEN` when `channel.slack.socket_mode = true`
+- `SLACK_SIGNING_SECRET` when `channel.slack.socket_mode = false`
 - `DATADOG_API_KEY`
 - `DATADOG_APP_KEY`
-- `LLM_PROVIDER`
-- `LLM_OPENAI_API_KEY` when `LLM_PROVIDER=openai`
-- `LLM_ANTHROPIC_API_KEY` when `LLM_PROVIDER=anthropic`
-- `LLM_ANTHROPIC_MODEL` when `LLM_PROVIDER=anthropic`
-- `LLM_BEDROCK_MODEL_ID` when `LLM_PROVIDER=bedrock`
-- `LLM_VERTEX_AI_MODEL_ID` when `LLM_PROVIDER=vertexai`
-- `GOOGLE_CLOUD_LOCATION` when `LLM_PROVIDER=vertexai`
-- `GOOGLE_CLOUD_PROJECT` when `LLM_PROVIDER=vertexai`
-- `GITHUB_SEARCH_SCOPE_ORG`
-
-Common optional variables:
-
-- `PORT` (default: `3000`)
-- `DATADOG_SITE` (default: `datadoghq.com`)
-- `LANGUAGE` (default: `English`)
-- `GITHUB_MCP_URL` (default: `https://api.githubcopilot.com/mcp/`)
-
-GitHub configuration:
-
-- `GITHUB_APP_ID`
 - `GITHUB_APP_PRIVATE_KEY`
-- `GITHUB_APP_INSTALLATION_ID`
+- `LLM_OPENAI_API_KEY` when the selected backend uses `provider = "openai"`
+- `LLM_ANTHROPIC_API_KEY` when the selected backend uses `provider = "anthropic"`
 
 The GitHub integration talks to a streamable HTTP MCP server and exposes a small allowlisted set
 of raw GitHub MCP read tools to the GitHub specialist agent. Reili mints short-lived GitHub App
 installation tokens at runtime and uses them as the MCP bearer token, so `GITHUB_MCP_TOKEN` is not
-used.
+used. GitHub App ID, installation ID, scope org, and MCP URL are configured in `reili.toml`.
 
-`SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`. When
-`SLACK_SOCKET_MODE` is unset, Reili starts in Socket Mode. In Socket Mode, `SLACK_SIGNING_SECRET`
-is not used.
+`SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`.
 
-When `LLM_PROVIDER=anthropic`, Claude is called through the Anthropic API.
+When the selected backend uses `provider = "anthropic"`, Claude is called through the Anthropic
+API.
 
-- Set `LLM_ANTHROPIC_API_KEY` and `LLM_ANTHROPIC_MODEL`.
-- Supported `LLM_ANTHROPIC_MODEL` values are `claude-opus-4-6`, `claude-sonnet-4-6`, and
+- Set `api_key_env = "LLM_ANTHROPIC_API_KEY"` on that backend in `reili.toml`.
+- Supported Anthropic model values are `claude-opus-4-6`, `claude-sonnet-4-6`, and
   `claude-haiku-4-5`.
 - `search_web` uses Anthropic's web search server tool. Your Anthropic organization administrator
   must enable web search in Claude Console, or the tool will return a soft error payload instead of
   live search results.
 
-When `LLM_PROVIDER=bedrock`, AWS credentials and region are loaded from the standard AWS SDK environment or profile
-chain. Set `AWS_PROFILE` to use a named AWS profile such as an AWS SSO profile, and set `AWS_REGION` if the selected
-profile does not already define a region.
+When the selected backend uses `provider = "bedrock"`, AWS credentials are loaded from the standard
+AWS SDK chain. Set `aws_profile` and `aws_region` in `reili.toml` when you want to force a named
+profile or region for that backend. The underlying AWS credentials still come from the normal AWS
+environment or profile chain.
 - Web search is currently unavailable with the Bedrock provider. If Reili issues a web search while
-  `LLM_PROVIDER=bedrock`, it returns a `capability_unavailable` result instead of live search results.
+  the selected backend uses `provider = "bedrock"`, it returns a `capability_unavailable` result
+  instead of live search results.
 
-When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Default Credentials.
+When the selected backend uses `provider = "vertexai"`, Google credentials are loaded from
+Application Default Credentials.
 
-- Set `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `LLM_VERTEX_AI_MODEL_ID`.
-- For Gemini on Vertex AI, `GOOGLE_CLOUD_LOCATION=global` is usually the best default.
+- Set `project_id`, `location`, and `model_id` in `reili.toml`.
+- For Gemini on Vertex AI, `location = "global"` is usually the best default.
 - Web search uses Vertex AI Gemini Grounding with Google Search.
 - If Vertex AI returns `RESOURCE_EXHAUSTED`, verify your project quotas in Google Cloud Quotas (
   `https://console.cloud.google.com/iam-admin/quotas`) and adjust them if needed.
 
-### 3. Run Reili
+### 4. Run Reili
 
-To get Reili running quickly in a local environment, copy [`.env.example`](./.env.example) to `.env`, fill in your
-values, and start it with Docker:
+To run Reili locally with Docker, provide both `.env` and `reili.toml`:
 
 ```bash
-docker run --rm --env-file .env ghcr.io/reilidev/reili:latest
+docker run --rm \
+  --env-file .env \
+  -v "$(pwd)/reili.toml:/home/reili/reili.toml:ro" \
+  ghcr.io/reilidev/reili:latest
 ```
 
 If you are using HTTP mode, publish the application port as well:
 
 ```bash
-docker run --rm --env-file .env -p 3000:3000 ghcr.io/reilidev/reili:latest
+docker run --rm \
+  --env-file .env \
+  -v "$(pwd)/reili.toml:/home/reili/reili.toml:ro" \
+  -p 3000:3000 \
+  ghcr.io/reilidev/reili:latest
+```
+
+If you need to override discovery order explicitly, pass `--config` to the runtime:
+
+```bash
+docker run --rm \
+  --env-file .env \
+  -v "$(pwd)/reili.toml:/work/reili.toml:ro" \
+  ghcr.io/reilidev/reili:latest \
+  --config /work/reili.toml
 ```
 
 For HTTP mode, Slack must be able to reach both `/slack/events` and `/slack/interactions`. In

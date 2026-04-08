@@ -1,0 +1,28 @@
+# Minimal runtime config example.
+# Omitted fields use built-in defaults, including these env var names:
+# SLACK_BOT_TOKEN
+# SLACK_APP_TOKEN
+# DATADOG_API_KEY
+# DATADOG_APP_KEY
+# LLM_OPENAI_API_KEY
+# GITHUB_APP_PRIVATE_KEY
+
+version = 1
+
+[conversation]
+
+[channel.slack]
+
+[ai]
+default_backend = "primary"
+
+[ai.backends.primary]
+provider = "openai"
+model = "gpt-5.4"
+
+[connector.github]
+search_scope_org = "example-org"
+
+[connector.github.app]
+app_id = "123456"
+installation_id = "12345678"

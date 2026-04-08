@@ -12,7 +12,7 @@ use crate::outbound::github::GitHubMcpConfig;
 
 pub struct OpenAiTaskRunnerInput {
     pub api_key: String,
-    pub task_runner_model: String,
+    pub model: String,
     pub datadog_mcp: DatadogMcpToolConfig,
     pub github_mcp: GitHubMcpConfig,
     pub github_scope_org: String,
@@ -33,7 +33,7 @@ impl OpenAiTaskRunner {
         Self {
             api_key: input.api_key,
             provider_settings: create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
-                task_runner_model: input.task_runner_model,
+                model: input.model,
             }),
             datadog_mcp: input.datadog_mcp,
             github_mcp: input.github_mcp,

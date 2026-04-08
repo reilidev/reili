@@ -13,6 +13,8 @@ use crate::outbound::github::GitHubMcpConfig;
 
 pub struct BedrockTaskRunnerInput {
     pub model_id: String,
+    pub aws_profile: Option<String>,
+    pub aws_region: Option<String>,
     pub datadog_mcp: DatadogMcpToolConfig,
     pub github_mcp: GitHubMcpConfig,
     pub github_scope_org: String,
@@ -21,6 +23,8 @@ pub struct BedrockTaskRunnerInput {
 
 pub struct BedrockTaskRunner {
     provider_settings: LlmProviderSettings,
+    aws_profile: Option<String>,
+    aws_region: Option<String>,
     datadog_mcp: DatadogMcpToolConfig,
     github_mcp: GitHubMcpConfig,
     github_scope_org: String,
@@ -35,6 +39,8 @@ impl BedrockTaskRunner {
                     model_id: input.model_id,
                 },
             ),
+            aws_profile: input.aws_profile,
+            aws_region: input.aws_region,
             datadog_mcp: input.datadog_mcp,
             github_mcp: input.github_mcp,
             github_scope_org: input.github_scope_org,
@@ -46,7 +52,8 @@ impl BedrockTaskRunner {
 #[async_trait]
 impl TaskRunnerPort for BedrockTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
-        let client = create_bedrock_client().await;
+        let client =
+            create_bedrock_client(self.aws_profile.as_deref(), self.aws_region.as_deref()).await;
 
         run_llm_task(RunLlmTaskInput {
             client,
@@ -61,8 +68,47 @@ impl TaskRunnerPort for BedrockTaskRunner {
     }
 }
 
-async fn create_bedrock_client() -> Client {
-    let sdk_config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+async fn create_bedrock_client(aws_profile: Option<&str>, aws_region: Option<&str>) -> Client {
+    let mut loader = aws_config::defaults(BehaviorVersion::latest());
+    if let Some(profile) = aws_profile {
+        loader = loader.profile_name(profile);
+    }
+    if let Some(region) = aws_region {
+        loader = loader.region(aws_config::Region::new(region.to_string()));
+    }
+    let sdk_config = loader.load().await;
 
     Client::from(aws_sdk_bedrockruntime::Client::new(&sdk_config))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BedrockTaskRunnerInput;
+    use crate::outbound::agents::DatadogMcpToolConfig;
+    use crate::outbound::github::GitHubMcpConfig;
+
+    #[test]
+    fn input_supports_explicit_aws_profile_and_region() {
+        let input = BedrockTaskRunnerInput {
+            model_id: "anthropic.claude".to_string(),
+            aws_profile: Some("prod-sso".to_string()),
+            aws_region: Some("ap-northeast-1".to_string()),
+            datadog_mcp: DatadogMcpToolConfig {
+                api_key: "api".to_string(),
+                app_key: "app".to_string(),
+                site: "datadoghq.com".to_string(),
+            },
+            github_mcp: GitHubMcpConfig {
+                url: "https://api.githubcopilot.com/mcp/".to_string(),
+                app_id: "12345".to_string(),
+                private_key: "private-key".to_string(),
+                installation_id: 99,
+            },
+            github_scope_org: "example-org".to_string(),
+            language: "English".to_string(),
+        };
+
+        assert_eq!(input.aws_profile.as_deref(), Some("prod-sso"));
+        assert_eq!(input.aws_region.as_deref(), Some("ap-northeast-1"));
+    }
 }

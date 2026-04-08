@@ -14,8 +14,6 @@ LABEL org.opencontainers.image.title="Reili" \
 USER 10001:10001
 WORKDIR /home/reili
 
-ENV PORT=3000
-
 EXPOSE 3000
 
 ENTRYPOINT ["/usr/local/bin/reili"]

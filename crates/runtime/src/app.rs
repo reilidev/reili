@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::body::Bytes;
@@ -18,13 +19,20 @@ use reili_core::messaging::slack::{SlackInteractionHandlerPort, SlackMessageHand
 use serde_json::json;
 
 use crate::bootstrap::{RuntimeBootstrapError, build_runtime_deps};
-use crate::config::env::{EnvConfigError, SlackConnectionMode, load_app_config};
+use crate::config::{
+    AppConfig, ConfigError, ConfigLoadOptions, SlackConnectionMode, load_app_config,
+};
 use crate::socket_mode::{SocketModeClient, SocketModeConfig, SocketModeError};
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppStartupOptions {
+    pub config_path: Option<PathBuf>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppRunError {
     #[error("{0}")]
-    Config(#[from] EnvConfigError),
+    Config(#[from] ConfigError),
     #[error("{0}")]
     Bootstrap(#[from] RuntimeBootstrapError),
     #[error("Failed to initialize logger: {0}")]
@@ -48,9 +56,15 @@ struct AppHttpState {
 }
 
 pub async fn run_app() -> Result<(), AppRunError> {
+    run_app_with_options(AppStartupOptions::default()).await
+}
+
+pub async fn run_app_with_options(options: AppStartupOptions) -> Result<(), AppRunError> {
     init_json_logger()?;
 
-    let config = load_app_config()?;
+    let config = load_app_config(&ConfigLoadOptions {
+        explicit_path: options.config_path,
+    })?;
     let deps = build_runtime_deps(&config).await?;
     deps.worker_runner.start();
 
@@ -66,7 +80,7 @@ pub async fn run_app() -> Result<(), AppRunError> {
 }
 
 async fn run_http_server(
-    config: &crate::config::env::AppConfig,
+    config: &AppConfig,
     deps: &crate::bootstrap::RuntimeDeps,
 ) -> Result<(), AppRunError> {
     let slack_signature_verifier = deps

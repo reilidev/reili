@@ -20,7 +20,7 @@ pub struct LlmProviderSettings {
 }
 
 pub struct CreateOpenAiProviderSettingsInput {
-    pub task_runner_model: String,
+    pub model: String,
 }
 
 pub struct CreateAnthropicProviderSettingsInput {
@@ -40,8 +40,8 @@ pub fn create_openai_provider_settings(
 ) -> LlmProviderSettings {
     LlmProviderSettings {
         provider: "openai".to_string(),
-        specialist_model: input.task_runner_model.clone(),
-        task_runner_model: input.task_runner_model,
+        specialist_model: input.model.clone(),
+        task_runner_model: input.model,
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
         specialist_max_turns: DEFAULT_SPECIALIST_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
