@@ -38,7 +38,6 @@ impl WebSearchPort for BedrockWebSearchAdapter {
                 self.model_id
             ),
             citations: Vec::new(),
-            searches: Vec::new(),
         })
     }
 }
@@ -66,7 +65,6 @@ mod tests {
             .expect("search should succeed");
 
         assert!(result.summary_text.contains("capability_unavailable"));
-        assert!(result.searches.is_empty());
         assert!(result.citations.is_empty());
     }
 }

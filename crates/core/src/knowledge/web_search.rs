@@ -21,7 +21,6 @@ pub struct WebSearchUserLocation {
 pub struct WebSearchResult {
     pub summary_text: String,
     pub citations: Vec<WebCitation>,
-    pub searches: Vec<WebSearchExecution>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,13 +28,6 @@ pub struct WebSearchResult {
 pub struct WebCitation {
     pub title: String,
     pub url: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WebSearchExecution {
-    pub query: String,
-    pub source_count: u32,
 }
 
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]

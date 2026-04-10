@@ -3,9 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use reili_core::error::PortError;
-use reili_core::knowledge::{
-    WebCitation, WebSearchExecution, WebSearchInput, WebSearchPort, WebSearchResult,
-};
+use reili_core::knowledge::{WebCitation, WebSearchInput, WebSearchPort, WebSearchResult};
 use reqwest::Client;
 use serde_json::{Value, json};
 
@@ -161,7 +159,6 @@ impl WebSearchPort for OpenAiWebSearchAdapter {
             model = self.model,
             latency_ms = latency_ms,
             citation_count = result.citations.len(),
-            search_count = result.searches.len(),
             "Web search completed"
         );
 
@@ -177,7 +174,6 @@ fn soft_temporary_error(message: &str) -> WebSearchResult {
     WebSearchResult {
         summary_text: format!("{{\"type\":\"temporary_error\",\"message\":\"{message}\"}}"),
         citations: Vec::new(),
-        searches: Vec::new(),
     }
 }
 
@@ -185,14 +181,12 @@ fn soft_client_error(message: &str) -> WebSearchResult {
     WebSearchResult {
         summary_text: format!("{{\"type\":\"client_error\",\"message\":\"{message}\"}}"),
         citations: Vec::new(),
-        searches: Vec::new(),
     }
 }
 
 fn parse_response(response: &Value) -> WebSearchResult {
     let mut summary_text = String::new();
     let mut citations = Vec::new();
-    let mut searches = Vec::new();
     let mut seen_urls = HashSet::new();
 
     let output = response.get("output").and_then(Value::as_array);
@@ -202,32 +196,12 @@ fn parse_response(response: &Value) -> WebSearchResult {
             return WebSearchResult {
                 summary_text: String::new(),
                 citations,
-                searches,
             };
         }
     };
 
     for item in items {
         let item_type = item.get("type").and_then(Value::as_str).unwrap_or("");
-
-        if item_type == "web_search_call"
-            && let Some(action) = item.get("action")
-        {
-            let query = action
-                .get("query")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let source_count = action
-                .get("sources")
-                .and_then(Value::as_array)
-                .map(|s| s.len() as u32)
-                .unwrap_or(0);
-            searches.push(WebSearchExecution {
-                query,
-                source_count,
-            });
-        }
 
         if item_type == "message"
             && let Some(content) = item.get("content").and_then(Value::as_array)
@@ -276,7 +250,6 @@ fn parse_response(response: &Value) -> WebSearchResult {
     WebSearchResult {
         summary_text,
         citations,
-        searches,
     }
 }
 
@@ -368,9 +341,6 @@ mod tests {
         assert_eq!(result.citations.len(), 2);
         assert_eq!(result.citations[0].url, "https://example.com/1");
         assert_eq!(result.citations[1].title, "Example Article 2");
-        assert_eq!(result.searches.len(), 1);
-        assert_eq!(result.searches[0].query, "latest openai news");
-        assert_eq!(result.searches[0].source_count, 2);
     }
 
     #[test]
