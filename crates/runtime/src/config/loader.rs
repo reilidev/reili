@@ -137,6 +137,9 @@ fn resolve_app_config(
         },
         github,
         language: require_non_empty(&file_config.conversation.language, "conversation.language")?,
+        additional_system_prompt: optional_trimmed(
+            file_config.conversation.additional_system_prompt.as_deref(),
+        ),
     })
 }
 
@@ -601,6 +604,67 @@ mod tests {
             }
             _ => panic!("expected openai provider"),
         }
+    }
+
+    #[test]
+    fn resolves_additional_system_prompt_when_present() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "language = \"English\"\n",
+            "language = \"English\"\nadditional_system_prompt = \"  Prefer runbook links first.\\nState uncertainty explicitly.  \"\n",
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert_eq!(
+            config.additional_system_prompt.as_deref(),
+            Some("Prefer runbook links first.\nState uncertainty explicitly.")
+        );
+    }
+
+    #[test]
+    fn ignores_blank_additional_system_prompt() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "language = \"English\"\n",
+            "language = \"English\"\nadditional_system_prompt = \"   \"\n",
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert_eq!(config.additional_system_prompt, None);
+    }
+
+    #[test]
+    fn accepts_legacy_additional_system_prompt_instructions_alias() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "language = \"English\"\n",
+            "language = \"English\"\nadditional_system_prompt_instructions = \"Prefer runbook links first.\"\n",
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert_eq!(
+            config.additional_system_prompt.as_deref(),
+            Some("Prefer runbook links first.")
+        );
+    }
+
+    #[test]
+    fn accepts_legacy_system_prompt_instructions_alias() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "language = \"English\"\n",
+            "language = \"English\"\nsystem_prompt_instructions = \"Prefer runbook links first.\"\n",
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert_eq!(
+            config.additional_system_prompt.as_deref(),
+            Some("Prefer runbook links first.")
+        );
     }
 
     #[test]

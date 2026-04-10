@@ -42,6 +42,7 @@ where
     pub cancellation: TaskCancellation,
     pub on_progress_event: Arc<dyn TaskProgressEventPort>,
     pub language: String,
+    pub additional_system_prompt: Option<String>,
     pub usage_collector: LlmUsageCollector,
     pub slack_action_token: Option<String>,
 }
@@ -60,6 +61,7 @@ where
         github_mcp_toolset: input.github_mcp_toolset.clone(),
         github_scope_org: String::new(),
         language: input.language.clone(),
+        additional_system_prompt: input.additional_system_prompt.clone(),
         logger: Arc::clone(&input.logger),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: DATADOG_PROGRESS_OWNER_ID.to_string(),
@@ -75,6 +77,7 @@ where
         github_mcp_toolset: input.github_mcp_toolset.clone(),
         github_scope_org: input.github_scope_org.clone(),
         language: input.language.clone(),
+        additional_system_prompt: input.additional_system_prompt.clone(),
         logger: Arc::clone(&input.logger),
         on_progress_event: Arc::clone(&input.on_progress_event),
         owner_id: GITHUB_PROGRESS_OWNER_ID.to_string(),
@@ -92,6 +95,7 @@ where
             github_scope_org: input.github_scope_org,
             runtime: input.runtime,
             language: input.language,
+            additional_system_prompt: input.additional_system_prompt,
         }))
         .default_max_turns(input.settings.task_runner_max_turns)
         .additional_params(input.settings.additional_params.clone());
@@ -240,6 +244,7 @@ where
     github_mcp_toolset: GitHubMcpToolset,
     github_scope_org: String,
     language: String,
+    additional_system_prompt: Option<String>,
     logger: Arc<dyn Logger>,
     on_progress_event: Arc<dyn TaskProgressEventPort>,
     owner_id: String,
@@ -258,7 +263,10 @@ where
         .agent(input.settings.specialist_model.clone())
         .name("investigate_datadog")
         .description("Delegates Datadog logs, metrics, and events investigation tasks.")
-        .preamble(&build_datadog_instructions(&input.language))
+        .preamble(&build_datadog_instructions(BuildDatadogInstructionsInput {
+            language: input.language,
+            additional_system_prompt: input.additional_system_prompt,
+        }))
         .default_max_turns(input.settings.specialist_max_turns)
         .additional_params(input.settings.additional_params.clone());
     let builder = with_max_tokens(builder, input.settings.max_tokens);
@@ -294,6 +302,7 @@ where
         .preamble(&build_github_instructions(BuildGithubInstructionsInput {
             language: input.language,
             github_scope_org: input.github_scope_org.clone(),
+            additional_system_prompt: input.additional_system_prompt,
         }))
         .default_max_turns(input.settings.specialist_max_turns)
         .additional_params(input.settings.additional_params.clone());
@@ -336,6 +345,7 @@ struct BuildTaskInstructionsInput {
     github_scope_org: String,
     runtime: TaskRuntime,
     language: String,
+    additional_system_prompt: Option<String>,
 }
 
 fn build_task_instructions(input: BuildTaskInstructionsInput) -> String {
@@ -345,7 +355,8 @@ fn build_task_instructions(input: BuildTaskInstructionsInput) -> String {
         input.datadog_site
     };
 
-    format!(
+    append_configured_additional_system_prompt(
+        format!(
         "You are an SRE/Security/Platform engineer operating from Slack mentions.
 
 Output language: {language}
@@ -389,11 +400,19 @@ Final answer requirements:
         retry_count = input.runtime.retry_count,
         github_scope_org = input.github_scope_org,
         datadog_site = datadog_site,
+        ),
+        input.additional_system_prompt.as_deref(),
     )
 }
 
-fn build_datadog_instructions(language: &str) -> String {
-    format!(
+struct BuildDatadogInstructionsInput {
+    language: String,
+    additional_system_prompt: Option<String>,
+}
+
+fn build_datadog_instructions(input: BuildDatadogInstructionsInput) -> String {
+    append_configured_additional_system_prompt(
+        format!(
         "You are a Datadog investigation specialist covering logs, metrics, and events.
 Before entering a new investigation step, call report_progress.
 report_progress payload must be short: use title and summary fields.
@@ -408,12 +427,17 @@ Combine logs, metrics, and events when it materially improves confidence.
 Run independent tool calls in parallel when possible.
 If you receive client_error payloads, adjust query and retry when useful.
 Use {language} for all responses."
+            ,
+            language = input.language,
+        ),
+        input.additional_system_prompt.as_deref(),
     )
 }
 
 struct BuildGithubInstructionsInput {
     language: String,
     github_scope_org: String,
+    additional_system_prompt: Option<String>,
 }
 
 fn build_github_instructions(input: BuildGithubInstructionsInput) -> String {
@@ -426,17 +450,35 @@ Mandatory scope rules:
         github_scope_org = input.github_scope_org
     );
 
-    format!(
-        "You are a GitHub analysis specialist.
+    append_configured_additional_system_prompt(
+        format!(
+            "You are a GitHub analysis specialist.
 Before entering a new investigation step, call report_progress.
 report_progress payload must be short: use title and summary fields.
 Do not post consecutive report_progress calls with identical content.
 {tool_rules}
 Run independent searches in parallel when possible.
 Use {language} for all responses.",
-        tool_rules = tool_rules,
-        language = input.language,
+            tool_rules = tool_rules,
+            language = input.language,
+        ),
+        input.additional_system_prompt.as_deref(),
     )
+}
+
+fn append_configured_additional_system_prompt(
+    base_instructions: String,
+    additional_system_prompt: Option<&str>,
+) -> String {
+    match additional_system_prompt
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => format!(
+            "{base_instructions}\n\nConfigured additional system prompt instructions from reili.toml:\n\n{value}\n"
+        ),
+        None => base_instructions,
+    }
 }
 
 #[cfg(test)]
@@ -451,8 +493,9 @@ mod tests {
         create_anthropic_provider_settings, create_openai_provider_settings,
     };
     use super::{
-        BuildGithubInstructionsInput, BuildTaskInstructionsInput, build_datadog_instructions,
-        build_github_instructions, build_task_instructions, build_task_prompt,
+        BuildDatadogInstructionsInput, BuildGithubInstructionsInput, BuildTaskInstructionsInput,
+        build_datadog_instructions, build_github_instructions, build_task_instructions,
+        build_task_prompt,
     };
 
     fn sample_trigger_message() -> SlackMessage {
@@ -596,6 +639,7 @@ mod tests {
                 retry_count: 0,
             },
             language: "Japanese".to_string(),
+            additional_system_prompt: None,
         });
 
         assert!(instructions.contains("call report_progress"));
@@ -612,10 +656,14 @@ mod tests {
 
     #[test]
     fn specialist_instructions_include_report_progress_rules() {
-        let datadog_instructions = build_datadog_instructions("Japanese");
+        let datadog_instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
         let github_instructions = build_github_instructions(BuildGithubInstructionsInput {
             language: "Japanese".to_string(),
             github_scope_org: "acme".to_string(),
+            additional_system_prompt: None,
         });
 
         for instructions in [datadog_instructions, github_instructions.clone()] {
@@ -624,11 +672,41 @@ mod tests {
             assert!(instructions.contains("Do not post consecutive report_progress"));
         }
 
-        assert!(build_datadog_instructions("Japanese").contains("analyze_datadog_logs"));
-        assert!(build_datadog_instructions("Japanese").contains("get_datadog_metric"));
-        assert!(build_datadog_instructions("Japanese").contains("get_datadog_metric_context"));
-        assert!(build_datadog_instructions("Japanese").contains("search_datadog_events"));
-        assert!(build_datadog_instructions("Japanese").contains("Inspect logs"));
+        assert!(
+            build_datadog_instructions(BuildDatadogInstructionsInput {
+                language: "Japanese".to_string(),
+                additional_system_prompt: None,
+            })
+            .contains("analyze_datadog_logs")
+        );
+        assert!(
+            build_datadog_instructions(BuildDatadogInstructionsInput {
+                language: "Japanese".to_string(),
+                additional_system_prompt: None,
+            })
+            .contains("get_datadog_metric")
+        );
+        assert!(
+            build_datadog_instructions(BuildDatadogInstructionsInput {
+                language: "Japanese".to_string(),
+                additional_system_prompt: None,
+            })
+            .contains("get_datadog_metric_context")
+        );
+        assert!(
+            build_datadog_instructions(BuildDatadogInstructionsInput {
+                language: "Japanese".to_string(),
+                additional_system_prompt: None,
+            })
+            .contains("search_datadog_events")
+        );
+        assert!(
+            build_datadog_instructions(BuildDatadogInstructionsInput {
+                language: "Japanese".to_string(),
+                additional_system_prompt: None,
+            })
+            .contains("Inspect logs")
+        );
         assert!(
             github_instructions
                 .contains("search_code/search_repositories/search_issues/search_pull_requests")
@@ -649,11 +727,49 @@ mod tests {
                 retry_count: 0,
             },
             language: "Japanese".to_string(),
+            additional_system_prompt: None,
         });
 
         assert!(instructions.contains("search_web"));
         assert!(instructions.contains("search_slack_messages"));
         assert!(instructions.contains("external dependencies"));
         assert!(instructions.contains("public incident reports or status page"));
+    }
+
+    #[test]
+    fn appends_configured_additional_system_prompt_to_all_agents() {
+        let configured_instructions = "Prefer runbook links first.\nState uncertainty explicitly.";
+        let task_instructions = build_task_instructions(BuildTaskInstructionsInput {
+            datadog_site: "datadoghq.com".to_string(),
+            github_scope_org: "acme".to_string(),
+            runtime: TaskRuntime {
+                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+                channel: "C123".to_string(),
+                thread_ts: "123.456".to_string(),
+                retry_count: 0,
+            },
+            language: "Japanese".to_string(),
+            additional_system_prompt: Some(configured_instructions.to_string()),
+        });
+        let datadog_instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
+            language: "Japanese".to_string(),
+            additional_system_prompt: Some(configured_instructions.to_string()),
+        });
+        let github_instructions = build_github_instructions(BuildGithubInstructionsInput {
+            language: "Japanese".to_string(),
+            github_scope_org: "acme".to_string(),
+            additional_system_prompt: Some(configured_instructions.to_string()),
+        });
+
+        for instructions in [task_instructions, datadog_instructions, github_instructions] {
+            assert!(instructions.contains("Configured additional system prompt instructions"));
+            assert!(
+                instructions.contains(
+                    "Configured additional system prompt instructions from reili.toml:\n\nPrefer runbook links first."
+                )
+            );
+            assert!(instructions.contains("Prefer runbook links first."));
+            assert!(instructions.contains("State uncertainty explicitly."));
+        }
     }
 }

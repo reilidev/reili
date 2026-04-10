@@ -28,6 +28,7 @@ where
     pub github_mcp: GitHubMcpConfig,
     pub github_scope_org: String,
     pub language: String,
+    pub additional_system_prompt: Option<String>,
     pub run: RunTaskInput,
 }
 
@@ -92,6 +93,7 @@ where
         cancellation: input.run.context.cancellation.clone(),
         on_progress_event: Arc::clone(&input.run.on_progress_event),
         language: input.language,
+        additional_system_prompt: input.additional_system_prompt,
         usage_collector: usage_collector.clone(),
         slack_action_token: input.run.request.trigger_message.action_token.clone(),
     });

@@ -32,12 +32,18 @@ impl Default for ServerFileConfig {
 #[serde(default)]
 pub(crate) struct ConversationFileConfig {
     pub language: String,
+    #[serde(
+        alias = "additional_system_prompt_instructions",
+        alias = "system_prompt_instructions"
+    )]
+    pub additional_system_prompt: Option<String>,
 }
 
 impl Default for ConversationFileConfig {
     fn default() -> Self {
         Self {
             language: "English".to_string(),
+            additional_system_prompt: None,
         }
     }
 }

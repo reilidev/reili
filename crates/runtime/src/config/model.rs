@@ -124,6 +124,7 @@ pub struct AppConfig {
     pub llm: LlmConfig,
     pub github: GitHubConfig,
     pub language: String,
+    pub additional_system_prompt: Option<String>,
 }
 
 #[cfg(test)]
@@ -162,6 +163,7 @@ mod tests {
                 scope_org: "example-org".to_string(),
             },
             language: "English".to_string(),
+            additional_system_prompt: None,
         };
 
         let debug_output = format!("{config:?}");
