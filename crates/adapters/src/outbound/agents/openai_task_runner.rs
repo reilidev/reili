@@ -17,6 +17,7 @@ pub struct OpenAiTaskRunnerInput {
     pub github_mcp: GitHubMcpConfig,
     pub github_scope_org: String,
     pub language: String,
+    pub additional_system_prompt: Option<String>,
 }
 
 pub struct OpenAiTaskRunner {
@@ -26,6 +27,7 @@ pub struct OpenAiTaskRunner {
     github_mcp: GitHubMcpConfig,
     github_scope_org: String,
     language: String,
+    additional_system_prompt: Option<String>,
 }
 
 impl OpenAiTaskRunner {
@@ -39,6 +41,7 @@ impl OpenAiTaskRunner {
             github_mcp: input.github_mcp,
             github_scope_org: input.github_scope_org,
             language: input.language,
+            additional_system_prompt: input.additional_system_prompt,
         }
     }
 }
@@ -53,6 +56,7 @@ impl TaskRunnerPort for OpenAiTaskRunner {
             github_mcp: self.github_mcp.clone(),
             github_scope_org: self.github_scope_org.clone(),
             language: self.language.clone(),
+            additional_system_prompt: self.additional_system_prompt.clone(),
             run: input,
         })
         .await

@@ -19,6 +19,7 @@ pub struct BedrockTaskRunnerInput {
     pub github_mcp: GitHubMcpConfig,
     pub github_scope_org: String,
     pub language: String,
+    pub additional_system_prompt: Option<String>,
 }
 
 pub struct BedrockTaskRunner {
@@ -29,6 +30,7 @@ pub struct BedrockTaskRunner {
     github_mcp: GitHubMcpConfig,
     github_scope_org: String,
     language: String,
+    additional_system_prompt: Option<String>,
 }
 
 impl BedrockTaskRunner {
@@ -45,6 +47,7 @@ impl BedrockTaskRunner {
             github_mcp: input.github_mcp,
             github_scope_org: input.github_scope_org,
             language: input.language,
+            additional_system_prompt: input.additional_system_prompt,
         }
     }
 }
@@ -62,6 +65,7 @@ impl TaskRunnerPort for BedrockTaskRunner {
             github_mcp: self.github_mcp.clone(),
             github_scope_org: self.github_scope_org.clone(),
             language: self.language.clone(),
+            additional_system_prompt: self.additional_system_prompt.clone(),
             run: input,
         })
         .await
@@ -106,9 +110,14 @@ mod tests {
             },
             github_scope_org: "example-org".to_string(),
             language: "English".to_string(),
+            additional_system_prompt: Some("Prefer runbook links.".to_string()),
         };
 
         assert_eq!(input.aws_profile.as_deref(), Some("prod-sso"));
         assert_eq!(input.aws_region.as_deref(), Some("ap-northeast-1"));
+        assert_eq!(
+            input.additional_system_prompt.as_deref(),
+            Some("Prefer runbook links.")
+        );
     }
 }

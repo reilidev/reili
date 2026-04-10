@@ -78,6 +78,7 @@ struct CreateProviderPortsInput<'a> {
     github_mcp: GitHubMcpConfig,
     github_scope_org: String,
     language: String,
+    additional_system_prompt: Option<String>,
 }
 
 pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, RuntimeBootstrapError> {
@@ -121,6 +122,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         },
         github_scope_org: config.github.scope_org.clone(),
         language: config.language.clone(),
+        additional_system_prompt: config.additional_system_prompt.clone(),
     })
     .await?;
 
@@ -213,6 +215,7 @@ async fn create_provider_ports(
                 github_mcp: input.github_mcp,
                 github_scope_org: input.github_scope_org,
                 language: input.language,
+                additional_system_prompt: input.additional_system_prompt,
             })),
         }),
         LlmProviderConfig::Anthropic(config) => Ok(ProviderPorts {
@@ -233,6 +236,7 @@ async fn create_provider_ports(
                 github_mcp: input.github_mcp,
                 github_scope_org: input.github_scope_org,
                 language: input.language,
+                additional_system_prompt: input.additional_system_prompt,
             })),
         }),
         LlmProviderConfig::Bedrock(config) => Ok(ProviderPorts {
@@ -253,6 +257,7 @@ async fn create_provider_ports(
                 github_mcp: input.github_mcp,
                 github_scope_org: input.github_scope_org,
                 language: input.language,
+                additional_system_prompt: input.additional_system_prompt,
             })),
         }),
         LlmProviderConfig::VertexAi(config) => {
@@ -276,6 +281,7 @@ async fn create_provider_ports(
                     github_mcp: input.github_mcp,
                     github_scope_org: input.github_scope_org,
                     language: input.language,
+                    additional_system_prompt: input.additional_system_prompt,
                 })),
             })
         }

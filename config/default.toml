@@ -10,6 +10,9 @@ port = 3000
 [conversation]
 # Optional: default language used in Reili responses. Defaults to `English`.
 language = "English"
+# Optional: appended verbatim to every agent system prompt after the built-in instructions.
+# Useful for team-specific response rules, runbook preferences, or escalation guidance.
+additional_system_prompt = ""
 
 # Required: Slack channel integration settings.
 [channel.slack]
