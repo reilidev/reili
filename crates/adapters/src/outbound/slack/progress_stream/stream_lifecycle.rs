@@ -567,6 +567,7 @@ mod tests {
         SlackProgressStreamAppendOutcome, SlackProgressStreamClock, SlackProgressStreamLifecycle,
         SlackProgressStreamRotationInput, SlackStreamRotationReason,
     };
+    use crate::outbound::slack::progress_stream::chunk_rotation::STREAM_ROTATION_CHARACTER_LIMIT;
     use crate::outbound::slack::progress_stream::progress_models::SlackMarkdownTextChunk;
     use crate::outbound::slack::progress_stream::{
         LogFieldValue, SlackAnyChunk, SlackAppendStreamInput, SlackProgressStreamApiPort,
@@ -801,8 +802,12 @@ mod tests {
             create_route(),
         );
 
-        lifecycle.start(create_chunk(&"a".repeat(3250))).await;
-        let chunks = create_chunk(&"b".repeat(200));
+        lifecycle
+            .start(create_chunk(
+                &"a".repeat(STREAM_ROTATION_CHARACTER_LIMIT - 100),
+            ))
+            .await;
+        let chunks = create_chunk(&"b".repeat(101));
         let reason = lifecycle
             .rotation_reason_for_append(&chunks)
             .expect("rotation should be planned");
