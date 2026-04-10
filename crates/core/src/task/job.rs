@@ -40,6 +40,7 @@ mod tests {
                     user: "U001".to_string(),
                     text: "check alert".to_string(),
                     legacy_attachments: Vec::new(),
+                    files: Vec::new(),
                     ts: "123.456".to_string(),
                     thread_ts: Some("123.450".to_string()),
                 },

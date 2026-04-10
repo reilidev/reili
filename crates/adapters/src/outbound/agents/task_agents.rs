@@ -129,7 +129,8 @@ where
 pub fn build_task_prompt(request: &TaskRequest) -> String {
     let task_prompt = "Investigate the following user input and respond with the most appropriate investigation or direct answer.
 The input may be an alert, request, question, link, or partial context.";
-    let trigger_message_text = request.trigger_message.text.trim();
+    let trigger_message_text = request.trigger_message.rendered_text();
+    let trigger_message_text = trigger_message_text.trim();
     let trigger_message_section = format!("\n\nTrigger Message: {trigger_message_text}");
     let bot_user_id = extract_mentioned_user_id(&request.trigger_message.text);
     let thread_transcript =
@@ -151,7 +152,8 @@ fn build_thread_transcript(
         .iter()
         .map(|message| {
             let author = normalize_author(message.user.as_deref(), bot_user_id);
-            let text = message.text.trim();
+            let text = message.rendered_text();
+            let text = text.trim();
             let iso_timestamp = to_iso_timestamp(&message.ts);
             format!(
                 "ts: {}, iso_timestamp: {}, posted_by: {}\nmessage:{}",
@@ -483,7 +485,9 @@ fn append_configured_additional_system_prompt(
 
 #[cfg(test)]
 mod tests {
-    use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
+    use reili_core::messaging::slack::{
+        SlackMessage, SlackMessageFile, SlackThreadMessage, SlackTriggerType,
+    };
     use reili_core::task::TaskRequest;
     use reili_core::task::TaskRuntime;
     use serde_json::json;
@@ -508,6 +512,7 @@ mod tests {
             user: "U001".to_string(),
             text: "Please investigate this alert".to_string(),
             legacy_attachments: Vec::new(),
+            files: Vec::new(),
             ts: "1710000000.000001".to_string(),
             thread_ts: None,
         }
@@ -522,6 +527,7 @@ mod tests {
                 user: Some("U123".to_string()),
                 text: "thread context".to_string(),
                 legacy_attachments: Vec::new(),
+                files: Vec::new(),
                 metadata: None,
             }],
         };
@@ -554,6 +560,7 @@ mod tests {
                 user: Some("U999".to_string()),
                 text: "I started investigation".to_string(),
                 legacy_attachments: Vec::new(),
+                files: Vec::new(),
                 metadata: None,
             }],
         };
@@ -572,6 +579,7 @@ mod tests {
                     user: Some("U123".to_string()),
                     text: "First message".to_string(),
                     legacy_attachments: Vec::new(),
+                    files: Vec::new(),
                     metadata: None,
                 },
                 SlackThreadMessage {
@@ -579,6 +587,7 @@ mod tests {
                     user: None,
                     text: " follow-up from bot ".to_string(),
                     legacy_attachments: Vec::new(),
+                    files: Vec::new(),
                     metadata: None,
                 },
             ],
@@ -590,6 +599,51 @@ mod tests {
         assert!(prompt.contains(
             "ts: 1710000000.000002, iso_timestamp: 2024-03-09T16:00:00.000Z, posted_by: system\nmessage:follow-up from bot"
         ));
+    }
+
+    #[test]
+    fn includes_trigger_message_file_plain_text_in_prompt() {
+        let mut trigger = sample_trigger_message();
+        trigger.text = String::new();
+        trigger.files = vec![SlackMessageFile {
+            name: Some("aws-health.eml".to_string()),
+            title: Some("AWS Health Event".to_string()),
+            plain_text: Some("scheduled upgrade required".to_string()),
+        }];
+        let request = TaskRequest {
+            trigger_message: trigger,
+            thread_messages: vec![],
+        };
+
+        let prompt = build_task_prompt(&request);
+
+        assert!(prompt.contains("Trigger Message: attached_file: aws-health.eml"));
+        assert!(prompt.contains("plain_text:\nscheduled upgrade required"));
+    }
+
+    #[test]
+    fn includes_thread_message_file_plain_text_in_prompt() {
+        let request = TaskRequest {
+            trigger_message: sample_trigger_message(),
+            thread_messages: vec![SlackThreadMessage {
+                ts: "1710000000.000002".to_string(),
+                user: Some("U123".to_string()),
+                text: String::new(),
+                legacy_attachments: Vec::new(),
+                files: vec![SlackMessageFile {
+                    name: Some("aws-health.eml".to_string()),
+                    title: Some("AWS Health Event".to_string()),
+                    plain_text: Some("scheduled upgrade required".to_string()),
+                }],
+                metadata: None,
+            }],
+        };
+
+        let prompt = build_task_prompt(&request);
+
+        assert!(prompt.contains("posted_by: U123"));
+        assert!(prompt.contains("message:attached_file: aws-health.eml"));
+        assert!(prompt.contains("plain_text:\nscheduled upgrade required"));
     }
 
     #[test]

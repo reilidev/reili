@@ -1,10 +1,15 @@
 use reili_core::error::PortError;
 use reili_core::messaging::slack::{
-    SlackLegacyAttachment, SlackMessage, SlackTriggerType, render_slack_legacy_attachments_text,
+    SlackLegacyAttachment, SlackMessage, SlackMessageFile, SlackTriggerType,
+    render_slack_legacy_attachments_text, render_slack_message_files_text,
 };
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Keep ParsedSlackEvent ergonomic at the runtime boundary without boxing SlackMessage"
+)]
 pub enum ParsedSlackEvent {
     UrlVerification { challenge: String },
     Message(SlackMessage),
@@ -87,10 +92,11 @@ fn parse_message_event(
         None => return Ok(ParsedSlackEvent::Ignored),
     };
     let legacy_attachments = input.event.attachments.unwrap_or_default();
-    let text = match resolve_message_text(input.event.text, &legacy_attachments) {
-        Some(value) => value,
-        None => return Ok(ParsedSlackEvent::Ignored),
-    };
+    let files = input.event.files.unwrap_or_default();
+    let text = resolve_message_text(input.event.text, &legacy_attachments).unwrap_or_default();
+    if text.trim().is_empty() && render_slack_message_files_text(&files).is_none() {
+        return Ok(ParsedSlackEvent::Ignored);
+    }
     let ts = match input.event.ts {
         Some(value) => value,
         None => return Ok(ParsedSlackEvent::Ignored),
@@ -108,6 +114,7 @@ fn parse_message_event(
         user,
         text,
         legacy_attachments,
+        files,
         ts,
         thread_ts: input.event.thread_ts,
     };
@@ -134,6 +141,7 @@ struct SlackCallbackEvent {
     user: Option<String>,
     text: Option<String>,
     attachments: Option<Vec<SlackLegacyAttachment>>,
+    files: Option<Vec<SlackMessageFile>>,
     ts: Option<String>,
     thread_ts: Option<String>,
     assistant_thread: Option<SlackAssistantThread>,
@@ -156,6 +164,7 @@ fn resolve_message_text(
 
 #[cfg(test)]
 mod tests {
+    use reili_core::messaging::slack::SlackMessageFile;
     use reili_core::messaging::slack::{SlackLegacyAttachment, SlackMessage, SlackTriggerType};
     use serde_json::json;
 
@@ -215,6 +224,7 @@ mod tests {
                 user: "U001".to_string(),
                 text: "please investigate".to_string(),
                 legacy_attachments: Vec::new(),
+                files: Vec::new(),
                 ts: "1710000000.000001".to_string(),
                 thread_ts: Some("1710000000.000000".to_string()),
             })
@@ -255,6 +265,7 @@ mod tests {
                 user: "U002".to_string(),
                 text: "<@U-BOT> investigate this alert".to_string(),
                 legacy_attachments: Vec::new(),
+                files: Vec::new(),
                 ts: "1710000000.000002".to_string(),
                 thread_ts: None,
             })
@@ -295,6 +306,7 @@ mod tests {
                 user: "U003".to_string(),
                 text: "<@U-BOT> search slack".to_string(),
                 legacy_attachments: Vec::new(),
+                files: Vec::new(),
                 ts: "1710000000.000003".to_string(),
                 thread_ts: None,
             })
@@ -353,9 +365,65 @@ mod tests {
                     }],
                     ..Default::default()
                 }],
+                files: Vec::new(),
                 ts: "1710000000.000005".to_string(),
                 thread_ts: None,
             })
+        );
+    }
+
+    #[test]
+    fn parses_file_only_message_event() {
+        let parsed = parse_slack_event(
+            json!({
+                "type": "event_callback",
+                "event_id": "evt-file",
+                "event": {
+                    "type": "message",
+                    "channel": "C001",
+                    "user": "U005",
+                    "text": "",
+                    "files": [{
+                        "name": "aws-health.eml",
+                        "title": "AWS Health Event",
+                        "plain_text": "scheduled upgrade required"
+                    }],
+                    "ts": "1710000000.000006"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+            "U-BOT",
+        )
+        .expect("parse file event");
+
+        assert_eq!(
+            parsed,
+            ParsedSlackEvent::Message(SlackMessage {
+                slack_event_id: "evt-file".to_string(),
+                team_id: None,
+                action_token: None,
+                trigger: SlackTriggerType::Message,
+                channel: "C001".to_string(),
+                user: "U005".to_string(),
+                text: String::new(),
+                legacy_attachments: Vec::new(),
+                files: vec![SlackMessageFile {
+                    name: Some("aws-health.eml".to_string()),
+                    title: Some("AWS Health Event".to_string()),
+                    plain_text: Some("scheduled upgrade required".to_string()),
+                }],
+                ts: "1710000000.000006".to_string(),
+                thread_ts: None,
+            })
+        );
+
+        let ParsedSlackEvent::Message(message) = parsed else {
+            panic!("expected message event");
+        };
+        assert_eq!(
+            message.rendered_text(),
+            "attached_file: aws-health.eml\nplain_text:\nscheduled upgrade required"
         );
     }
 

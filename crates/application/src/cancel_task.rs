@@ -269,6 +269,7 @@ mod tests {
                     user: "U001".to_string(),
                     text: "please investigate".to_string(),
                     legacy_attachments: Vec::new(),
+                    files: Vec::new(),
                     ts: "1710000000.000001".to_string(),
                     thread_ts: None,
                 },

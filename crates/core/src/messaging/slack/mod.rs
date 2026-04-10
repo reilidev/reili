@@ -1,4 +1,5 @@
 pub mod control_message;
+pub mod file;
 pub mod interaction;
 pub mod interaction_handler;
 pub mod legacy_attachment;
@@ -14,6 +15,7 @@ pub use control_message::{
     PostTaskControlMessageInput, PostTaskControlMessageOutput, SlackTaskControlMessagePort,
     SlackTaskControlState, UpdateTaskControlMessageInput,
 };
+pub use file::{SlackMessageFile, render_slack_message_files_text};
 pub use interaction::{SlackCancelJobInteraction, SlackInteraction};
 pub use interaction_handler::SlackInteractionHandlerPort;
 pub use legacy_attachment::{

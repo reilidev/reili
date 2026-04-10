@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use super::{SlackAnyChunk, SlackChunkSourceType, SlackTaskUpdateStatus};
 
-pub(crate) const STREAM_ROTATION_CHARACTER_LIMIT: usize = 3400;
+pub(crate) const STREAM_ROTATION_CHARACTER_LIMIT: usize = 5000;
 // Rotate before 300 seconds because Slack starts rejecting long-lived streams around that mark.
 // This 300-second threshold is based on observed behavior, not an explicitly documented limit.
 pub(crate) const STREAM_ROTATION_MAX_AGE: Duration = Duration::from_secs(270);

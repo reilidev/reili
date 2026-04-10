@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use reili_core::error::PortError;
 use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
 use reili_core::messaging::slack::{
-    SlackLegacyAttachment, SlackMessageMetadata, SlackThreadMessage,
+    SlackLegacyAttachment, SlackMessageFile, SlackMessageMetadata, SlackThreadMessage,
     render_slack_legacy_attachments_text,
 };
 use serde::Serialize;
@@ -76,6 +76,7 @@ impl SlackThreadHistoryPort for SlackThreadHistoryAdapter {
                     None => continue,
                 };
                 let legacy_attachments = read_legacy_attachments(page_message.get("attachments"));
+                let files = read_message_files(page_message.get("files"));
 
                 messages.push(SlackThreadMessage {
                     ts,
@@ -84,6 +85,7 @@ impl SlackThreadHistoryPort for SlackThreadHistoryAdapter {
                         .or_else(|| render_slack_legacy_attachments_text(&legacy_attachments))
                         .unwrap_or_default(),
                     legacy_attachments,
+                    files,
                     metadata: read_message_metadata(page_message.get("metadata")),
                 });
             }
@@ -119,13 +121,21 @@ fn read_legacy_attachments(value: Option<&Value>) -> Vec<SlackLegacyAttachment> 
     serde_json::from_value(value.clone()).unwrap_or_default()
 }
 
+fn read_message_files(value: Option<&Value>) -> Vec<SlackMessageFile> {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+
+    serde_json::from_value(value.clone()).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
     use reili_core::messaging::slack::{
-        SlackLegacyAttachment, SlackLegacyAttachmentField, SlackThreadMessage,
+        FetchSlackThreadHistoryInput, SlackLegacyAttachment, SlackLegacyAttachmentField,
+        SlackMessageFile, SlackThreadHistoryPort, SlackThreadMessage,
     };
     use serde_json::json;
     use wiremock::matchers::{method, path, query_param, query_param_is_missing};
@@ -206,6 +216,7 @@ mod tests {
                     user: Some("U1".to_string()),
                     text: "first".to_string(),
                     legacy_attachments: Vec::new(),
+                    files: Vec::new(),
                     metadata: None,
                 },
                 SlackThreadMessage {
@@ -213,6 +224,7 @@ mod tests {
                     user: Some("U2".to_string()),
                     text: "second".to_string(),
                     legacy_attachments: Vec::new(),
+                    files: Vec::new(),
                     metadata: None,
                 },
                 SlackThreadMessage {
@@ -220,6 +232,7 @@ mod tests {
                     user: Some("U3".to_string()),
                     text: "third".to_string(),
                     legacy_attachments: Vec::new(),
+                    files: Vec::new(),
                     metadata: None,
                 },
             ]
@@ -326,8 +339,66 @@ mod tests {
                     }],
                     ..Default::default()
                 }],
+                files: Vec::new(),
                 metadata: None,
             }]
+        );
+    }
+
+    #[tokio::test]
+    async fn reads_attached_file_name_and_plain_text_from_replies() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/conversations.replies"))
+            .and(query_param("channel", "C123"))
+            .and(query_param("ts", "1710000000.000000"))
+            .and(query_param("limit", THREAD_HISTORY_PAGE_LIMIT.to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true,
+                "messages": [
+                    {
+                        "ts": "1710000000.000001",
+                        "user": "U1",
+                        "text": "",
+                        "files": [{
+                            "name": "aws-health.eml",
+                            "title": "AWS Health Event",
+                            "plain_text": "scheduled upgrade required"
+                        }]
+                    }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let adapter = SlackThreadHistoryAdapter::new(Arc::new(create_client(&server.uri())));
+        let result = adapter
+            .fetch_thread_history(FetchSlackThreadHistoryInput {
+                channel: "C123".to_string(),
+                thread_ts: "1710000000.000000".to_string(),
+            })
+            .await
+            .expect("fetch thread history");
+
+        assert_eq!(
+            result,
+            vec![SlackThreadMessage {
+                ts: "1710000000.000001".to_string(),
+                user: Some("U1".to_string()),
+                text: String::new(),
+                legacy_attachments: Vec::new(),
+                files: vec![SlackMessageFile {
+                    name: Some("aws-health.eml".to_string()),
+                    title: Some("AWS Health Event".to_string()),
+                    plain_text: Some("scheduled upgrade required".to_string()),
+                }],
+                metadata: None,
+            }]
+        );
+        assert_eq!(
+            result[0].rendered_text(),
+            "attached_file: aws-health.eml\nplain_text:\nscheduled upgrade required"
         );
     }
 
