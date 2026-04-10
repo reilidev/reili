@@ -77,9 +77,7 @@ mod tests {
 
     use async_trait::async_trait;
     use reili_core::error::PortError;
-    use reili_core::knowledge::{
-        WebCitation, WebSearchExecution, WebSearchInput, WebSearchPort, WebSearchResult,
-    };
+    use reili_core::knowledge::{WebCitation, WebSearchInput, WebSearchPort, WebSearchResult};
     use rig::tool::Tool;
 
     use super::*;
@@ -140,10 +138,6 @@ mod tests {
                     title: "Title".to_string(),
                     url: "https://example.com".to_string(),
                 }],
-                searches: vec![WebSearchExecution {
-                    query: "test".to_string(),
-                    source_count: 1,
-                }],
             },
         );
 
@@ -172,7 +166,6 @@ mod tests {
                 summary_text: "{\"type\":\"temporary_error\",\"message\":\"timed out\"}"
                     .to_string(),
                 citations: Vec::new(),
-                searches: Vec::new(),
             },
         );
 
@@ -195,7 +188,6 @@ mod tests {
             WebSearchResult {
                 summary_text: String::new(),
                 citations: Vec::new(),
-                searches: Vec::new(),
             },
         );
 

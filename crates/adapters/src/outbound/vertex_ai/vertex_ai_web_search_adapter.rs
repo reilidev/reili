@@ -4,9 +4,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use google_cloud_aiplatform_v1 as vertexai;
 use reili_core::error::PortError;
-use reili_core::knowledge::{
-    WebCitation, WebSearchExecution, WebSearchInput, WebSearchPort, WebSearchResult,
-};
+use reili_core::knowledge::{WebCitation, WebSearchInput, WebSearchPort, WebSearchResult};
 use rig_vertexai::Client as VertexAiGeminiClient;
 use serde_json::json;
 
@@ -90,7 +88,6 @@ impl WebSearchPort for VertexAiWebSearchAdapter {
             model = self.model_id,
             latency_ms = latency_ms,
             citation_count = result.citations.len(),
-            search_count = result.searches.len(),
             "Vertex AI web search completed"
         );
 
@@ -147,7 +144,6 @@ fn soft_temporary_error(message: &str) -> WebSearchResult {
     WebSearchResult {
         summary_text: json!({"type": "temporary_error", "message": message}).to_string(),
         citations: Vec::new(),
-        searches: Vec::new(),
     }
 }
 
@@ -155,7 +151,6 @@ fn soft_client_error(message: &str) -> WebSearchResult {
     WebSearchResult {
         summary_text: json!({"type": "client_error", "message": message}).to_string(),
         citations: Vec::new(),
-        searches: Vec::new(),
     }
 }
 
@@ -187,7 +182,7 @@ fn parse_response(response: &vertexai::model::GenerateContentResponse) -> WebSea
         }
     }
     let summary_text = truncate_chars(summary_text, MAX_SUMMARY_CHARS);
-    let (citations, searches) = candidate
+    let citations = candidate
         .grounding_metadata
         .as_ref()
         .map(parse_grounding_metadata)
@@ -196,7 +191,6 @@ fn parse_response(response: &vertexai::model::GenerateContentResponse) -> WebSea
     WebSearchResult {
         summary_text,
         citations,
-        searches,
     }
 }
 
@@ -218,28 +212,13 @@ fn empty_result() -> WebSearchResult {
     WebSearchResult {
         summary_text: String::new(),
         citations: Vec::new(),
-        searches: Vec::new(),
     }
 }
 
 fn parse_grounding_metadata(
     grounding_metadata: &vertexai::model::GroundingMetadata,
-) -> (Vec<WebCitation>, Vec<WebSearchExecution>) {
-    let citations = collect_citations(grounding_metadata);
-    let source_count = citations.len().try_into().unwrap_or(u32::MAX);
-    let searches = grounding_metadata
-        .web_search_queries
-        .iter()
-        .filter_map(|query| {
-            let query = query.trim();
-            (!query.is_empty()).then(|| WebSearchExecution {
-                query: query.to_string(),
-                source_count,
-            })
-        })
-        .collect();
-
-    (citations, searches)
+) -> Vec<WebCitation> {
+    collect_citations(grounding_metadata)
 }
 
 fn collect_citations(grounding_metadata: &vertexai::model::GroundingMetadata) -> Vec<WebCitation> {
@@ -381,9 +360,6 @@ mod tests {
         let result = parse_response(&response);
 
         assert_eq!(result.summary_text, "Google Cloud status is operational.");
-        assert_eq!(result.searches.len(), 2);
-        assert_eq!(result.searches[0].query, "google cloud status today");
-        assert_eq!(result.searches[0].source_count, 2);
         assert_eq!(result.citations.len(), 2);
         assert_eq!(result.citations[0].url, "https://status.cloud.google.com/");
         assert_eq!(result.citations[1].url, "https://cloud.google.com/blog");

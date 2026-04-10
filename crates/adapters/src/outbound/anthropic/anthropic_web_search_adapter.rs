@@ -3,9 +3,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use reili_core::error::PortError;
-use reili_core::knowledge::{
-    WebCitation, WebSearchExecution, WebSearchInput, WebSearchPort, WebSearchResult,
-};
+use reili_core::knowledge::{WebCitation, WebSearchInput, WebSearchPort, WebSearchResult};
 use reqwest::Client;
 use serde_json::{Value, json};
 
@@ -160,7 +158,6 @@ impl WebSearchPort for AnthropicWebSearchAdapter {
             model = self.model,
             latency_ms = latency_ms,
             citation_count = result.citations.len(),
-            search_count = result.searches.len(),
             "Anthropic web search completed"
         );
 
@@ -189,7 +186,6 @@ fn soft_temporary_error(message: &str) -> WebSearchResult {
     WebSearchResult {
         summary_text: json!({"type": "temporary_error", "message": message}).to_string(),
         citations: Vec::new(),
-        searches: Vec::new(),
     }
 }
 
@@ -197,7 +193,6 @@ fn soft_client_error(message: &str) -> WebSearchResult {
     WebSearchResult {
         summary_text: json!({"type": "client_error", "message": message}).to_string(),
         citations: Vec::new(),
-        searches: Vec::new(),
     }
 }
 
@@ -216,34 +211,17 @@ fn classify_search_tool_error(error_code: &str) -> WebSearchResult {
 fn parse_response(response: &Value) -> WebSearchResult {
     let mut summary_text = String::new();
     let mut citations = Vec::new();
-    let mut searches = Vec::new();
     let mut seen_urls = HashSet::new();
 
     let Some(content) = response.get("content").and_then(Value::as_array) else {
         return WebSearchResult {
             summary_text,
             citations,
-            searches,
         };
     };
 
     for block in content {
         let block_type = block.get("type").and_then(Value::as_str).unwrap_or("");
-
-        if block_type == "server_tool_use" {
-            let query = block
-                .get("input")
-                .and_then(|value| value.get("query"))
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-
-            searches.push(WebSearchExecution {
-                query,
-                source_count: 0,
-            });
-            continue;
-        }
 
         if block_type == "web_search_tool_result" {
             if let Some(error_code) = block
@@ -256,17 +234,6 @@ fn parse_response(response: &Value) -> WebSearchResult {
             }
 
             if let Some(results) = block.get("content").and_then(Value::as_array) {
-                let source_count = results
-                    .iter()
-                    .filter(|result| {
-                        result.get("type").and_then(Value::as_str) == Some("web_search_result")
-                    })
-                    .count() as u32;
-
-                if let Some(search) = searches.last_mut() {
-                    search.source_count = source_count;
-                }
-
                 for result in results {
                     if result.get("type").and_then(Value::as_str) != Some("web_search_result") {
                         continue;
@@ -328,7 +295,6 @@ fn parse_response(response: &Value) -> WebSearchResult {
     WebSearchResult {
         summary_text,
         citations,
-        searches,
     }
 }
 
@@ -436,9 +402,6 @@ mod tests {
             "I'll search for that.There is an ongoing incident."
         );
         assert_eq!(parsed.citations.len(), 2);
-        assert_eq!(parsed.searches.len(), 1);
-        assert_eq!(parsed.searches[0].query, "latest api outage");
-        assert_eq!(parsed.searches[0].source_count, 2);
     }
 
     #[test]
