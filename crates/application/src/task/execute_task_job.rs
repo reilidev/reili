@@ -447,6 +447,7 @@ mod tests {
                 user: "U001".to_string(),
                 text: text.unwrap_or("monitor alert").to_string(),
                 legacy_attachments: Vec::new(),
+                files: Vec::new(),
                 ts: ts.to_string(),
                 thread_ts: thread_ts.map(ToString::to_string),
             },
@@ -549,6 +550,7 @@ mod tests {
             user: Some("U999".to_string()),
             text: "thread context".to_string(),
             legacy_attachments: Vec::new(),
+            files: Vec::new(),
             metadata: None,
         }])));
         let ExecutionFixtures {

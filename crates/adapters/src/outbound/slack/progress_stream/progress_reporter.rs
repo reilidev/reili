@@ -276,7 +276,10 @@ mod tests {
 
     use super::{
         SlackProgressReporter, SlackProgressReporterDeps, SlackProgressReporterSession,
-        SlackProgressStreamApiPort, SlackProgressStreamLifecycle,
+        SlackProgressStreamApiPort, SlackProgressStreamLifecycle, build_progress_chunks,
+    };
+    use crate::outbound::slack::progress_stream::chunk_rotation::{
+        STREAM_ROTATION_CHARACTER_LIMIT, count_chunk_characters,
     };
     use crate::outbound::slack::progress_stream::stream_lifecycle::SlackProgressStreamClock;
     use crate::outbound::slack::progress_stream::{
@@ -475,6 +478,29 @@ mod tests {
         }
     }
 
+    fn rendered_update_character_count(update: TaskProgressUpdate) -> usize {
+        count_chunk_characters(&build_progress_chunks(update))
+    }
+
+    fn character_limit_rotation_details() -> (String, String) {
+        let updated_detail = "b".repeat(200);
+        let updated_count = rendered_update_character_count(scope_updated(&updated_detail));
+        let started_base_count =
+            rendered_update_character_count(scope_started("progress-step-1", ""));
+        let started_detail_length = STREAM_ROTATION_CHARACTER_LIMIT
+            .saturating_add(1)
+            .saturating_sub(updated_count)
+            .saturating_sub(started_base_count);
+        let started_detail = "a".repeat(started_detail_length);
+        let started_count =
+            rendered_update_character_count(scope_started("progress-step-1", &started_detail));
+
+        assert!(started_count < STREAM_ROTATION_CHARACTER_LIMIT);
+        assert!(started_count + updated_count > STREAM_ROTATION_CHARACTER_LIMIT);
+
+        (started_detail, updated_detail)
+    }
+
     #[tokio::test]
     async fn renders_semantic_updates_and_stops_stream() {
         let api = Arc::new(MockApi::new());
@@ -507,17 +533,13 @@ mod tests {
         api.push_stop_response(Ok(()));
         let logger = Arc::new(MockLogger);
         let mut session = create_session(Arc::clone(&api), logger);
+        let (started_detail, updated_detail) = character_limit_rotation_details();
 
         session.start().await;
         session
-            .apply(scope_started(
-                "progress-step-1",
-                &format!("{}\n", "a".repeat(3200)),
-            ))
+            .apply(scope_started("progress-step-1", &started_detail))
             .await;
-        session
-            .apply(scope_updated(&format!("{}\n", "b".repeat(200))))
-            .await;
+        session.apply(scope_updated(&updated_detail)).await;
         session
             .complete(CompleteTaskProgressSessionInput {
                 status: TaskProgressSessionCompletionStatus::Succeeded,
@@ -545,7 +567,7 @@ mod tests {
                 "progress-step-1",
                 "Collect evidence",
                 SlackTaskUpdateStatus::InProgress,
-                Some(&format!("{}\n", "a".repeat(3200))),
+                Some(&started_detail),
                 None,
             )])
         );
@@ -558,7 +580,7 @@ mod tests {
                 "progress-step-1",
                 "Collect evidence",
                 SlackTaskUpdateStatus::InProgress,
-                Some(&format!("{}\n", "b".repeat(200))),
+                Some(&updated_detail),
                 None,
             )])
         );

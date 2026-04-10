@@ -435,6 +435,7 @@ mod tests {
             user: "U001".to_string(),
             text: "high latency detected".to_string(),
             legacy_attachments: Vec::new(),
+            files: Vec::new(),
             ts: "1710000000.000001".to_string(),
             thread_ts: None,
         }

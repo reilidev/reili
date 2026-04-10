@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use super::SlackLegacyAttachment;
+use super::{
+    SlackLegacyAttachment, SlackMessageFile, render_slack_legacy_attachments_text,
+    render_slack_message_files_text,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -22,6 +25,8 @@ pub struct SlackMessage {
     pub text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub legacy_attachments: Vec<SlackLegacyAttachment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<SlackMessageFile>,
     pub ts: String,
     pub thread_ts: Option<String>,
 }
@@ -30,11 +35,29 @@ impl SlackMessage {
     pub fn thread_ts_or_ts(&self) -> &str {
         self.thread_ts.as_deref().unwrap_or(self.ts.as_str())
     }
+
+    pub fn rendered_text(&self) -> String {
+        let mut sections = Vec::new();
+        if !self.text.trim().is_empty() {
+            sections.push(self.text.trim().to_string());
+        } else if let Some(attachments_text) =
+            render_slack_legacy_attachments_text(&self.legacy_attachments)
+        {
+            sections.push(attachments_text);
+        }
+
+        if let Some(files_text) = render_slack_message_files_text(&self.files) {
+            sections.push(files_text);
+        }
+
+        sections.join("\n\n")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{SlackMessage, SlackTriggerType};
+    use crate::messaging::slack::SlackMessageFile;
 
     #[test]
     fn serializes_and_deserializes_slack_message() {
@@ -47,6 +70,11 @@ mod tests {
             user: "U001".to_string(),
             text: "hello".to_string(),
             legacy_attachments: Vec::new(),
+            files: vec![SlackMessageFile {
+                name: Some("alert.eml".to_string()),
+                title: None,
+                plain_text: Some("notice".to_string()),
+            }],
             ts: "123.456".to_string(),
             thread_ts: None,
         };
@@ -69,6 +97,7 @@ mod tests {
             user: "U001".to_string(),
             text: "hello".to_string(),
             legacy_attachments: Vec::new(),
+            files: Vec::new(),
             ts: "123.456".to_string(),
             thread_ts: Some("123.450".to_string()),
         };
@@ -87,6 +116,7 @@ mod tests {
             user: "U001".to_string(),
             text: "hello".to_string(),
             legacy_attachments: Vec::new(),
+            files: Vec::new(),
             ts: "123.456".to_string(),
             thread_ts: None,
         };
@@ -103,5 +133,32 @@ mod tests {
 
         assert_eq!(restored.action_token, None);
         assert!(restored.legacy_attachments.is_empty());
+        assert!(restored.files.is_empty());
+    }
+
+    #[test]
+    fn renders_text_with_attached_file_plain_text() {
+        let message = SlackMessage {
+            slack_event_id: "evt-1".to_string(),
+            team_id: Some("T001".to_string()),
+            action_token: None,
+            trigger: SlackTriggerType::Message,
+            channel: "C001".to_string(),
+            user: "U001".to_string(),
+            text: "please investigate".to_string(),
+            legacy_attachments: Vec::new(),
+            files: vec![SlackMessageFile {
+                name: Some("alert.eml".to_string()),
+                title: None,
+                plain_text: Some("scheduled upgrade required".to_string()),
+            }],
+            ts: "123.456".to_string(),
+            thread_ts: None,
+        };
+
+        assert_eq!(
+            message.rendered_text(),
+            "please investigate\n\nattached_file: alert.eml\nplain_text:\nscheduled upgrade required"
+        );
     }
 }
