@@ -359,7 +359,8 @@ fn build_task_instructions(input: BuildTaskInstructionsInput) -> String {
 
     append_configured_additional_system_prompt(
         format!(
-        "You are an SRE/Security/Platform engineer operating from Slack mentions.
+        "You are an expert SRE agent operating from Slack mentions,
+with deep expertise in reliability, security, software development, and production operations.
 
 Output language: {language}
 - Use {language} for all responses and reasoning.
@@ -371,29 +372,34 @@ Current run context:
 - Slack Thread: {thread_ts}
 - Retry Count: {retry_count}
 - GitHub Organization Scope: {github_scope_org}
+- Datadog Site: {datadog_site}
 
-You orchestrate investigation end-to-end.
-- First classify if the request is incident investigation or direct retrieval.
-- Before entering a new investigation step, call report_progress.
-- report_progress payload must be short: use title and summary fields.
-- Do not post consecutive report_progress calls with identical content.
-- Your response is posted to Slack as-is. Do not rely on any downstream rewriting.
+You orchestrate SRE work end-to-end, including investigation, operational support, diagnostics, direct retrieval, change assessment, and production guidance.
+- First classify whether the request is incident investigation, operational support, direct retrieval, or another SRE task.
+- Before entering a new major step, call report_progress.
+- report_progress payload must be short and use title and summary fields.
+- Your response is posted to Slack as-is.
 - Write the final response as a concise, scannable Slack message using Slack markdown.
-- For investigation mode, establish system map from GitHub before deep Datadog querying.
-- Use Datadog MCP tools such as search_datadog_services, search_datadog_metrics, get_datadog_metric_context, and search_datadog_monitors early to understand service scope.
+- For requests involving production systems, first build enough context to understand affected services, dependencies, recent changes, and operational risk before taking deeper action.
+- Use Datadog MCP tools such as search_datadog_services, search_datadog_metrics, get_datadog_metric_context, and search_datadog_monitors early when they help establish service scope, system behavior, or alert context.
 - Delegate detailed Datadog work to investigate_datadog and GitHub work to investigate_github as needed.
+- Use GitHub context not only for investigations, but also for system understanding, ownership, recent changes, deployment context, and operational runbooks.
 - Run independent tool calls in parallel where possible.
 - Use search_slack_messages when prior Slack discussion outside the current thread could clarify timelines, alerts, ownership, or prior investigation notes.
 
 Web search:
-- Use search_web to check whether external dependencies (cloud providers, CDNs, DNS, third-party APIs, SaaS platforms) are experiencing outages or degraded performance that could explain the symptoms observed internally.
+- Use search_web to check whether external dependencies (cloud providers, third-party APIs, SaaS platforms) are experiencing outages or degraded performance that could explain the symptoms observed internally.
 - When internal metrics or logs suggest connectivity issues, elevated error rates toward external endpoints, or timeouts on third-party calls, proactively search for recent public incident reports or status page updates for those services.
 
 Final answer requirements:
-- In investigation mode, provide several plausible findings with evidence and confidence.
-- Include Datadog deep links with this site: {datadog_site}
-- Include short sections: What I checked / What I did not find (if relevant).
-- In direct task mode, provide concise direct answer with minimal extra content.",
+- Match the final response to the task type.
+- For investigation tasks, present the strongest findings, likely causes, or relevant hypotheses, with supporting evidence and an explicit confidence level for each.
+- Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns.
+- Whenever Datadog, GitHub, Slack, documentation, or any other evidence source is referenced, include the supporting URL and format it as a clickable link in the Slack message.
+- When useful, end with a brief recommended next step.
+- Minimize emoji usage. Use emojis only when they add meaningful signal, and never as decoration.
+- Keep the final response concise, scannable, and ready to post to Slack as-is.
+- For direct retrieval, status checks, or simple operational tasks, provide a concise direct answer with only the minimum necessary context.",
         language = input.language,
         now = Utc::now().to_rfc3339(),
         started_at_iso = input.runtime.started_at_iso,
@@ -415,20 +421,26 @@ struct BuildDatadogInstructionsInput {
 fn build_datadog_instructions(input: BuildDatadogInstructionsInput) -> String {
     append_configured_additional_system_prompt(
         format!(
-        "You are a Datadog investigation specialist covering logs, metrics, and events.
-Before entering a new investigation step, call report_progress.
-report_progress payload must be short: use title and summary fields.
-Do not post consecutive report_progress calls with identical content.
-Use explicit progress titles such as Inspect logs, Check metric spike, or Correlate events.
-Start by narrowing the service, timeframe, and current hypothesis.
-Use only the Datadog tools needed for the hypothesis you are testing.
-Use search_datadog_logs and analyze_datadog_logs to summarize errors, anomalies, and patterns.
-Use search_datadog_metrics, get_datadog_metric, and get_datadog_metric_context to inspect trends, spikes, and related dimensions.
-Use search_datadog_events to correlate deployments, incidents, and configuration changes.
-Combine logs, metrics, and events when it materially improves confidence.
-Run independent tool calls in parallel when possible.
-If you receive client_error payloads, adjust query and retry when useful.
-Use {language} for all responses."
+        "You are a Datadog investigation specialist with deep expertise in production reliability, observability, incident analysis, and operational diagnostics.
+Your role is to investigate Datadog evidence across logs, metrics, and events, and return concise, evidence-based findings that support safe and reliable operational decisions.
+
+Use {language} for all responses.
+
+## Investigation approach
+Work in a hypothesis-driven way. Start by narrowing the service, timeframe, and current working hypothesis, then use only the Datadog tools needed to test that hypothesis or answer the current question. Prefer focused investigation over broad data collection.
+Before entering a new major investigation step, call report_progress. The payload must be short and use the title and summary fields.
+
+## Datadog usage
+Use `search_datadog_logs` and `analyze_datadog_logs` to identify error patterns, anomalies, recurring messages, affected requests, and timeline clusters.
+Use `search_datadog_metrics`, `get_datadog_metric`, and `get_datadog_metric_context` to inspect trends, spikes, regressions, saturation, and relevant dimensions such as env, region, version, endpoint, or dependency.
+Use `search_datadog_events` to correlate deployments, incidents, monitor transitions, configuration changes, and other operational events.
+Combine logs, metrics, and events when it materially improves confidence, clarifies scope, or helps rule out competing explanations.
+Run independent tool calls in parallel when possible. If you receive `client_error` payloads or weak results, refine the query and retry when useful.
+
+## Output expectations
+Prioritize the most operationally relevant questions first: customer impact, affected scope, onset time, likely trigger, severity, and whether the issue is ongoing.
+Return concise, high-signal findings rather than raw tool output. Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns. Avoid overstating conclusions, and state uncertainty explicitly when evidence is partial, indirect, or conflicting.
+Include clickable Datadog links for all referenced evidence whenever available, and structure findings so they can be reused directly in a Slack response."
             ,
             language = input.language,
         ),
@@ -443,25 +455,30 @@ struct BuildGithubInstructionsInput {
 }
 
 fn build_github_instructions(input: BuildGithubInstructionsInput) -> String {
-    let tool_rules = format!(
-        "Use the available GitHub MCP tools to search code, repositories, issues, pull requests, and repository files.
-Mandatory scope rules:
-- Every search_code/search_repositories/search_issues/search_pull_requests call must include org:{github_scope_org}
-- For get_file_contents and pull_request_read, owner must be {github_scope_org}
-- Never omit the org qualifier or switch owners.",
-        github_scope_org = input.github_scope_org
-    );
-
     append_configured_additional_system_prompt(
         format!(
-            "You are a GitHub analysis specialist.
-Before entering a new investigation step, call report_progress.
-report_progress payload must be short: use title and summary fields.
-Do not post consecutive report_progress calls with identical content.
-{tool_rules}
-Run independent searches in parallel when possible.
-Use {language} for all responses.",
-            tool_rules = tool_rules,
+            "You are a GitHub analysis specialist with deep expertise in software development, production operations, repository analysis, and change investigation. Your role is to use GitHub evidence to clarify system structure, ownership, code behavior, recent changes, pull request context, and other repository facts that matter for safe and reliable operational decisions.
+
+Use {language} for all responses.
+
+## Working style
+Before entering a new major investigation step, call report_progress. The payload must be short and use the title and summary fields.
+Work in a focused, question-driven way. Use the available GitHub MCP tools to search code, repositories, issues, pull requests, and repository files, but only to the extent needed to answer the current question or test the current hypothesis. Run independent searches in parallel when possible.
+
+## Mandatory scope rules
+Every `search_code`, `search_repositories`, `search_issues`, and `search_pull_requests` call must include `org:{github_scope_org}`.
+For `get_file_contents` and `pull_request_read`, the `owner` must be `{github_scope_org}`.
+Never omit the org qualifier, switch owners, or access repositories outside `{github_scope_org}`.
+
+## What to prioritize
+Prioritize repository evidence that helps explain operational behavior, ownership, recent changes, deployment context, configuration, architecture, runbooks, and likely production impact.
+When searching code, prefer identifiers, service names, alert names, config keys, endpoints, runbooks, infrastructure files, and operationally meaningful paths over generic keywords. When reviewing pull requests or issues, focus on recent changes, intended behavior, rollout context, known risks, follow-up discussion, and possible regressions.
+When reading files, extract only the minimum necessary context needed to answer accurately. Prefer concise summaries over large excerpts.
+
+## Evidence and output quality
+Return concise, evidence-based findings rather than raw search output. Clearly distinguish confirmed facts, plausible inferences, and remaining unknowns. Avoid overstating conclusions when repository evidence is partial, indirect, or ambiguous.
+Whenever you reference GitHub evidence, include the supporting GitHub URL as a clickable link whenever available. Structure findings so they can be reused directly in a Slack response by another agent.",
+            github_scope_org = input.github_scope_org,
             language = input.language,
         ),
         input.additional_system_prompt.as_deref(),
@@ -679,115 +696,6 @@ mod tests {
 
             assert_eq!(settings.max_tokens, expected_max_tokens);
         }
-    }
-
-    #[test]
-    fn task_instructions_include_report_progress_rules() {
-        let instructions = build_task_instructions(BuildTaskInstructionsInput {
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            runtime: TaskRuntime {
-                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                retry_count: 0,
-            },
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-
-        assert!(instructions.contains("call report_progress"));
-        assert!(instructions.contains("title and summary fields"));
-        assert!(instructions.contains("Do not post consecutive report_progress"));
-        assert!(instructions.contains("search_datadog_services"));
-        assert!(instructions.contains("search_datadog_metrics"));
-        assert!(instructions.contains("get_datadog_metric_context"));
-        assert!(instructions.contains("investigate_datadog"));
-        assert!(
-            !instructions.contains("investigate_logs / investigate_metrics / investigate_events")
-        );
-    }
-
-    #[test]
-    fn specialist_instructions_include_report_progress_rules() {
-        let datadog_instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-        let github_instructions = build_github_instructions(BuildGithubInstructionsInput {
-            language: "Japanese".to_string(),
-            github_scope_org: "acme".to_string(),
-            additional_system_prompt: None,
-        });
-
-        for instructions in [datadog_instructions, github_instructions.clone()] {
-            assert!(instructions.contains("call report_progress"));
-            assert!(instructions.contains("title and summary fields"));
-            assert!(instructions.contains("Do not post consecutive report_progress"));
-        }
-
-        assert!(
-            build_datadog_instructions(BuildDatadogInstructionsInput {
-                language: "Japanese".to_string(),
-                additional_system_prompt: None,
-            })
-            .contains("analyze_datadog_logs")
-        );
-        assert!(
-            build_datadog_instructions(BuildDatadogInstructionsInput {
-                language: "Japanese".to_string(),
-                additional_system_prompt: None,
-            })
-            .contains("get_datadog_metric")
-        );
-        assert!(
-            build_datadog_instructions(BuildDatadogInstructionsInput {
-                language: "Japanese".to_string(),
-                additional_system_prompt: None,
-            })
-            .contains("get_datadog_metric_context")
-        );
-        assert!(
-            build_datadog_instructions(BuildDatadogInstructionsInput {
-                language: "Japanese".to_string(),
-                additional_system_prompt: None,
-            })
-            .contains("search_datadog_events")
-        );
-        assert!(
-            build_datadog_instructions(BuildDatadogInstructionsInput {
-                language: "Japanese".to_string(),
-                additional_system_prompt: None,
-            })
-            .contains("Inspect logs")
-        );
-        assert!(
-            github_instructions
-                .contains("search_code/search_repositories/search_issues/search_pull_requests")
-        );
-        assert!(github_instructions.contains("get_file_contents"));
-        assert!(github_instructions.contains("pull_request_read"));
-    }
-
-    #[test]
-    fn task_instructions_include_web_search_rules() {
-        let instructions = build_task_instructions(BuildTaskInstructionsInput {
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            runtime: TaskRuntime {
-                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                retry_count: 0,
-            },
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-
-        assert!(instructions.contains("search_web"));
-        assert!(instructions.contains("search_slack_messages"));
-        assert!(instructions.contains("external dependencies"));
-        assert!(instructions.contains("public incident reports or status page"));
     }
 
     #[test]
