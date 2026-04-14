@@ -125,33 +125,20 @@ where
         .build()
 }
 
-#[must_use]
 pub fn build_task_prompt(request: &TaskRequest) -> String {
-    let task_prompt = "Investigate the following user input and respond with the most appropriate investigation or direct answer.
-The input may be an alert, request, question, link, or partial context.";
     let trigger_message_text = request.trigger_message.rendered_text();
-    let trigger_message_text = trigger_message_text.trim();
-    let trigger_message_section = format!("\n\nTrigger Message: {trigger_message_text}");
-    let bot_user_id = extract_mentioned_user_id(&request.trigger_message.text);
-    let thread_transcript =
-        build_thread_transcript(&request.thread_messages, bot_user_id.as_deref());
-    let thread_context_section = if thread_transcript.is_empty() {
-        String::new()
-    } else {
-        format!("\n\nThread Context:\n{thread_transcript}")
-    };
+    let thread_transcript = build_thread_transcript(&request.thread_messages);
 
-    format!("{task_prompt}{trigger_message_section}{thread_context_section}")
+    format!("# User\n{trigger_message_text}\n\n# Thread Context\n{thread_transcript}")
 }
 
 fn build_thread_transcript(
     messages: &[reili_core::messaging::slack::SlackThreadMessage],
-    bot_user_id: Option<&str>,
 ) -> String {
     messages
         .iter()
         .map(|message| {
-            let author = normalize_author(message.user.as_deref(), bot_user_id);
+            let author = normalize_author(message.user.as_deref());
             let text = message.rendered_text();
             let text = text.trim();
             let iso_timestamp = to_iso_timestamp(&message.ts);
@@ -164,17 +151,11 @@ fn build_thread_transcript(
         .join("\n---\n")
 }
 
-fn normalize_author(user: Option<&str>, bot_user_id: Option<&str>) -> String {
-    let normalized = match user.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(value) => value,
-        None => return "system".to_string(),
-    };
-
-    if bot_user_id.is_some_and(|bot_user_id_value| normalized == bot_user_id_value) {
-        return format!("{normalized} (You)");
+fn normalize_author(user: Option<&str>) -> String {
+    match user.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => value.to_string(),
+        None => "system".to_string(),
     }
-
-    normalized.to_string()
 }
 
 fn to_iso_timestamp(ts: &str) -> String {
@@ -214,25 +195,6 @@ fn normalize_milliseconds(milliseconds_part: &str) -> String {
     }
 
     normalized.chars().take(3).collect()
-}
-
-fn extract_mentioned_user_id(text: &str) -> Option<String> {
-    let start_index = text.find("<@")?;
-    let remaining = &text[start_index + 2..];
-    let end_index = remaining.find('>')?;
-    let user_id = &remaining[..end_index];
-    if user_id.is_empty() {
-        return None;
-    }
-
-    if !user_id
-        .chars()
-        .all(|value| value.is_ascii_uppercase() || value.is_ascii_digit())
-    {
-        return None;
-    }
-
-    Some(user_id.to_string())
 }
 
 struct BuildSpecialistAgentInput<C>
@@ -360,6 +322,7 @@ fn build_task_instructions(input: BuildTaskInstructionsInput) -> String {
     append_configured_additional_system_prompt(
         format!(
         "You are an expert SRE agent operating from Slack mentions,
+working as a member of the team alongside the people in the Slack thread,
 with deep expertise in reliability, security, software development, and production operations.
 
 Output language: {language}
@@ -375,7 +338,7 @@ Current run context:
 - Datadog Site: {datadog_site}
 
 You orchestrate SRE work end-to-end, including investigation, operational support, diagnostics, direct retrieval, change assessment, and production guidance.
-- First classify whether the request is incident investigation, operational support, direct retrieval, or another SRE task.
+- First classify whether the request is operational investigation, operational support, direct retrieval, or another SRE task.
 - Before entering a new major step, call report_progress.
 - report_progress payload must be short and use title and summary fields.
 - Your response is posted to Slack as-is.
@@ -389,7 +352,7 @@ You orchestrate SRE work end-to-end, including investigation, operational suppor
 
 Web search:
 - Use search_web to check whether external dependencies (cloud providers, third-party APIs, SaaS platforms) are experiencing outages or degraded performance that could explain the symptoms observed internally.
-- When internal metrics or logs suggest connectivity issues, elevated error rates toward external endpoints, or timeouts on third-party calls, proactively search for recent public incident reports or status page updates for those services.
+- When internal metrics or logs suggest connectivity issues, elevated error rates toward external endpoints, or timeouts on third-party calls, proactively search for recent public outage reports or status page updates for those services.
 
 Final answer requirements:
 - Match the final response to the task type.
@@ -421,7 +384,7 @@ struct BuildDatadogInstructionsInput {
 fn build_datadog_instructions(input: BuildDatadogInstructionsInput) -> String {
     append_configured_additional_system_prompt(
         format!(
-        "You are a Datadog investigation specialist with deep expertise in production reliability, observability, incident analysis, and operational diagnostics.
+        "You are a Datadog investigation specialist with deep expertise in production reliability, observability, failure analysis, and operational diagnostics.
 Your role is to investigate Datadog evidence across logs, metrics, and events, and return concise, evidence-based findings that support safe and reliable operational decisions.
 
 Use {language} for all responses.
@@ -433,7 +396,7 @@ Before entering a new major investigation step, call report_progress. The payloa
 ## Datadog usage
 Use `search_datadog_logs` and `analyze_datadog_logs` to identify error patterns, anomalies, recurring messages, affected requests, and timeline clusters.
 Use `search_datadog_metrics`, `get_datadog_metric`, and `get_datadog_metric_context` to inspect trends, spikes, regressions, saturation, and relevant dimensions such as env, region, version, endpoint, or dependency.
-Use `search_datadog_events` to correlate deployments, incidents, monitor transitions, configuration changes, and other operational events.
+Use `search_datadog_events` to correlate deployments, service disruptions, monitor transitions, configuration changes, and other operational events.
 Combine logs, metrics, and events when it materially improves confidence, clarifies scope, or helps rule out competing explanations.
 Run independent tool calls in parallel when possible. If you receive `client_error` payloads or weak results, refine the query and retry when useful.
 
@@ -549,10 +512,25 @@ mod tests {
             }],
         };
         let prompt = build_task_prompt(&request);
-        assert!(prompt.contains("Trigger Message: Please investigate this alert"));
-        assert!(prompt.contains("Thread Context:"));
+        assert!(prompt.contains("# User\nPlease investigate this alert"));
+        assert!(prompt.contains("# Thread Context\n"));
         assert!(prompt.contains("posted_by: U123"));
         assert!(prompt.contains("message:thread context"));
+    }
+
+    #[test]
+    fn formats_task_prompt_with_user_and_thread_context_sections() {
+        let request = TaskRequest {
+            trigger_message: sample_trigger_message(),
+            thread_messages: vec![],
+        };
+
+        let prompt = build_task_prompt(&request);
+
+        assert_eq!(
+            prompt,
+            "# User\nPlease investigate this alert\n\n# Thread Context\n"
+        );
     }
 
     #[test]
@@ -562,12 +540,12 @@ mod tests {
             thread_messages: vec![],
         };
         let prompt = build_task_prompt(&request);
-        assert!(prompt.contains("Trigger Message: Please investigate this alert"));
-        assert!(!prompt.contains("Thread Context:"));
+        assert!(prompt.contains("# User\nPlease investigate this alert"));
+        assert!(prompt.contains("# Thread Context\n"));
     }
 
     #[test]
-    fn builds_task_prompt_with_bot_user_you_annotation() {
+    fn builds_task_prompt_without_bot_user_you_annotation() {
         let mut trigger = sample_trigger_message();
         trigger.text = "<@U999> investigate this alert".to_string();
         let request = TaskRequest {
@@ -582,7 +560,8 @@ mod tests {
             }],
         };
         let prompt = build_task_prompt(&request);
-        assert!(prompt.contains("posted_by: U999 (You)"));
+        assert!(prompt.contains("posted_by: U999"));
+        assert!(!prompt.contains("(You)"));
         assert!(prompt.contains("message:I started investigation"));
     }
 
@@ -634,7 +613,7 @@ mod tests {
 
         let prompt = build_task_prompt(&request);
 
-        assert!(prompt.contains("Trigger Message: attached_file: aws-health.eml"));
+        assert!(prompt.contains("# User\nattached_file: aws-health.eml"));
         assert!(prompt.contains("plain_text:\nscheduled upgrade required"));
     }
 
@@ -733,5 +712,50 @@ mod tests {
             assert!(instructions.contains("Prefer runbook links first."));
             assert!(instructions.contains("State uncertainty explicitly."));
         }
+    }
+
+    #[test]
+    fn task_instructions_describe_the_agent_as_a_team_member() {
+        let task_instructions = build_task_instructions(BuildTaskInstructionsInput {
+            datadog_site: "datadoghq.com".to_string(),
+            github_scope_org: "acme".to_string(),
+            runtime: TaskRuntime {
+                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+                channel: "C123".to_string(),
+                thread_ts: "123.456".to_string(),
+                retry_count: 0,
+            },
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
+
+        assert!(
+            task_instructions.contains(
+                "working as a member of the team alongside the people in the Slack thread"
+            )
+        );
+    }
+
+    #[test]
+    fn task_and_datadog_instructions_do_not_use_incident_keyword() {
+        let task_instructions = build_task_instructions(BuildTaskInstructionsInput {
+            datadog_site: "datadoghq.com".to_string(),
+            github_scope_org: "acme".to_string(),
+            runtime: TaskRuntime {
+                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+                channel: "C123".to_string(),
+                thread_ts: "123.456".to_string(),
+                retry_count: 0,
+            },
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
+        let datadog_instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
+
+        assert!(!task_instructions.to_lowercase().contains("incident"));
+        assert!(!datadog_instructions.to_lowercase().contains("incident"));
     }
 }
