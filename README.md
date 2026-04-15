@@ -8,14 +8,11 @@
 </div>
 
 ## What is Reili?
+Reili works as an AI team member on your team, handling SRE and DevOps responsibilities.
 
-Reili is an AI team member for your SRE and DevOps team.
-
-Give Reili a task — it investigates by calling Datadog's read-only MCP
-tools, checking recent changes on GitHub, searching relevant Slack
-messages when the current thread is not enough, and reporting back with
-what it found. Today Reili handles investigation; over time it will grow
-into more of the responsibilities your team carries.
+When you assign a task to Reili, it will gather information from sources such as Datadog, GitHub, and Slack to carry out the work
+As a general rule, Reili does not make changes to the production environment or perform recovery operations; instead,
+it uses the gathered information to investigate issues and generate reports.
 
 ## Why Reili
 
@@ -25,19 +22,17 @@ action is needed. Reili takes that work off your plate.
 
 Give Reili a Slack message or a task, and it will:
 
-- Investigate Datadog logs, metrics, and events through Datadog MCP
-- Explore GitHub repositories, PRs, issues, and code — connecting that
-  context with Datadog to understand system structure and trace issues
-- Search relevant Slack public-channel history from the current Slack
-  invocation context when prior discussion matters
-- Report back with what it found so you can decide what to do next
-
-Its current focus is triage, investigation, and communicating findings.
+- Investigate in Slack public channels like a teammate, working from the
+  ongoing conversation where your team is already collaborating
+- Connect Datadog telemetry, GitHub repositories and changes, and
+  relevant Slack public-channel history to build investigation context
+- Report back with what it found so your team can decide what to do next
+- Expand over time to cover additional external services beyond Datadog, GitHub, and Slack
 
 ## Core Features
 
 - **Investigation-focused**: Reili reads and reports — it never changes your infrastructure
-- **Stateless**: no database, no persistent memory — starts fresh every time
+- **Cross-service**: works across Datadog, GitHub, and Slack today, with additional services planned over time
 - **Chat-based**: currently works in Slack
 
 ## Quick Start
@@ -54,6 +49,9 @@ Its current focus is triage, investigation, and communicating findings.
 - OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call
   Vertex AI Gemini models
 - GitHub App credentials for the repositories Reili investigates
+  - Create and install it from [pages/create-github-app.html](./pages/create-github-app.html)
+  - Configure the required permissions and scope in
+    [GitHub Permissions and Scope](./docs/permissions-and-boundaries.md#github-permissions-and-scope).
 
 ### 2. Configure `reili.toml`
 
