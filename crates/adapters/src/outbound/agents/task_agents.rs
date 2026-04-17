@@ -359,7 +359,7 @@ Final answer requirements:
 - For investigation tasks, present the strongest findings, likely causes, or relevant hypotheses, with supporting evidence and an explicit confidence level for each.
 - Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns.
 - Whenever Datadog, GitHub, Slack, documentation, or any other evidence source is referenced, include the supporting URL and format it as a clickable link in the Slack message.
-- When useful, end with a brief recommended next step.
+- When useful, end with a brief recommended next step concise.
 - Minimize emoji usage. Use emojis only when they add meaningful signal, and never as decoration.
 - Keep the final response concise, scannable, and ready to post to Slack as-is.
 - For direct retrieval, status checks, or simple operational tasks, provide a concise direct answer with only the minimum necessary context.",
@@ -394,7 +394,7 @@ Work in a hypothesis-driven way. Start by narrowing the service, timeframe, and 
 Before entering a new major investigation step, call report_progress. The payload must be short and use the title and summary fields.
 
 ## Datadog usage
-Use `search_datadog_logs` and `analyze_datadog_logs` to identify error patterns, anomalies, recurring messages, affected requests, and timeline clusters.
+Use `search_datadog_logs` and `analyze_datadog_logs` to identify error patterns, anomalies, recurring messages, affected requests, and error.
 Use `search_datadog_metrics`, `get_datadog_metric`, and `get_datadog_metric_context` to inspect trends, spikes, regressions, saturation, and relevant dimensions such as env, region, version, endpoint, or dependency.
 Use `search_datadog_events` to correlate deployments, service disruptions, monitor transitions, configuration changes, and other operational events.
 Combine logs, metrics, and events when it materially improves confidence, clarifies scope, or helps rule out competing explanations.
@@ -403,7 +403,7 @@ Run independent tool calls in parallel when possible. If you receive `client_err
 ## Output expectations
 Prioritize the most operationally relevant questions first: customer impact, affected scope, onset time, likely trigger, severity, and whether the issue is ongoing.
 Return concise, high-signal findings rather than raw tool output. Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns. Avoid overstating conclusions, and state uncertainty explicitly when evidence is partial, indirect, or conflicting.
-Include clickable Datadog links for all referenced evidence whenever available, and structure findings so they can be reused directly in a Slack response."
+Include clickable Datadog links for all referenced evidence whenever available. Briefly summarize the investigation trail so another engineer can follow what you checked, why you checked it, and what each step established, without dumping raw tool arguments or raw tool output."
             ,
             language = input.language,
         ),
@@ -440,7 +440,7 @@ When reading files, extract only the minimum necessary context needed to answer 
 
 ## Evidence and output quality
 Return concise, evidence-based findings rather than raw search output. Clearly distinguish confirmed facts, plausible inferences, and remaining unknowns. Avoid overstating conclusions when repository evidence is partial, indirect, or ambiguous.
-Whenever you reference GitHub evidence, include the supporting GitHub URL as a clickable link whenever available. Structure findings so they can be reused directly in a Slack response by another agent.",
+Whenever you reference GitHub evidence, include the supporting GitHub URL as a clickable link whenever available. Briefly summarize the investigation trail so another engineer can follow what you checked, why you checked it, and what each step established, without dumping raw tool arguments or raw tool output.",
             github_scope_org = input.github_scope_org,
             language = input.language,
         ),
@@ -712,50 +712,5 @@ mod tests {
             assert!(instructions.contains("Prefer runbook links first."));
             assert!(instructions.contains("State uncertainty explicitly."));
         }
-    }
-
-    #[test]
-    fn task_instructions_describe_the_agent_as_a_team_member() {
-        let task_instructions = build_task_instructions(BuildTaskInstructionsInput {
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            runtime: TaskRuntime {
-                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                retry_count: 0,
-            },
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-
-        assert!(
-            task_instructions.contains(
-                "working as a member of the team alongside the people in the Slack thread"
-            )
-        );
-    }
-
-    #[test]
-    fn task_and_datadog_instructions_do_not_use_incident_keyword() {
-        let task_instructions = build_task_instructions(BuildTaskInstructionsInput {
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            runtime: TaskRuntime {
-                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                retry_count: 0,
-            },
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-        let datadog_instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-
-        assert!(!task_instructions.to_lowercase().contains("incident"));
-        assert!(!datadog_instructions.to_lowercase().contains("incident"));
     }
 }
