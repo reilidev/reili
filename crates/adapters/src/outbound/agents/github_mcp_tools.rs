@@ -12,7 +12,7 @@ use tracing::error;
 
 use crate::outbound::github::github_mcp_client::{GitHubMcpConfig, GitHubMcpHttpClient};
 
-const GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
+const REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
     "search_code",
     "search_repositories",
     "search_issues",
@@ -21,13 +21,44 @@ const GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
     "pull_request_read",
 ];
 
+#[cfg(test)]
+const OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
+    "actions_get",
+    "actions_list",
+    "get_job_logs",
+    "get_dependabot_alert",
+    "list_dependabot_alerts",
+];
+
+const GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
+    "search_code",
+    "search_repositories",
+    "search_issues",
+    "search_pull_requests",
+    "get_file_contents",
+    "pull_request_read",
+    "actions_get",
+    "actions_list",
+    "get_job_logs",
+    "get_dependabot_alert",
+    "list_dependabot_alerts",
+];
+
 const SEARCH_QUERY_TOOL_NAMES: &[&str] = &[
     "search_code",
     "search_repositories",
     "search_issues",
     "search_pull_requests",
 ];
-const OWNER_SCOPED_TOOL_NAMES: &[&str] = &["get_file_contents", "pull_request_read"];
+const OWNER_SCOPED_TOOL_NAMES: &[&str] = &[
+    "get_file_contents",
+    "pull_request_read",
+    "actions_get",
+    "actions_list",
+    "get_job_logs",
+    "get_dependabot_alert",
+    "list_dependabot_alerts",
+];
 
 #[derive(Clone)]
 pub struct GitHubMcpToolset {
@@ -66,7 +97,10 @@ pub async fn connect_github_mcp_toolset(
 
 fn validate_required_tools(tools: &[Tool]) -> Result<(), PortError> {
     let available_names: HashSet<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
-    let required_names: HashSet<&str> = GITHUB_SPECIALIST_AGENT_TOOLS.iter().copied().collect();
+    let required_names: HashSet<&str> = REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS
+        .iter()
+        .copied()
+        .collect();
 
     let mut missing_names = required_names
         .into_iter()
@@ -279,8 +313,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        GITHUB_SPECIALIST_AGENT_TOOLS, filter_tools, format_github_mcp_tool_error,
-        format_github_mcp_tool_success, validate_required_tools, validate_scope,
+        OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS, REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS,
+        filter_tools, format_github_mcp_tool_error, format_github_mcp_tool_success,
+        validate_required_tools, validate_scope,
     };
     use reili_core::source_code::github::GithubScopePolicy;
 
@@ -294,12 +329,23 @@ mod tests {
 
     #[test]
     fn validates_required_tool_names() {
-        let tools = GITHUB_SPECIALIST_AGENT_TOOLS
+        let tools = REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS
             .iter()
             .map(|name| tool(name))
             .collect::<Vec<_>>();
 
         assert!(validate_required_tools(&tools).is_ok());
+    }
+
+    #[test]
+    fn allows_missing_optional_tool_names() {
+        let tools = REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS
+            .iter()
+            .map(|name| tool(name))
+            .collect::<Vec<_>>();
+
+        assert!(validate_required_tools(&tools).is_ok());
+        assert!(!OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS.is_empty());
     }
 
     #[test]
@@ -335,6 +381,20 @@ mod tests {
         let error = validate_scope(
             "get_file_contents",
             json!({ "owner": "other", "repo": "svc" })
+                .as_object()
+                .expect("object"),
+            &scope_policy(),
+        )
+        .expect_err("out of scope owner should fail");
+
+        assert_eq!(error.message, "owner is out of scope. allowed owner: acme");
+    }
+
+    #[test]
+    fn validates_owner_scope_for_dependabot_tools() {
+        let error = validate_scope(
+            "get_dependabot_alert",
+            json!({ "owner": "other", "repo": "svc", "alertNumber": 1 })
                 .as_object()
                 .expect("object"),
             &scope_policy(),
