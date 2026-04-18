@@ -107,6 +107,11 @@ of raw GitHub MCP read tools to the GitHub specialist agent. Reili mints short-l
 installation tokens at runtime and uses them as the MCP bearer token, so `GITHUB_MCP_TOKEN` is not
 used. GitHub App ID, installation ID, scope org, and MCP URL are configured in `reili.toml`.
 
+The Datadog integration talks to the Datadog-hosted MCP server and internally requests the
+`core,security,dashboards,synthetics` toolsets. Reili still exposes only an allowlisted read-only
+subset of those tools, including dashboard detail retrieval and Synthetic test reads when Datadog
+returns them for your plan and application key permissions.
+
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`.
 
 When the selected backend uses `provider = "anthropic"`, Claude is called through the Anthropic
@@ -199,6 +204,8 @@ At a high level, the current runtime:
 
 - reads from Datadog, GitHub, Slack thread history, Slack public-channel search, and web lookup
   integrations, and writes only Slack progress and result messages
+- exposes only read-only Datadog MCP tools, including dashboard detail retrieval and Synthetic
+  test reads when Datadog returns them
 - does not register tools for Datadog mutations, GitHub writes, remediation, or deployments
 - is designed to investigate and report, not to change infrastructure, Datadog state, or repository
   state

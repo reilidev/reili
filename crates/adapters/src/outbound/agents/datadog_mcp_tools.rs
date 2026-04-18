@@ -17,6 +17,9 @@ const DATADOG_SPECIALIST_AGENT_TOOLS: &[&str] = &[
     "get_datadog_metric",
     "get_datadog_metric_context",
     "search_datadog_events",
+    "search_datadog_dashboards",
+    "get_datadog_dashboard",
+    "get_synthetics_tests",
     "search_datadog_security_signals",
     "security_findings_schema",
     "search_security_findings",
@@ -27,6 +30,7 @@ const DATADOG_LEAD_AGENT_TOOLS: &[&str] = &[
     "search_datadog_metrics",
     "get_datadog_metric_context",
     "search_datadog_monitors",
+    "get_synthetics_tests",
     "search_datadog_security_signals",
 ];
 #[derive(Clone)]
@@ -241,8 +245,8 @@ mod tests {
     use rmcp::model::Tool;
 
     use super::{
-        DATADOG_SPECIALIST_AGENT_TOOLS, filter_tools, format_datadog_mcp_tool_error,
-        format_datadog_mcp_tool_success,
+        DATADOG_LEAD_AGENT_TOOLS, DATADOG_SPECIALIST_AGENT_TOOLS, filter_tools,
+        format_datadog_mcp_tool_error, format_datadog_mcp_tool_success,
     };
 
     fn tool(name: &str) -> Tool {
@@ -278,6 +282,9 @@ mod tests {
             tool("get_datadog_metric"),
             tool("get_datadog_metric_context"),
             tool("search_datadog_events"),
+            tool("search_datadog_dashboards"),
+            tool("get_datadog_dashboard"),
+            tool("get_synthetics_tests"),
             tool("search_datadog_security_signals"),
             tool("security_findings_schema"),
             tool("search_security_findings"),
@@ -299,10 +306,44 @@ mod tests {
                 "get_datadog_metric",
                 "get_datadog_metric_context",
                 "search_datadog_events",
+                "search_datadog_dashboards",
+                "get_datadog_dashboard",
+                "get_synthetics_tests",
                 "search_datadog_security_signals",
                 "security_findings_schema",
                 "search_security_findings",
                 "analyze_security_findings",
+            ]
+        );
+    }
+
+    #[test]
+    fn filters_lead_tools_to_triage_reads_and_synthetics() {
+        let tools = vec![
+            tool("search_datadog_services"),
+            tool("search_datadog_metrics"),
+            tool("get_datadog_metric_context"),
+            tool("search_datadog_monitors"),
+            tool("search_datadog_dashboards"),
+            tool("get_synthetics_tests"),
+            tool("search_datadog_security_signals"),
+        ];
+
+        let filtered = filter_tools(&tools, DATADOG_LEAD_AGENT_TOOLS, "lead");
+        let names = filtered
+            .iter()
+            .map(|tool| tool.name.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                "search_datadog_services",
+                "search_datadog_metrics",
+                "get_datadog_metric_context",
+                "search_datadog_monitors",
+                "get_synthetics_tests",
+                "search_datadog_security_signals",
             ]
         );
     }
