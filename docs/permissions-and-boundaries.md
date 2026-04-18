@@ -22,7 +22,8 @@ The task runner can call only the following tool families:
   `search_datadog_security_signals`, `security_findings_schema`, `search_security_findings`,
   `analyze_security_findings`
 - GitHub MCP reads: `search_code`, `search_repositories`, `search_issues`,
-  `search_pull_requests`, `get_file_contents`, `pull_request_read`
+  `search_pull_requests`, `get_file_contents`, `pull_request_read`, `actions_get`,
+  `actions_list`, `get_job_logs`, `get_dependabot_alert`, `list_dependabot_alerts`
 - External web lookup: `search_web`
 
 In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog
@@ -223,8 +224,15 @@ Runtime authentication model:
 
 Recommended permissions for the current runtime:
 
-- GitHub App permissions that can read the repositories Reili investigates
+- GitHub App repository permissions: `Metadata` (read), `Contents` (read), `Pull requests` (read),
+  `Issues` (read), `Actions` (read), and `Dependabot alerts` (read)
 - Prefer a GitHub App and MCP server configuration that exposes only the minimum read capabilities Reili needs
+
+GitHub MCP toolset request:
+
+- Reili sends `X-MCP-Toolsets: default,actions,dependabot` when connecting to GitHub MCP
+- If your GitHub MCP deployment ignores remote toolset headers, configure the server itself to
+  expose equivalent toolsets so the Actions and Dependabot read tools are available
 
 GitHub capabilities currently used by the runtime:
 
@@ -232,22 +240,26 @@ GitHub capabilities currently used by the runtime:
 - Read repository files or directory listings for a given path and ref
 - Read pull request metadata
 - Read pull request diffs
+- Inspect GitHub Actions workflows, runs, jobs, and job logs
+- Read Dependabot alert summaries and alert details
 
 GitHub MCP boundary:
 
 - The GitHub specialist agent only receives this allowlisted subset of MCP tools:
   `search_code`, `search_repositories`, `search_issues`, `search_pull_requests`,
-  `get_file_contents`, and `pull_request_read`
+  `get_file_contents`, `pull_request_read`, `actions_get`, `actions_list`, `get_job_logs`,
+  `get_dependabot_alert`, and `list_dependabot_alerts`
 - It does not mint or refresh GitHub MCP tokens; any short-lived token rotation must happen outside the runtime
 - Reili still enforces `GITHUB_SEARCH_SCOPE_ORG` before allowlisted GitHub MCP tool calls are made
-- Raw MCP write tools are not exposed to the GitHub agent in this
+- Raw MCP write tools are not exposed to the GitHub agent in this runtime
 
 GitHub boundary in the current runtime:
 
 - No GitHub write permissions are required today
 - No commenting, merging, labeling, reviewing, or workflow dispatch is performed
 - All GitHub search queries must stay inside `GITHUB_SEARCH_SCOPE_ORG`
-- Repository content and pull request reads are rejected when the owner is outside `GITHUB_SEARCH_SCOPE_ORG`
+- Repository content, pull request, Actions, and Dependabot reads are rejected when the owner is
+  outside `GITHUB_SEARCH_SCOPE_ORG`
 
 ## LLM Boundary
 

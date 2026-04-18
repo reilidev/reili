@@ -104,8 +104,8 @@ Required secrets depend on your selected Slack mode and backend:
 
 The GitHub integration talks to a streamable HTTP MCP server and exposes a small allowlisted set
 of raw GitHub MCP read tools to the GitHub specialist agent. Reili mints short-lived GitHub App
-installation tokens at runtime and uses them as the MCP bearer token, so `GITHUB_MCP_TOKEN` is not
-used. GitHub App ID, installation ID, scope org, and MCP URL are configured in `reili.toml`.
+installation tokens at runtime and uses them as the MCP bearer token. 
+GitHub App ID, installation ID, scope org, and MCP URL are configured in `reili.toml`.
 
 The Datadog integration talks to the Datadog-hosted MCP server and internally requests the
 `core,security,dashboards,synthetics` toolsets. Reili still exposes only an allowlisted read-only

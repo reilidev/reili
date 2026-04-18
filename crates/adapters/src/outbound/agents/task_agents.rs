@@ -266,7 +266,7 @@ where
         .agent(input.settings.specialist_model.clone())
         .name("investigate_github")
         .description(
-            "Delegates GitHub repository, code, and pull request investigation tasks.
+            "Delegates GitHub repository, code, pull request, Actions, and Dependabot investigation tasks.
 When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.",
         )
         .preamble(&build_github_instructions(BuildGithubInstructionsInput {
@@ -424,16 +424,16 @@ Use {language} for all responses.
 
 ## Working style
 Before entering a new major investigation step, call report_progress. The payload must be short and use the title and summary fields.
-Work in a focused, question-driven way. Use the available GitHub MCP tools to search code, repositories, issues, pull requests, and repository files, but only to the extent needed to answer the current question or test the current hypothesis. Run independent searches in parallel when possible.
+Work in a focused, question-driven way. Use the available GitHub MCP tools to search code, repositories, issues, pull requests, repository files, GitHub Actions workflows and job logs, and Dependabot alerts, but only to the extent needed to answer the current question or test the current hypothesis. Run independent searches in parallel when possible.
 
 ## Mandatory scope rules
 Every `search_code`, `search_repositories`, `search_issues`, and `search_pull_requests` call must include `org:{github_scope_org}`.
-For `get_file_contents` and `pull_request_read`, the `owner` must be `{github_scope_org}`.
+For `get_file_contents`, `pull_request_read`, `actions_get`, `actions_list`, `get_job_logs`, `get_dependabot_alert`, and `list_dependabot_alerts`, the `owner` must be `{github_scope_org}`.
 Never omit the org qualifier, switch owners, or access repositories outside `{github_scope_org}`.
 
 ## What to prioritize
-Prioritize repository evidence that helps explain operational behavior, ownership, recent changes, deployment context, configuration, architecture, runbooks, and likely production impact.
-When searching code, prefer identifiers, service names, alert names, config keys, endpoints, runbooks, infrastructure files, and operationally meaningful paths over generic keywords. When reviewing pull requests or issues, focus on recent changes, intended behavior, rollout context, known risks, follow-up discussion, and possible regressions.
+Prioritize repository evidence that helps explain operational behavior, ownership, recent changes, deployment context, configuration, architecture, runbooks, CI failures, supply-chain risk, and likely production impact.
+When searching code, prefer identifiers, service names, alert names, config keys, endpoints, runbooks, infrastructure files, and operationally meaningful paths over generic keywords. When reviewing pull requests or issues, focus on recent changes, intended behavior, rollout context, known risks, follow-up discussion, and possible regressions. When reviewing Actions or Dependabot results, focus on failing jobs, recent workflow regressions, vulnerable dependencies, severity, fix guidance, and blast radius.
 When reading files, extract only the minimum necessary context needed to answer accurately. Prefer concise summaries over large excerpts.
 
 ## Evidence and output quality
@@ -747,7 +747,7 @@ mod tests {
 
     #[test]
     fn github_agent_description_requires_background_in_delegation() {
-        let description = "Delegates GitHub repository, code, and pull request investigation tasks.
+        let description = "Delegates GitHub repository, code, pull request, Actions, and Dependabot investigation tasks.
 When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.";
 
         assert!(description.contains("include the relevant background"));

@@ -8,7 +8,7 @@ use futures::StreamExt;
 use octocrab::auth::create_jwt;
 use octocrab::models::{AppId, InstallationToken};
 use reili_core::error::PortError;
-use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue};
+use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use rmcp::model::{
     CallToolRequest, CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo,
     ClientJsonRpcMessage, ClientNotification, ClientRequest, Implementation, InitializeRequest,
@@ -25,6 +25,8 @@ use tracing::error;
 const GITHUB_MCP_CLIENT_NAME: &str = "reili";
 const GITHUB_MCP_CLIENT_VERSION_FALLBACK: &str = "unknown";
 const GITHUB_API_BASE_URL: &str = "https://api.github.com";
+const GITHUB_MCP_TOOLSETS_HEADER: &str = "x-mcp-toolsets";
+const GITHUB_MCP_TOOLSETS: &str = "default,actions,dependabot";
 const INSTALLATION_TOKEN_REFRESH_SKEW_MINUTES: i64 = 5;
 const MAX_ERROR_BODY_CHARS: usize = 500;
 
@@ -455,6 +457,10 @@ fn build_github_mcp_http_client(auth_header: HeaderValue) -> Result<reqwest::Cli
 fn build_github_mcp_headers(auth_header: HeaderValue) -> HeaderMap {
     let mut default_headers = HeaderMap::new();
     default_headers.insert(AUTHORIZATION, auth_header);
+    default_headers.insert(
+        HeaderName::from_static(GITHUB_MCP_TOOLSETS_HEADER),
+        HeaderValue::from_static(GITHUB_MCP_TOOLSETS),
+    );
 
     default_headers
 }
@@ -576,9 +582,10 @@ mod tests {
     use sse_stream::Sse;
 
     use super::{
-        GITHUB_MCP_CLIENT_NAME, GITHUB_MCP_CLIENT_VERSION_FALLBACK, GitHubAppInstallationAuth,
-        GitHubMcpConfig, build_bearer_auth_header, build_client_implementation,
-        build_github_mcp_headers, parse_github_app_id, read_server_result,
+        GITHUB_MCP_CLIENT_NAME, GITHUB_MCP_CLIENT_VERSION_FALLBACK, GITHUB_MCP_TOOLSETS,
+        GitHubAppInstallationAuth, GitHubMcpConfig, build_bearer_auth_header,
+        build_client_implementation, build_github_mcp_headers, parse_github_app_id,
+        read_server_result,
     };
 
     #[test]
@@ -603,6 +610,10 @@ mod tests {
         assert_eq!(
             headers.get(reqwest::header::AUTHORIZATION),
             Some(&HeaderValue::from_static("Bearer token"))
+        );
+        assert_eq!(
+            headers.get("x-mcp-toolsets"),
+            Some(&HeaderValue::from_static(GITHUB_MCP_TOOLSETS))
         );
     }
 
