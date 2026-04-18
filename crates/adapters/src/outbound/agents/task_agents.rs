@@ -226,7 +226,10 @@ where
         .client
         .agent(input.settings.specialist_model.clone())
         .name("investigate_datadog")
-        .description("Delegates Datadog logs, metrics, and events investigation tasks.")
+        .description(
+            "Delegates Datadog observability and security investigation tasks.
+When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.",
+        )
         .preamble(&build_datadog_instructions(BuildDatadogInstructionsInput {
             language: input.language,
             additional_system_prompt: input.additional_system_prompt,
@@ -262,7 +265,10 @@ where
         .client
         .agent(input.settings.specialist_model.clone())
         .name("investigate_github")
-        .description("Delegates GitHub repository, code, and pull request investigation tasks.")
+        .description(
+            "Delegates GitHub repository, code, and pull request investigation tasks.
+When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.",
+        )
         .preamble(&build_github_instructions(BuildGithubInstructionsInput {
             language: input.language,
             github_scope_org: input.github_scope_org.clone(),
@@ -344,7 +350,6 @@ You orchestrate SRE work end-to-end, including investigation, operational suppor
 - Your response is posted to Slack as-is.
 - Write the final response as a concise, scannable Slack message using Slack markdown.
 - For requests involving production systems, first build enough context to understand affected services, dependencies, recent changes, and operational risk before taking deeper action.
-- Use Datadog MCP tools such as search_datadog_services, search_datadog_metrics, get_datadog_metric_context, and search_datadog_monitors early when they help establish service scope, system behavior, or alert context.
 - Delegate detailed Datadog work to investigate_datadog and GitHub work to investigate_github as needed.
 - Use GitHub context not only for investigations, but also for system understanding, ownership, recent changes, deployment context, and operational runbooks.
 - Run independent tool calls in parallel where possible.
@@ -384,21 +389,14 @@ struct BuildDatadogInstructionsInput {
 fn build_datadog_instructions(input: BuildDatadogInstructionsInput) -> String {
     append_configured_additional_system_prompt(
         format!(
-        "You are a Datadog investigation specialist with deep expertise in production reliability, observability, failure analysis, and operational diagnostics.
-Your role is to investigate Datadog evidence across logs, metrics, and events, and return concise, evidence-based findings that support safe and reliable operational decisions.
+        "You are a Datadog investigation specialist with deep expertise in production reliability, observability, failure analysis, operational diagnostics, and security investigation.
+Your role is to investigate Datadog evidence across logs, metrics, events, and any available Datadog security tools, and return concise, evidence-based findings that support safe and reliable operational decisions.
 
 Use {language} for all responses.
 
 ## Investigation approach
 Work in a hypothesis-driven way. Start by narrowing the service, timeframe, and current working hypothesis, then use only the Datadog tools needed to test that hypothesis or answer the current question. Prefer focused investigation over broad data collection.
 Before entering a new major investigation step, call report_progress. The payload must be short and use the title and summary fields.
-
-## Datadog usage
-Use `search_datadog_logs` and `analyze_datadog_logs` to identify error patterns, anomalies, recurring messages, affected requests, and error.
-Use `search_datadog_metrics`, `get_datadog_metric`, and `get_datadog_metric_context` to inspect trends, spikes, regressions, saturation, and relevant dimensions such as env, region, version, endpoint, or dependency.
-Use `search_datadog_events` to correlate deployments, service disruptions, monitor transitions, configuration changes, and other operational events.
-Combine logs, metrics, and events when it materially improves confidence, clarifies scope, or helps rule out competing explanations.
-Run independent tool calls in parallel when possible. If you receive `client_error` payloads or weak results, refine the query and retry when useful.
 
 ## Output expectations
 Prioritize the most operationally relevant questions first: customer impact, affected scope, onset time, likely trigger, severity, and whether the issue is ongoing.
@@ -713,5 +711,46 @@ mod tests {
             assert!(instructions.contains("Prefer runbook links first."));
             assert!(instructions.contains("State uncertainty explicitly."));
         }
+    }
+
+    #[test]
+    fn task_instructions_omit_datadog_tool_guidance() {
+        let instructions = build_task_instructions(BuildTaskInstructionsInput {
+            datadog_site: "datadoghq.com".to_string(),
+            github_scope_org: "acme".to_string(),
+            runtime: TaskRuntime {
+                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+                channel: "C123".to_string(),
+                thread_ts: "123.456".to_string(),
+                retry_count: 0,
+            },
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
+
+        assert!(!instructions.contains("`search_datadog_services`"));
+        assert!(!instructions.contains("`search_datadog_security_signals`"));
+        assert!(instructions.contains("Delegate detailed Datadog work to investigate_datadog"));
+    }
+
+    #[test]
+    fn datadog_instructions_omit_datadog_usage_section() {
+        let instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
+
+        assert!(!instructions.contains("## Datadog usage"));
+        assert!(!instructions.contains("`search_datadog_logs`"));
+        assert!(instructions.contains("## Output expectations"));
+    }
+
+    #[test]
+    fn github_agent_description_requires_background_in_delegation() {
+        let description = "Delegates GitHub repository, code, and pull request investigation tasks.
+When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.";
+
+        assert!(description.contains("include the relevant background"));
+        assert!(description.contains("not just the immediate question"));
     }
 }

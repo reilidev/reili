@@ -18,7 +18,7 @@ use tracing::error;
 
 const DATADOG_MCP_CLIENT_NAME: &str = "reili";
 const DATADOG_MCP_CLIENT_VERSION_FALLBACK: &str = "unknown";
-const DATADOG_MCP_TOOLSET: &str = "core";
+const DATADOG_MCP_TOOLSETS: &str = "core,security";
 const DATADOG_API_KEY_HEADER: &str = "DD_API_KEY";
 const DATADOG_APPLICATION_KEY_HEADER: &str = "DD_APPLICATION_KEY";
 
@@ -399,7 +399,7 @@ fn format_streamable_http_error(
 fn datadog_mcp_url(site: &str) -> String {
     let site_domain = datadog_site_domain(site);
 
-    format!("https://mcp.{site_domain}/api/unstable/mcp-server/mcp?toolsets={DATADOG_MCP_TOOLSET}")
+    format!("https://mcp.{site_domain}/api/unstable/mcp-server/mcp?toolsets={DATADOG_MCP_TOOLSETS}")
 }
 
 fn datadog_site_domain(site: &str) -> &str {
@@ -429,11 +429,11 @@ mod tests {
     fn builds_datadog_mcp_url_from_site() {
         assert_eq!(
             datadog_mcp_url("datadoghq.eu"),
-            "https://mcp.datadoghq.eu/api/unstable/mcp-server/mcp?toolsets=core"
+            "https://mcp.datadoghq.eu/api/unstable/mcp-server/mcp?toolsets=core,security"
         );
         assert_eq!(
             datadog_mcp_url("ap1.datadoghq.com"),
-            "https://mcp.ap1.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=core"
+            "https://mcp.ap1.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=core,security"
         );
     }
 

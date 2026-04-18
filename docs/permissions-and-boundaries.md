@@ -16,7 +16,10 @@ The task runner can call only the following tool families:
 - Slack workspace lookup: `search_slack_messages` (searches prior Slack public-channel messages visible to the current invocation context)
 - Datadog MCP reads: `search_datadog_services`, `search_datadog_logs`, `analyze_datadog_logs`,
   `search_datadog_metrics`, `get_datadog_metric`, `get_datadog_metric_context`,
-  `search_datadog_events`, `search_datadog_monitors`, `search_datadog_incidents`
+  `search_datadog_events`, `search_datadog_monitors`
+- Datadog MCP security reads when exposed by Datadog for the configured credentials:
+  `search_datadog_security_signals`, `security_findings_schema`, `search_security_findings`,
+  `analyze_security_findings`
 - GitHub MCP reads: `search_code`, `search_repositories`, `search_issues`,
   `search_pull_requests`, `get_file_contents`, `pull_request_read`
 - External web lookup: `search_web`
@@ -142,7 +145,7 @@ Required Datadog permissions:
 - `mcp_read`: required because Reili connects to the remote Datadog MCP Server in read-only mode
   ([Datadog RBAC permissions](https://docs.datadoghq.com/account_management/rbac/permissions/))
 - Additional product read permissions depend on which Datadog MCP tools your organization exposes
-  through the enabled `core` toolset.
+  through Reili's internal `core,security` MCP request.
 - `logs_read_data` and, in some organizations, `logs_read_index_data`: needed when Reili uses
   `search_datadog_logs` or `analyze_datadog_logs`
   ([Logs RBAC permissions](https://docs.datadoghq.com/logs/guide/logs-rbac-permissions/))
@@ -152,38 +155,52 @@ Required Datadog permissions:
   ([Events API docs](https://docs.datadoghq.com/api/latest/events/))
 - `monitors_read`: needed when Reili uses `search_datadog_monitors`
   ([Monitors API docs](https://docs.datadoghq.com/api/latest/monitors/))
-- `incident_read`: needed when Reili uses `search_datadog_incidents`
-  ([Incidents API docs](https://docs.datadoghq.com/api/latest/incidents/))
 - `apm_service_catalog_read` or `apm_read`: may be needed when Reili uses `search_datadog_services`,
   depending on how service inventory is backed in your Datadog organization
   ([Software Catalog permission docs](https://docs.datadoghq.com/internal_developer_portal/software_catalog/set_up/),
   [APM API docs](https://docs.datadoghq.com/api/latest/apm/),
   [Datadog RBAC permissions](https://docs.datadoghq.com/account_management/rbac/permissions/))
+- `security_monitoring_signals_read`: needed when Reili uses `search_datadog_security_signals`
+- `security_monitoring_findings_read`: needed when Reili uses
+  `security_findings_schema`, `search_security_findings`, or `analyze_security_findings`
+- `timeseries_query`: also needed when Reili uses `analyze_security_findings`
 
 In practice, the API key authenticates the Datadog organization, while the application key
 determines which MCP-backed read operations Reili can perform. Create the application key from a
 dedicated Datadog service account and grant that account only the minimum read permissions above.
 
+Reili always requests Datadog MCP with `toolsets=core,security` internally. This does not add a
+new runtime config setting. Datadog still decides which tools are returned based on your plan,
+org configuration, and application key permissions.
+
 Datadog capabilities currently used by the runtime:
 
 - Connect to the remote Datadog MCP Server over Streamable HTTP
-- Search services, logs, metrics, monitors, incidents, and events through Datadog-provided MCP tools
+- Search services, logs, metrics, monitors, and events through Datadog-provided MCP tools
+- Search security signals and investigate security findings when Datadog returns those read tools
 - Fetch metric detail and context from Datadog MCP for task pivots
 
 Datadog MCP endpoint currently used by the runtime:
 
-- `https://mcp.<DATADOG_SITE>/api/unstable/mcp-server/mcp?toolsets=core`
+- `https://mcp.<DATADOG_SITE>/api/unstable/mcp-server/mcp?toolsets=core,security`
 
 Recommended Datadog access policy:
 
 - Create a dedicated Datadog service account for Reili
 - Issue the API key and application key for that service account rather than reusing human operator credentials
 - Prefer restricted application keys when your Datadog plan supports them
-- Allow only the minimum Datadog product access Reili needs through the `core` MCP toolset
+- Allow only the minimum Datadog product access Reili needs across the allowlisted `core` and
+  security read tools
+- Reili exposes only the intersection of its allowlisted Datadog tools and the tools Datadog
+  actually returns for your credentials
+- If Datadog omits allowlisted tools, Reili logs a warning and continues with the remaining
+  available Datadog tools
 
 Datadog boundary:
 
 - No Datadog write endpoints are called by this runtime
+- From the Datadog `security` toolset, Reili allowlists only read-only security signals and
+  findings investigation tools
 - It does not create or edit monitors, dashboards, notebooks, SLOs, incidents, downtimes, or service definitions
 - It does not acknowledge alerts, mute monitors, change retention, or trigger remediation actions
 - Requests are scoped to task queries generated from the Slack thread context and user prompt
