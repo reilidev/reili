@@ -8,7 +8,7 @@ use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
 use rmcp::model::{CallToolResult, Content, Tool};
-use tracing::error;
+use tracing::{error, warn};
 
 const DATADOG_SPECIALIST_AGENT_TOOLS: &[&str] = &[
     "search_datadog_logs",
@@ -17,14 +17,18 @@ const DATADOG_SPECIALIST_AGENT_TOOLS: &[&str] = &[
     "get_datadog_metric",
     "get_datadog_metric_context",
     "search_datadog_events",
+    "search_datadog_security_signals",
+    "security_findings_schema",
+    "search_security_findings",
+    "analyze_security_findings",
 ];
 const DATADOG_LEAD_AGENT_TOOLS: &[&str] = &[
     "search_datadog_services",
     "search_datadog_metrics",
     "get_datadog_metric_context",
     "search_datadog_monitors",
+    "search_datadog_security_signals",
 ];
-
 #[derive(Clone)]
 pub struct DatadogMcpToolset {
     tools: Vec<Tool>,
@@ -34,7 +38,12 @@ pub struct DatadogMcpToolset {
 impl DatadogMcpToolset {
     #[must_use]
     pub fn lead_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        build_tool_adapters(&self.tools, DATADOG_LEAD_AGENT_TOOLS, self.client.clone())
+        build_tool_adapters(
+            &self.tools,
+            DATADOG_LEAD_AGENT_TOOLS,
+            "lead",
+            self.client.clone(),
+        )
     }
 
     #[must_use]
@@ -42,6 +51,7 @@ impl DatadogMcpToolset {
         build_tool_adapters(
             &self.tools,
             DATADOG_SPECIALIST_AGENT_TOOLS,
+            "specialist",
             self.client.clone(),
         )
     }
@@ -51,39 +61,26 @@ pub async fn connect_datadog_mcp_toolset(
     config: &DatadogMcpToolConfig,
 ) -> Result<DatadogMcpToolset, PortError> {
     let (client, tools) = DatadogMcpHttpClient::connect(config).await?;
-
-    validate_required_tools(&tools)?;
-
     Ok(DatadogMcpToolset { tools, client })
 }
 
-fn validate_required_tools(tools: &[Tool]) -> Result<(), PortError> {
+fn filter_tools(tools: &[Tool], names: &[&str], agent_scope: &str) -> Vec<Tool> {
+    let expected_names: HashSet<&str> = names.iter().copied().collect();
     let available_names: HashSet<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
-    let required_names: HashSet<&str> = DATADOG_SPECIALIST_AGENT_TOOLS
+    let mut missing_names = expected_names
         .iter()
-        .chain(DATADOG_LEAD_AGENT_TOOLS.iter())
         .copied()
-        .collect();
-
-    let mut missing_names = required_names
-        .into_iter()
         .filter(|name| !available_names.contains(name))
-        .map(ToString::to_string)
         .collect::<Vec<_>>();
     missing_names.sort();
 
-    if missing_names.is_empty() {
-        return Ok(());
+    if !missing_names.is_empty() {
+        warn!(
+            agent_scope,
+            missing_tools = ?missing_names,
+            "Datadog MCP server is missing allowlisted tools requested by agent"
+        );
     }
-
-    Err(PortError::new(format!(
-        "Datadog MCP server is missing required tools: {}",
-        missing_names.join(", ")
-    )))
-}
-
-fn filter_tools(tools: &[Tool], names: &[&str]) -> Vec<Tool> {
-    let expected_names: HashSet<&str> = names.iter().copied().collect();
 
     tools
         .iter()
@@ -95,9 +92,10 @@ fn filter_tools(tools: &[Tool], names: &[&str]) -> Vec<Tool> {
 fn build_tool_adapters(
     tools: &[Tool],
     names: &[&str],
+    agent_scope: &str,
     client: DatadogMcpHttpClient,
 ) -> Vec<Box<dyn ToolDyn>> {
-    filter_tools(tools, names)
+    filter_tools(tools, names, agent_scope)
         .into_iter()
         .map(|tool| {
             Box::new(DatadogMcpToolAdapter {
@@ -244,28 +242,11 @@ mod tests {
 
     use super::{
         DATADOG_SPECIALIST_AGENT_TOOLS, filter_tools, format_datadog_mcp_tool_error,
-        format_datadog_mcp_tool_success, validate_required_tools,
+        format_datadog_mcp_tool_success,
     };
 
     fn tool(name: &str) -> Tool {
         Tool::new(name.to_string(), "test tool", serde_json::Map::new())
-    }
-
-    #[test]
-    fn validates_required_tool_names() {
-        let tools = vec![
-            tool("search_datadog_logs"),
-            tool("analyze_datadog_logs"),
-            tool("search_datadog_metrics"),
-            tool("get_datadog_metric"),
-            tool("get_datadog_metric_context"),
-            tool("search_datadog_events"),
-            tool("search_datadog_services"),
-            tool("search_datadog_monitors"),
-            tool("search_datadog_incidents"),
-        ];
-
-        assert!(validate_required_tools(&tools).is_ok());
     }
 
     #[test]
@@ -276,7 +257,11 @@ mod tests {
             tool("search_datadog_events"),
         ];
 
-        let filtered = filter_tools(&tools, &["search_datadog_logs", "search_datadog_events"]);
+        let filtered = filter_tools(
+            &tools,
+            &["search_datadog_logs", "search_datadog_events"],
+            "specialist",
+        );
 
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].name.as_ref(), "search_datadog_logs");
@@ -284,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_specialist_tools_to_logs_metrics_and_events_union() {
+    fn filters_specialist_tools_to_observability_and_security_union() {
         let tools = vec![
             tool("search_datadog_services"),
             tool("search_datadog_logs"),
@@ -293,10 +278,13 @@ mod tests {
             tool("get_datadog_metric"),
             tool("get_datadog_metric_context"),
             tool("search_datadog_events"),
-            tool("search_datadog_incidents"),
+            tool("search_datadog_security_signals"),
+            tool("security_findings_schema"),
+            tool("search_security_findings"),
+            tool("analyze_security_findings"),
         ];
 
-        let filtered = filter_tools(&tools, DATADOG_SPECIALIST_AGENT_TOOLS);
+        let filtered = filter_tools(&tools, DATADOG_SPECIALIST_AGENT_TOOLS, "specialist");
         let names = filtered
             .iter()
             .map(|tool| tool.name.as_ref())
@@ -311,6 +299,34 @@ mod tests {
                 "get_datadog_metric",
                 "get_datadog_metric_context",
                 "search_datadog_events",
+                "search_datadog_security_signals",
+                "security_findings_schema",
+                "search_security_findings",
+                "analyze_security_findings",
+            ]
+        );
+    }
+
+    #[test]
+    fn filters_available_subset_without_requiring_full_security_workflow() {
+        let tools = vec![
+            tool("search_datadog_logs"),
+            tool("search_datadog_security_signals"),
+            tool("security_findings_schema"),
+        ];
+
+        let filtered = filter_tools(&tools, DATADOG_SPECIALIST_AGENT_TOOLS, "specialist");
+        let names = filtered
+            .iter()
+            .map(|tool| tool.name.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                "search_datadog_logs",
+                "search_datadog_security_signals",
+                "security_findings_schema",
             ]
         );
     }
