@@ -131,6 +131,7 @@ pub(crate) struct AiBackendFileConfig {
     pub aws_region: Option<String>,
     pub project_id: Option<String>,
     pub location: Option<String>,
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

@@ -21,6 +21,7 @@ pub struct LlmProviderSettings {
 
 pub struct CreateOpenAiProviderSettingsInput {
     pub model: String,
+    pub reasoning_effort: String,
 }
 
 pub struct CreateAnthropicProviderSettingsInput {
@@ -48,7 +49,7 @@ pub fn create_openai_provider_settings(
         max_tokens: None,
         additional_params: json!({
             "reasoning": {
-                "effort": "low",
+                "effort": input.reasoning_effort,
                 "summary": "auto",
             },
             "text": {

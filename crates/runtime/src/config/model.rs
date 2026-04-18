@@ -71,6 +71,7 @@ impl LlmProviderConfig {
 pub struct OpenAiLlmConfig {
     pub api_key: SecretString,
     pub model: String,
+    pub reasoning_effort: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -153,6 +154,7 @@ mod tests {
                 provider: LlmProviderConfig::OpenAi(OpenAiLlmConfig {
                     api_key: SecretString::new("openai-secret".to_string()),
                     model: "gpt-5.3-codex".to_string(),
+                    reasoning_effort: "low".to_string(),
                 }),
             },
             github: GitHubConfig {

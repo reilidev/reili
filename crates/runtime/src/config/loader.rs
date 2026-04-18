@@ -21,6 +21,8 @@ const DEFAULT_OPENAI_API_KEY_ENV: &str = "LLM_OPENAI_API_KEY";
 const DEFAULT_ANTHROPIC_API_KEY_ENV: &str = "LLM_ANTHROPIC_API_KEY";
 const SUPPORTED_ANTHROPIC_MODELS: &[&str] =
     &["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"];
+const DEFAULT_OPENAI_REASONING_EFFORT: &str = "medium";
+const SUPPORTED_REASONING_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh"];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConfigLoadOptions {
@@ -241,6 +243,20 @@ fn resolve_openai_backend(
     env: &dyn EnvironmentReader,
     prefix: &str,
 ) -> Result<LlmProviderConfig, ConfigError> {
+    let reasoning_effort = backend
+        .reasoning_effort
+        .as_deref()
+        .unwrap_or(DEFAULT_OPENAI_REASONING_EFFORT);
+    if !SUPPORTED_REASONING_EFFORTS.contains(&reasoning_effort) {
+        return Err(ConfigError::InvalidValue {
+            field: format!("{prefix}.reasoning_effort"),
+            message: format!(
+                "unsupported reasoning effort `{reasoning_effort}`; expected one of [{}]",
+                SUPPORTED_REASONING_EFFORTS.join(", ")
+            ),
+        });
+    }
+
     Ok(LlmProviderConfig::OpenAi(OpenAiLlmConfig {
         api_key: read_required_secret(
             env,
@@ -251,6 +267,7 @@ fn resolve_openai_backend(
             &format!("{prefix}.api_key_env"),
         )?,
         model: require_backend_field(backend.model.as_deref(), &format!("{prefix}.model"))?,
+        reasoning_effort: reasoning_effort.to_string(),
     }))
 }
 
@@ -601,8 +618,46 @@ mod tests {
             LlmProviderConfig::OpenAi(provider) => {
                 assert_eq!(provider.api_key.expose(), "openai-api-key");
                 assert_eq!(provider.model, "gpt-5.3-codex");
+                assert_eq!(provider.reasoning_effort, "medium");
             }
             _ => panic!("expected openai provider"),
+        }
+    }
+
+    #[test]
+    fn resolves_openai_reasoning_effort_from_toml() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "model = \"gpt-5.3-codex\"\n",
+            "model = \"gpt-5.3-codex\"\nreasoning_effort = \"high\"\n",
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.llm.provider {
+            LlmProviderConfig::OpenAi(provider) => {
+                assert_eq!(provider.reasoning_effort, "high");
+            }
+            _ => panic!("expected openai provider"),
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_openai_reasoning_effort() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "model = \"gpt-5.3-codex\"\n",
+            "model = \"gpt-5.3-codex\"\nreasoning_effort = \"max\"\n",
+        ));
+
+        let error = resolve_app_config(file_config, &env).expect_err("invalid effort should fail");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert!(field.contains("reasoning_effort"));
+                assert!(message.contains("max"));
+            }
+            other => panic!("expected invalid-value error, got {other}"),
         }
     }
 

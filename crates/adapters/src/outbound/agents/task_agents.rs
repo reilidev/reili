@@ -646,6 +646,7 @@ mod tests {
     fn provider_settings_enable_parallel_tool_calls() {
         let settings = create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
             model: "gpt-5.3-codex".to_string(),
+            reasoning_effort: "low".to_string(),
         });
         let params = settings.additional_params;
 
