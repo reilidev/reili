@@ -18,7 +18,7 @@ use tracing::error;
 
 const DATADOG_MCP_CLIENT_NAME: &str = "reili";
 const DATADOG_MCP_CLIENT_VERSION_FALLBACK: &str = "unknown";
-const DATADOG_MCP_TOOLSETS: &str = "core,security";
+const DATADOG_MCP_TOOLSETS: &str = "core,security,dashboards,synthetics";
 const DATADOG_API_KEY_HEADER: &str = "DD_API_KEY";
 const DATADOG_APPLICATION_KEY_HEADER: &str = "DD_APPLICATION_KEY";
 
@@ -429,11 +429,11 @@ mod tests {
     fn builds_datadog_mcp_url_from_site() {
         assert_eq!(
             datadog_mcp_url("datadoghq.eu"),
-            "https://mcp.datadoghq.eu/api/unstable/mcp-server/mcp?toolsets=core,security"
+            "https://mcp.datadoghq.eu/api/unstable/mcp-server/mcp?toolsets=core,security,dashboards,synthetics"
         );
         assert_eq!(
             datadog_mcp_url("ap1.datadoghq.com"),
-            "https://mcp.ap1.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=core,security"
+            "https://mcp.ap1.datadoghq.com/api/unstable/mcp-server/mcp?toolsets=core,security,dashboards,synthetics"
         );
     }
 
