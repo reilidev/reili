@@ -46,6 +46,8 @@ provider = "openai"
 model = "gpt-5.4"
 # Optional for OpenAI backends: env var name for the API key. Defaults to `LLM_OPENAI_API_KEY`.
 api_key_env = "LLM_OPENAI_API_KEY"
+# Optional for OpenAI backends: reasoning effort level (`low`, `medium`, `high`, or `xhigh`). Defaults to `medium`.
+# reasoning_effort = "medium"
 
 #[ai.backends.anthropic]
 #provider = "anthropic"

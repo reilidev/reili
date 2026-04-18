@@ -207,6 +207,7 @@ async fn create_provider_ports(
             task_runner: Arc::new(OpenAiTaskRunner::new(OpenAiTaskRunnerInput {
                 api_key: config.api_key.expose().to_string(),
                 model: config.model.clone(),
+                reasoning_effort: config.reasoning_effort.clone(),
                 datadog_mcp: DatadogMcpToolConfig {
                     api_key: input.datadog_api_key,
                     app_key: input.datadog_app_key,
