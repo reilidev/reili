@@ -4,6 +4,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reili_core::error::PortError;
 use reili_core::knowledge::{WebCitation, WebSearchInput, WebSearchPort, WebSearchResult};
+use reili_core::secret::SecretString;
 use reqwest::Client;
 use serde_json::{Value, json};
 
@@ -14,12 +15,12 @@ const DEFAULT_OPENAI_WEB_SEARCH_MODEL: &str = "gpt-5.4";
 const DEFAULT_OPENAI_WEB_SEARCH_TIMEOUT_MS: u64 = 20_000;
 
 pub struct OpenAiWebSearchAdapterConfig {
-    pub api_key: String,
+    pub api_key: SecretString,
 }
 
 pub struct OpenAiWebSearchAdapter {
     client: Client,
-    api_key: String,
+    api_key: SecretString,
     model: String,
     base_url: String,
 }
@@ -107,7 +108,7 @@ impl WebSearchPort for OpenAiWebSearchAdapter {
         let response = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", self.api_key.expose()))
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
@@ -256,6 +257,7 @@ fn parse_response(response: &Value) -> WebSearchResult {
 #[cfg(test)]
 mod tests {
     use reili_core::knowledge::WebSearchUserLocation;
+    use reili_core::secret::SecretString;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -312,7 +314,7 @@ mod tests {
     #[test]
     fn builds_request_body_with_web_search_tool() {
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
-            api_key: "test-key".to_string(),
+            api_key: SecretString::from("test-key"),
         });
 
         let input = WebSearchInput {
@@ -427,7 +429,7 @@ mod tests {
             .await;
 
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
-            api_key: "test-key".to_string(),
+            api_key: SecretString::from("test-key"),
         })
         .with_base_url(server.uri());
 
@@ -453,7 +455,7 @@ mod tests {
             .await;
 
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
-            api_key: "test-key".to_string(),
+            api_key: SecretString::from("test-key"),
         })
         .with_base_url(server.uri());
 
@@ -478,7 +480,7 @@ mod tests {
             .await;
 
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
-            api_key: "test-key".to_string(),
+            api_key: SecretString::from("test-key"),
         })
         .with_base_url(server.uri());
 
@@ -496,7 +498,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_empty_query() {
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
-            api_key: "test-key".to_string(),
+            api_key: SecretString::from("test-key"),
         });
 
         let err = adapter
@@ -513,7 +515,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_query_exceeding_max_length() {
         let adapter = OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
-            api_key: "test-key".to_string(),
+            api_key: SecretString::from("test-key"),
         });
 
         let long_query = "a".repeat(501);

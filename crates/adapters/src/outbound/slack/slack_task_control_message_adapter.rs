@@ -161,6 +161,7 @@ mod tests {
         PostTaskControlMessageInput, SlackTaskControlMessagePort, SlackTaskControlState,
         UpdateTaskControlMessageInput,
     };
+    use reili_core::secret::SecretString;
 
     use super::SlackTaskControlMessageAdapter;
     use crate::outbound::slack::slack_web_api_client::{
@@ -278,7 +279,7 @@ mod tests {
 
     fn create_client(base_url: &str) -> SlackWebApiClient {
         SlackWebApiClient::new(SlackWebApiClientConfig {
-            bot_token: "xoxb-test".to_string(),
+            bot_token: SecretString::from("xoxb-test"),
             base_url: Some(base_url.to_string()),
         })
         .expect("create slack api client")

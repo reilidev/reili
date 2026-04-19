@@ -141,6 +141,7 @@ mod tests {
     use crate::outbound::slack::slack_web_api_client::{
         SlackWebApiClient, SlackWebApiClientConfig,
     };
+    use reili_core::secret::SecretString;
 
     #[tokio::test]
     async fn start_requires_markdown_text_or_chunks() {
@@ -289,7 +290,7 @@ mod tests {
 
     fn create_client(base_url: &str) -> SlackWebApiClient {
         SlackWebApiClient::new(SlackWebApiClientConfig {
-            bot_token: "xoxb-test".to_string(),
+            bot_token: SecretString::from("xoxb-test"),
             base_url: Some(base_url.to_string()),
         })
         .expect("create slack api client")

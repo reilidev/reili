@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::error::PortError;
+use crate::secret::SecretString;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,7 +22,7 @@ pub enum SlackMessageSearchSortDirection {
 #[serde(rename_all = "camelCase")]
 pub struct SlackMessageSearchInput {
     pub query: String,
-    pub action_token: String,
+    pub action_token: SecretString,
     pub limit: u32,
     pub include_bots: bool,
     pub include_context_messages: bool,

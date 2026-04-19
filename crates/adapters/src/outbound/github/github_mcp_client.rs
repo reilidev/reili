@@ -8,6 +8,7 @@ use futures::StreamExt;
 use octocrab::auth::create_jwt;
 use octocrab::models::{AppId, InstallationToken};
 use reili_core::error::PortError;
+use reili_core::secret::SecretString;
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use rmcp::model::{
     CallToolRequest, CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo,
@@ -34,7 +35,7 @@ const MAX_ERROR_BODY_CHARS: usize = 500;
 pub struct GitHubMcpConfig {
     pub url: String,
     pub app_id: String,
-    pub private_key: String,
+    pub private_key: SecretString,
     pub installation_id: u32,
 }
 
@@ -68,7 +69,7 @@ struct GitHubAppInstallationAuth {
 
 #[derive(Clone, Debug)]
 struct CachedInstallationToken {
-    token: String,
+    token: SecretString,
     refresh_at: DateTime<Utc>,
 }
 
@@ -325,12 +326,12 @@ impl GitHubAppInstallationAuth {
 
     async fn authorized_mcp_client(&self) -> Result<reqwest::Client, PortError> {
         let token = self.installation_token().await?;
-        let auth_header = build_bearer_auth_header(&token)?;
+        let auth_header = build_bearer_auth_header(token.expose())?;
 
         build_github_mcp_http_client(auth_header)
     }
 
-    async fn installation_token(&self) -> Result<String, PortError> {
+    async fn installation_token(&self) -> Result<SecretString, PortError> {
         let now = Utc::now();
         let mut cached_token = self.cached_token.lock().await;
         if let Some(cached_token_value) = cached_token.as_ref()
@@ -400,12 +401,12 @@ impl GitHubAppInstallationAuth {
             })?
             .with_timezone(&Utc);
 
-        Ok(CachedInstallationToken::new(token.token, expires_at))
+        Ok(CachedInstallationToken::new(token.token.into(), expires_at))
     }
 }
 
 impl CachedInstallationToken {
-    fn new(token: String, expires_at: DateTime<Utc>) -> Self {
+    fn new(token: SecretString, expires_at: DateTime<Utc>) -> Self {
         Self {
             token,
             refresh_at: expires_at - Duration::minutes(INSTALLATION_TOKEN_REFRESH_SKEW_MINUTES),
@@ -576,6 +577,7 @@ mod tests {
     use chrono::{Duration, Utc};
     use futures::{StreamExt, stream};
     use octocrab::models::AppId;
+    use reili_core::secret::SecretString;
     use reqwest::header::HeaderValue;
     use rmcp::model::{NumberOrString, ServerJsonRpcMessage, ServerResult};
     use rmcp::transport::streamable_http_client::StreamableHttpPostResponse;
@@ -630,7 +632,7 @@ mod tests {
         let error = GitHubAppInstallationAuth::new(&GitHubMcpConfig {
             url: "https://api.githubcopilot.com/mcp/".to_string(),
             app_id: "123".to_string(),
-            private_key: "invalid".to_string(),
+            private_key: SecretString::from("invalid"),
             installation_id: 456,
         })
         .expect_err("invalid private key should fail");
@@ -641,11 +643,11 @@ mod tests {
     #[test]
     fn cached_installation_token_refreshes_early() {
         let fresh = super::CachedInstallationToken::new(
-            "token".to_string(),
+            SecretString::from("token"),
             Utc::now() + Duration::minutes(10),
         );
         let stale = super::CachedInstallationToken::new(
-            "token".to_string(),
+            SecretString::from("token"),
             Utc::now() + Duration::minutes(4),
         );
 

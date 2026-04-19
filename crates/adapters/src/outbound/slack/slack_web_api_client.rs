@@ -1,4 +1,5 @@
 use reili_core::error::PortError;
+use reili_core::secret::SecretString;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -8,14 +9,14 @@ const DEFAULT_BASE_URL: &str = "https://slack.com/api";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackWebApiClientConfig {
-    pub bot_token: String,
+    pub bot_token: SecretString,
     pub base_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct SlackWebApiClient {
     client: reqwest::Client,
-    bot_token: String,
+    bot_token: SecretString,
     base_url: String,
 }
 
@@ -71,7 +72,7 @@ impl SlackApiEnvelope {
 impl SlackWebApiClient {
     pub fn new(config: SlackWebApiClientConfig) -> Result<Self, PortError> {
         let base_url = normalize_base_url(config.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL))?;
-        if config.bot_token.trim().is_empty() {
+        if config.bot_token.expose().trim().is_empty() {
             return Err(PortError::invalid_input(
                 "Slack bot token must not be empty",
             ));
@@ -97,7 +98,7 @@ impl SlackWebApiClient {
         let request = self
             .client
             .post(&url)
-            .bearer_auth(&self.bot_token)
+            .bearer_auth(self.bot_token.expose())
             .json(payload);
 
         self.execute(&method_path, request).await
@@ -112,7 +113,7 @@ impl SlackWebApiClient {
         let request = self
             .client
             .get(&url)
-            .bearer_auth(&self.bot_token)
+            .bearer_auth(self.bot_token.expose())
             .query(query);
 
         self.execute(&method_path, request).await
@@ -203,6 +204,7 @@ fn normalize_method_path(method: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use reili_core::secret::SecretString;
     use reqwest::StatusCode;
     use serde_json::json;
     use wiremock::matchers::{body_json, header, method, path, query_param};
@@ -348,7 +350,7 @@ mod tests {
 
     fn create_client(base_url: &str) -> SlackWebApiClient {
         SlackWebApiClient::new(SlackWebApiClientConfig {
-            bot_token: "xoxb-test".to_string(),
+            bot_token: SecretString::from("xoxb-test"),
             base_url: Some(base_url.to_string()),
         })
         .expect("create slack api client")

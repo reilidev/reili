@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use reili_core::error::PortError;
+use reili_core::secret::SecretString;
 use reqwest::header::{HeaderMap as ReqwestHeaderMap, HeaderName, HeaderValue};
 use rmcp::model::{
     CallToolRequest, CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo,
@@ -24,8 +25,8 @@ const DATADOG_APPLICATION_KEY_HEADER: &str = "DD_APPLICATION_KEY";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatadogMcpToolConfig {
-    pub api_key: String,
-    pub app_key: String,
+    pub api_key: SecretString,
+    pub app_key: SecretString,
     pub site: String,
 }
 
@@ -272,8 +273,8 @@ async fn diagnose_datadog_mcp_initialize(
         .post(datadog_mcp_url(&config.site))
         .header("accept", "application/json, text/event-stream")
         .header("content-type", "application/json")
-        .header(DATADOG_API_KEY_HEADER, &config.api_key)
-        .header(DATADOG_APPLICATION_KEY_HEADER, &config.app_key)
+        .header(DATADOG_API_KEY_HEADER, config.api_key.expose())
+        .header(DATADOG_APPLICATION_KEY_HEADER, config.app_key.expose())
         .json(&json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -335,12 +336,12 @@ fn build_datadog_mcp_headers(config: &DatadogMcpToolConfig) -> Result<ReqwestHea
     let mut default_headers = ReqwestHeaderMap::new();
     default_headers.insert(
         HeaderName::from_static("dd_api_key"),
-        HeaderValue::from_str(&config.api_key)
+        HeaderValue::from_str(config.api_key.expose())
             .map_err(|error| PortError::new(format!("Invalid Datadog API key header: {error}")))?,
     );
     default_headers.insert(
         HeaderName::from_static("dd_application_key"),
-        HeaderValue::from_str(&config.app_key).map_err(|error| {
+        HeaderValue::from_str(config.app_key.expose()).map_err(|error| {
             PortError::new(format!("Invalid Datadog application key header: {error}"))
         })?,
     );
@@ -415,6 +416,7 @@ fn datadog_site_domain(site: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use futures::StreamExt;
+    use reili_core::secret::SecretString;
     use reqwest::header::HeaderValue;
     use rmcp::model::{NumberOrString, ServerJsonRpcMessage, ServerResult};
     use rmcp::transport::streamable_http_client::StreamableHttpPostResponse;
@@ -456,8 +458,8 @@ mod tests {
     #[test]
     fn builds_datadog_mcp_headers_with_underscore_header_names() {
         let headers = build_datadog_mcp_headers(&DatadogMcpToolConfig {
-            api_key: "api-key".to_string(),
-            app_key: "app-key".to_string(),
+            api_key: SecretString::from("api-key"),
+            app_key: SecretString::from("app-key"),
             site: "datadoghq.com".to_string(),
         })
         .expect("build headers");

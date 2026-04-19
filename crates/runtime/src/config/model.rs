@@ -1,31 +1,6 @@
 use std::fmt;
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct SecretString(String);
-
-impl SecretString {
-    #[must_use]
-    pub fn new(value: String) -> Self {
-        Self(value)
-    }
-
-    #[must_use]
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Debug for SecretString {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[REDACTED]")
-    }
-}
-
-impl fmt::Display for SecretString {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[REDACTED]")
-    }
-}
+use reili_core::secret::SecretString;
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum SlackConnectionMode {

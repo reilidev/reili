@@ -7,6 +7,7 @@ use axum::http::{HeaderMap, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::Response;
 use reili_core::error::PortError;
+use reili_core::secret::SecretString;
 use ring::hmac;
 
 const SLACK_SIGNATURE_HEADER: &str = "x-slack-signature";
@@ -16,18 +17,18 @@ const MAX_REQUEST_BODY_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackSignatureVerifierConfig {
-    pub signing_secret: String,
+    pub signing_secret: SecretString,
     pub allowed_timestamp_age_seconds: i64,
 }
 
 #[derive(Debug, Clone)]
 pub struct SlackSignatureVerifier {
-    signing_secret: String,
+    signing_secret: SecretString,
     allowed_timestamp_age_seconds: i64,
 }
 
 impl SlackSignatureVerifier {
-    pub fn new(signing_secret: String) -> Result<Self, PortError> {
+    pub fn new(signing_secret: SecretString) -> Result<Self, PortError> {
         Self::new_with_config(SlackSignatureVerifierConfig {
             signing_secret,
             allowed_timestamp_age_seconds: DEFAULT_ALLOWED_TIMESTAMP_AGE_SECONDS,
@@ -35,7 +36,7 @@ impl SlackSignatureVerifier {
     }
 
     pub fn new_with_config(config: SlackSignatureVerifierConfig) -> Result<Self, PortError> {
-        if config.signing_secret.trim().is_empty() {
+        if config.signing_secret.expose().trim().is_empty() {
             return Err(PortError::new("Slack signing secret must not be empty"));
         }
         if config.allowed_timestamp_age_seconds <= 0 {
@@ -191,11 +192,12 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
     use super::SlackSignatureVerifier;
+    use reili_core::secret::SecretString;
 
     #[test]
     fn verifies_valid_signature() {
-        let verifier =
-            SlackSignatureVerifier::new("slack-signing-secret".to_string()).expect("verifier");
+        let verifier = SlackSignatureVerifier::new(SecretString::from("slack-signing-secret"))
+            .expect("verifier");
         let body = br#"{"type":"event_callback"}"#;
         let timestamp = "1710000000";
         let signature = verifier.compute_signature(timestamp, body);
@@ -208,8 +210,8 @@ mod tests {
 
     #[test]
     fn rejects_missing_required_headers() {
-        let verifier =
-            SlackSignatureVerifier::new("slack-signing-secret".to_string()).expect("verifier");
+        let verifier = SlackSignatureVerifier::new(SecretString::from("slack-signing-secret"))
+            .expect("verifier");
         let error = verifier
             .verify_with_timestamp(&HeaderMap::new(), br#"{}"#, 1710000001)
             .expect_err("missing header should fail");
@@ -219,8 +221,8 @@ mod tests {
 
     #[test]
     fn rejects_expired_timestamp() {
-        let verifier =
-            SlackSignatureVerifier::new("slack-signing-secret".to_string()).expect("verifier");
+        let verifier = SlackSignatureVerifier::new(SecretString::from("slack-signing-secret"))
+            .expect("verifier");
         let body = br#"{}"#;
         let timestamp = "1710000000";
         let signature = verifier.compute_signature(timestamp, body);
@@ -239,8 +241,8 @@ mod tests {
 
     #[test]
     fn rejects_invalid_signature() {
-        let verifier =
-            SlackSignatureVerifier::new("slack-signing-secret".to_string()).expect("verifier");
+        let verifier = SlackSignatureVerifier::new(SecretString::from("slack-signing-secret"))
+            .expect("verifier");
         let headers = headers("1710000000", "v0=deadbeef");
         let error = verifier
             .verify_with_timestamp(&headers, br#"{}"#, 1710000001)

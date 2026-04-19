@@ -9,6 +9,7 @@ use reili_adapters::inbound::slack::{
 };
 use reili_application::task::{TaskLogger, string_log_meta};
 use reili_core::messaging::slack::{SlackInteractionHandlerPort, SlackMessageHandlerPort};
+use reili_core::secret::SecretString;
 use serde::Deserialize;
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message;
@@ -69,7 +70,7 @@ pub enum SocketModeError {
 }
 
 pub struct SocketModeConfig {
-    pub app_token: String,
+    pub app_token: SecretString,
     pub bot_user_id: String,
     pub slack_message_handler: Arc<dyn SlackMessageHandlerPort>,
     pub slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort>,
@@ -316,7 +317,7 @@ impl SocketModeClient {
         let client = reqwest::Client::new();
         let response = client
             .post("https://slack.com/api/apps.connections.open")
-            .bearer_auth(&self.config.app_token)
+            .bearer_auth(self.config.app_token.expose())
             .header("Content-Type", "application/x-www-form-urlencoded")
             .send()
             .await?;

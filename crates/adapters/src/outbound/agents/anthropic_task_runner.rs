@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
+use reili_core::secret::SecretString;
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig::{client::ProviderClient, providers::anthropic};
 
@@ -11,7 +12,7 @@ use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
 use crate::outbound::github::GitHubMcpConfig;
 
 pub struct AnthropicTaskRunnerInput {
-    pub api_key: String,
+    pub api_key: SecretString,
     pub model: String,
     pub datadog_mcp: DatadogMcpToolConfig,
     pub github_mcp: GitHubMcpConfig,
@@ -21,7 +22,7 @@ pub struct AnthropicTaskRunnerInput {
 }
 
 pub struct AnthropicTaskRunner {
-    api_key: String,
+    api_key: SecretString,
     provider_settings: LlmProviderSettings,
     datadog_mcp: DatadogMcpToolConfig,
     github_mcp: GitHubMcpConfig,
@@ -50,7 +51,7 @@ impl AnthropicTaskRunner {
 impl TaskRunnerPort for AnthropicTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
         run_llm_task(RunLlmTaskInput {
-            client: anthropic::Client::from_val(self.api_key.clone()),
+            client: anthropic::Client::from_val(self.api_key.expose().to_string()),
             settings: self.provider_settings.clone(),
             datadog_mcp: self.datadog_mcp.clone(),
             github_mcp: self.github_mcp.clone(),

@@ -8,8 +8,9 @@ use super::file::{
 };
 use super::model::{
     AnthropicLlmConfig, AppConfig, BedrockLlmConfig, GitHubConfig, LlmConfig, LlmProviderConfig,
-    OpenAiLlmConfig, SecretString, SlackConnectionMode, VertexAiLlmConfig,
+    OpenAiLlmConfig, SlackConnectionMode, VertexAiLlmConfig,
 };
+use crate::config::SecretString;
 
 const DEFAULT_WORKER_CONCURRENCY: u32 = 2;
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;

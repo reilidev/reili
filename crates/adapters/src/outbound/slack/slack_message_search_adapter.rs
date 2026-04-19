@@ -102,7 +102,7 @@ impl SlackMessageSearchPort for SlackMessageSearchAdapter {
         validate_input(&input)?;
 
         let query = input.query.trim().to_string();
-        let action_token = input.action_token.trim().to_string();
+        let action_token = input.action_token.expose().trim().to_string();
         let response = self
             .client
             .post(
@@ -149,7 +149,7 @@ fn validate_input(input: &SlackMessageSearchInput) -> Result<(), PortError> {
         ));
     }
 
-    if input.action_token.trim().is_empty() {
+    if input.action_token.expose().trim().is_empty() {
         return Err(PortError::invalid_input(
             "Slack search action token must not be empty",
         ));
@@ -224,6 +224,7 @@ mod tests {
         SlackMessageSearchInput, SlackMessageSearchPort, SlackMessageSearchSort,
         SlackMessageSearchSortDirection,
     };
+    use reili_core::secret::SecretString;
     use serde_json::json;
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -293,7 +294,7 @@ mod tests {
         let result = adapter
             .search_messages(SlackMessageSearchInput {
                 query: " error budget burn ".to_string(),
-                action_token: " action-token ".to_string(),
+                action_token: SecretString::from(" action-token "),
                 limit: 5,
                 include_bots: true,
                 include_context_messages: true,
@@ -324,7 +325,7 @@ mod tests {
         let error = adapter
             .search_messages(SlackMessageSearchInput {
                 query: "search".to_string(),
-                action_token: "action-token".to_string(),
+                action_token: SecretString::from("action-token"),
                 limit: 6,
                 include_bots: false,
                 include_context_messages: true,
@@ -345,7 +346,7 @@ mod tests {
 
     fn create_client(base_url: &str) -> SlackWebApiClient {
         SlackWebApiClient::new(SlackWebApiClientConfig {
-            bot_token: "xoxb-test".to_string(),
+            bot_token: SecretString::from("xoxb-test"),
             base_url: Some(base_url.to_string()),
         })
         .expect("create slack client")

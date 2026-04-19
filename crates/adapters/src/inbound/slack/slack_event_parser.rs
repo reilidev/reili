@@ -3,6 +3,7 @@ use reili_core::messaging::slack::{
     SlackLegacyAttachment, SlackMessage, SlackMessageFile, SlackTriggerType,
     render_slack_legacy_attachments_text, render_slack_message_files_text,
 };
+use reili_core::secret::SecretString;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,7 +150,7 @@ struct SlackCallbackEvent {
 
 #[derive(Debug, Deserialize)]
 struct SlackAssistantThread {
-    action_token: Option<String>,
+    action_token: Option<SecretString>,
 }
 
 fn resolve_message_text(
@@ -166,6 +167,7 @@ fn resolve_message_text(
 mod tests {
     use reili_core::messaging::slack::SlackMessageFile;
     use reili_core::messaging::slack::{SlackLegacyAttachment, SlackMessage, SlackTriggerType};
+    use reili_core::secret::SecretString;
     use serde_json::json;
 
     use super::{ParsedSlackEvent, parse_slack_event};
@@ -259,7 +261,7 @@ mod tests {
             ParsedSlackEvent::Message(SlackMessage {
                 slack_event_id: "evt-2".to_string(),
                 team_id: None,
-                action_token: Some("action-token".to_string()),
+                action_token: Some(SecretString::from("action-token")),
                 trigger: SlackTriggerType::AppMention,
                 channel: "C001".to_string(),
                 user: "U002".to_string(),
@@ -300,7 +302,7 @@ mod tests {
             ParsedSlackEvent::Message(SlackMessage {
                 slack_event_id: "evt-3".to_string(),
                 team_id: None,
-                action_token: Some("assistant-thread-token".to_string()),
+                action_token: Some(SecretString::from("assistant-thread-token")),
                 trigger: SlackTriggerType::AppMention,
                 channel: "C001".to_string(),
                 user: "U003".to_string(),

@@ -41,6 +41,7 @@ mod tests {
     use std::sync::Arc;
 
     use reili_core::messaging::slack::{AddSlackReactionInput, SlackReactionPort};
+    use reili_core::secret::SecretString;
     use serde_json::json;
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -79,7 +80,7 @@ mod tests {
 
     fn create_client(base_url: &str) -> SlackWebApiClient {
         SlackWebApiClient::new(SlackWebApiClientConfig {
-            bot_token: "xoxb-test".to_string(),
+            bot_token: SecretString::from("xoxb-test"),
             base_url: Some(base_url.to_string()),
         })
         .expect("create slack api client")

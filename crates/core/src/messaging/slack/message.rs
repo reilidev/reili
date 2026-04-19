@@ -4,6 +4,7 @@ use super::{
     SlackLegacyAttachment, SlackMessageFile, render_slack_legacy_attachments_text,
     render_slack_message_files_text,
 };
+use crate::secret::SecretString;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,7 +19,7 @@ pub struct SlackMessage {
     pub slack_event_id: String,
     pub team_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub action_token: Option<String>,
+    pub action_token: Option<SecretString>,
     pub trigger: SlackTriggerType,
     pub channel: String,
     pub user: String,
@@ -58,13 +59,14 @@ impl SlackMessage {
 mod tests {
     use super::{SlackMessage, SlackTriggerType};
     use crate::messaging::slack::SlackMessageFile;
+    use crate::secret::SecretString;
 
     #[test]
     fn serializes_and_deserializes_slack_message() {
         let value = SlackMessage {
             slack_event_id: "evt-1".to_string(),
             team_id: Some("T001".to_string()),
-            action_token: Some("action-token".to_string()),
+            action_token: Some(SecretString::from("action-token")),
             trigger: SlackTriggerType::Message,
             channel: "C001".to_string(),
             user: "U001".to_string(),
