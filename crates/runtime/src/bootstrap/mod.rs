@@ -72,8 +72,8 @@ struct ProviderPorts {
 
 struct CreateProviderPortsInput<'a> {
     llm_provider: &'a LlmProviderConfig,
-    datadog_api_key: String,
-    datadog_app_key: String,
+    datadog_api_key: SecretString,
+    datadog_app_key: SecretString,
     datadog_site: String,
     github_mcp: GitHubMcpConfig,
     github_scope_org: String,
@@ -84,7 +84,7 @@ struct CreateProviderPortsInput<'a> {
 pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, RuntimeBootstrapError> {
     let logger = create_task_logger();
     let slack_web_api_client = Arc::new(SlackWebApiClient::new(SlackWebApiClientConfig {
-        bot_token: config.slack_bot_token.expose().to_string(),
+        bot_token: config.slack_bot_token.clone(),
         base_url: None,
     })?);
     let bot_user_id = resolve_slack_bot_user_id(&slack_web_api_client).await?;
@@ -111,13 +111,13 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let in_flight_job_registry = reili_application::task::services::InFlightJobRegistry::new();
     let provider_ports = create_provider_ports(CreateProviderPortsInput {
         llm_provider: &config.llm.provider,
-        datadog_api_key: config.datadog_api_key.expose().to_string(),
-        datadog_app_key: config.datadog_app_key.expose().to_string(),
+        datadog_api_key: config.datadog_api_key.clone(),
+        datadog_app_key: config.datadog_app_key.clone(),
         datadog_site: config.datadog_site.clone(),
         github_mcp: GitHubMcpConfig {
             url: config.github.url.clone(),
             app_id: config.github.app_id.clone(),
-            private_key: config.github.private_key.expose().to_string(),
+            private_key: config.github.private_key.clone(),
             installation_id: config.github.installation_id,
         },
         github_scope_org: config.github.scope_org.clone(),
@@ -189,7 +189,7 @@ fn build_slack_signature_verifier(
     match connection_mode {
         SlackConnectionMode::Http => slack_signing_secret
             .filter(|value| !value.trim().is_empty())
-            .map(|value| SlackSignatureVerifier::new(value.to_string()))
+            .map(|value| SlackSignatureVerifier::new(SecretString::from(value)))
             .transpose()
             .map(|verifier| verifier.map(Arc::new)),
         SlackConnectionMode::SocketMode { .. } => Ok(None),
@@ -202,15 +202,15 @@ async fn create_provider_ports(
     match input.llm_provider {
         LlmProviderConfig::OpenAi(config) => Ok(ProviderPorts {
             web_search_port: Arc::new(OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
-                api_key: config.api_key.expose().to_string(),
+                api_key: config.api_key.clone(),
             })),
             task_runner: Arc::new(OpenAiTaskRunner::new(OpenAiTaskRunnerInput {
-                api_key: config.api_key.expose().to_string(),
+                api_key: config.api_key.clone(),
                 model: config.model.clone(),
                 reasoning_effort: config.reasoning_effort.clone(),
                 datadog_mcp: DatadogMcpToolConfig {
-                    api_key: input.datadog_api_key,
-                    app_key: input.datadog_app_key,
+                    api_key: input.datadog_api_key.clone(),
+                    app_key: input.datadog_app_key.clone(),
                     site: input.datadog_site,
                 },
                 github_mcp: input.github_mcp,
@@ -222,16 +222,16 @@ async fn create_provider_ports(
         LlmProviderConfig::Anthropic(config) => Ok(ProviderPorts {
             web_search_port: Arc::new(AnthropicWebSearchAdapter::new(
                 AnthropicWebSearchAdapterConfig {
-                    api_key: config.api_key.expose().to_string(),
+                    api_key: config.api_key.clone(),
                     model: config.model.clone(),
                 },
             )),
             task_runner: Arc::new(AnthropicTaskRunner::new(AnthropicTaskRunnerInput {
-                api_key: config.api_key.expose().to_string(),
+                api_key: config.api_key.clone(),
                 model: config.model.clone(),
                 datadog_mcp: DatadogMcpToolConfig {
-                    api_key: input.datadog_api_key,
-                    app_key: input.datadog_app_key,
+                    api_key: input.datadog_api_key.clone(),
+                    app_key: input.datadog_app_key.clone(),
                     site: input.datadog_site,
                 },
                 github_mcp: input.github_mcp,
@@ -251,8 +251,8 @@ async fn create_provider_ports(
                 aws_profile: config.aws_profile.clone(),
                 aws_region: config.aws_region.clone(),
                 datadog_mcp: DatadogMcpToolConfig {
-                    api_key: input.datadog_api_key,
-                    app_key: input.datadog_app_key,
+                    api_key: input.datadog_api_key.clone(),
+                    app_key: input.datadog_app_key.clone(),
                     site: input.datadog_site,
                 },
                 github_mcp: input.github_mcp,

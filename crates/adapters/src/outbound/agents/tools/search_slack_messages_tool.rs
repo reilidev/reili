@@ -5,6 +5,7 @@ use reili_core::messaging::slack::{
     SlackMessageSearchInput, SlackMessageSearchPort, SlackMessageSearchSort,
     SlackMessageSearchSortDirection,
 };
+use reili_core::secret::SecretString;
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
@@ -18,13 +19,13 @@ use super::tool_json::to_json_string;
 #[derive(Clone)]
 pub struct SearchSlackMessagesTool {
     slack_message_search_port: Arc<dyn SlackMessageSearchPort>,
-    action_token: Option<String>,
+    action_token: Option<SecretString>,
 }
 
 impl SearchSlackMessagesTool {
     pub fn new(
         slack_message_search_port: Arc<dyn SlackMessageSearchPort>,
-        action_token: Option<String>,
+        action_token: Option<SecretString>,
     ) -> Self {
         Self {
             slack_message_search_port,
@@ -138,7 +139,8 @@ impl Tool for SearchSlackMessagesTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let Some(action_token) = self
             .action_token
-            .as_deref()
+            .as_ref()
+            .map(SecretString::expose)
             .map(str::trim)
             .filter(|value| !value.is_empty())
         else {
@@ -151,7 +153,7 @@ impl Tool for SearchSlackMessagesTool {
             .slack_message_search_port
             .search_messages(SlackMessageSearchInput {
                 query: args.query,
-                action_token: action_token.to_string(),
+                action_token: SecretString::from(action_token),
                 limit: args.limit,
                 include_bots: args.include_bots,
                 include_context_messages: args.include_context_messages,
@@ -179,6 +181,7 @@ mod tests {
         SlackMessageSearchResult, SlackMessageSearchResultItem, SlackMessageSearchSort,
         SlackMessageSearchSortDirection,
     };
+    use reili_core::secret::SecretString;
     use rig::tool::Tool;
 
     use super::{SearchSlackMessagesArgs, SearchSlackMessagesTool};
@@ -201,7 +204,7 @@ mod tests {
 
     fn build_tool(
         calls: Arc<Mutex<Vec<SlackMessageSearchInput>>>,
-        action_token: Option<String>,
+        action_token: Option<SecretString>,
         result: SlackMessageSearchResult,
     ) -> SearchSlackMessagesTool {
         SearchSlackMessagesTool::new(
@@ -215,7 +218,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let tool = build_tool(
             Arc::clone(&calls),
-            Some("action-token".to_string()),
+            Some(SecretString::from("action-token")),
             SlackMessageSearchResult {
                 messages: vec![SlackMessageSearchResultItem {
                     author_name: Some("Jane Doe".to_string()),
@@ -258,7 +261,7 @@ mod tests {
         let captured = calls.lock().expect("lock calls");
         assert_eq!(captured.len(), 1);
         assert_eq!(captured[0].query, "rollout issue");
-        assert_eq!(captured[0].action_token, "action-token");
+        assert_eq!(captured[0].action_token, SecretString::from("action-token"));
         assert_eq!(captured[0].limit, 5);
     }
 
@@ -297,7 +300,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let tool = build_tool(
             calls,
-            Some("action-token".to_string()),
+            Some(SecretString::from("action-token")),
             SlackMessageSearchResult {
                 messages: Vec::new(),
                 next_cursor: None,

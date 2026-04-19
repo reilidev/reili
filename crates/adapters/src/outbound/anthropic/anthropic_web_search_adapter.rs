@@ -4,6 +4,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reili_core::error::PortError;
 use reili_core::knowledge::{WebCitation, WebSearchInput, WebSearchPort, WebSearchResult};
+use reili_core::secret::SecretString;
 use reqwest::Client;
 use serde_json::{Value, json};
 
@@ -17,13 +18,13 @@ const MAX_QUERY_CHARS: usize = 500;
 const MAX_SUMMARY_CHARS: usize = 4_000;
 
 pub struct AnthropicWebSearchAdapterConfig {
-    pub api_key: String,
+    pub api_key: SecretString,
     pub model: String,
 }
 
 pub struct AnthropicWebSearchAdapter {
     client: Client,
-    api_key: String,
+    api_key: SecretString,
     model: String,
     base_url: String,
 }
@@ -101,7 +102,7 @@ impl WebSearchPort for AnthropicWebSearchAdapter {
         let response = self
             .client
             .post(&url)
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", self.api_key.expose())
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("content-type", "application/json")
             .json(&body)
@@ -317,6 +318,7 @@ fn push_citation(
 #[cfg(test)]
 mod tests {
     use reili_core::knowledge::{WebSearchInput, WebSearchPort, WebSearchUserLocation};
+    use reili_core::secret::SecretString;
     use serde_json::{Value, json};
 
     use super::{
@@ -327,7 +329,7 @@ mod tests {
     #[test]
     fn builds_anthropic_web_search_request_body() {
         let adapter = AnthropicWebSearchAdapter::new(AnthropicWebSearchAdapterConfig {
-            api_key: "test-key".to_string(),
+            api_key: SecretString::from("test-key"),
             model: "claude-sonnet-4-20250514".to_string(),
         });
 
@@ -439,7 +441,7 @@ mod tests {
             .await;
 
         let adapter = AnthropicWebSearchAdapter::new(AnthropicWebSearchAdapterConfig {
-            api_key: "test-key".to_string(),
+            api_key: SecretString::from("test-key"),
             model: "claude-sonnet-4-20250514".to_string(),
         })
         .with_base_url(server.uri());

@@ -12,7 +12,7 @@ impl EnvironmentReader for ProcessEnvironment {
 }
 
 use super::ConfigError;
-use super::model::SecretString;
+use crate::config::SecretString;
 
 pub(crate) fn read_required_secret(
     env: &dyn EnvironmentReader,

@@ -87,6 +87,8 @@ async fn create_bedrock_client(aws_profile: Option<&str>, aws_region: Option<&st
 
 #[cfg(test)]
 mod tests {
+    use reili_core::secret::SecretString;
+
     use super::BedrockTaskRunnerInput;
     use crate::outbound::agents::DatadogMcpToolConfig;
     use crate::outbound::github::GitHubMcpConfig;
@@ -98,14 +100,14 @@ mod tests {
             aws_profile: Some("prod-sso".to_string()),
             aws_region: Some("ap-northeast-1".to_string()),
             datadog_mcp: DatadogMcpToolConfig {
-                api_key: "api".to_string(),
-                app_key: "app".to_string(),
+                api_key: SecretString::from("api"),
+                app_key: SecretString::from("app"),
                 site: "datadoghq.com".to_string(),
             },
             github_mcp: GitHubMcpConfig {
                 url: "https://api.githubcopilot.com/mcp/".to_string(),
                 app_id: "12345".to_string(),
-                private_key: "private-key".to_string(),
+                private_key: SecretString::from("private-key"),
                 installation_id: 99,
             },
             github_scope_org: "example-org".to_string(),

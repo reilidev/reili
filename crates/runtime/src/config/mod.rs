@@ -5,12 +5,13 @@ mod model;
 
 use std::path::PathBuf;
 
+pub use reili_core::secret::SecretString;
 use thiserror::Error;
 
 pub use loader::{ConfigLoadOptions, load_app_config};
 pub use model::{
     AppConfig, BedrockLlmConfig, GitHubConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig,
-    SecretString, SlackConnectionMode, VertexAiLlmConfig,
+    SlackConnectionMode, VertexAiLlmConfig,
 };
 
 #[derive(Debug, Error)]

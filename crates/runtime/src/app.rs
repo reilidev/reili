@@ -20,7 +20,7 @@ use serde_json::json;
 
 use crate::bootstrap::{RuntimeBootstrapError, build_runtime_deps};
 use crate::config::{
-    AppConfig, ConfigError, ConfigLoadOptions, SlackConnectionMode, load_app_config,
+    AppConfig, ConfigError, ConfigLoadOptions, SecretString, SlackConnectionMode, load_app_config,
 };
 use crate::socket_mode::{SocketModeClient, SocketModeConfig, SocketModeError};
 
@@ -71,7 +71,7 @@ pub async fn run_app_with_options(options: AppStartupOptions) -> Result<(), AppR
     let serve_result = match &config.slack_connection_mode {
         SlackConnectionMode::Http => run_http_server(&config, &deps).await,
         SlackConnectionMode::SocketMode { app_token } => {
-            run_socket_mode(app_token.expose(), &deps).await
+            run_socket_mode(app_token.clone(), &deps).await
         }
     };
 
@@ -120,13 +120,13 @@ async fn run_http_server(
 }
 
 async fn run_socket_mode(
-    app_token: &str,
+    app_token: SecretString,
     deps: &crate::bootstrap::RuntimeDeps,
 ) -> Result<(), AppRunError> {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     let client = SocketModeClient::new(SocketModeConfig {
-        app_token: app_token.to_string(),
+        app_token,
         bot_user_id: deps.bot_user_id.clone(),
         slack_message_handler: Arc::clone(&deps.slack_message_handler),
         slack_interaction_handler: Arc::clone(&deps.slack_interaction_handler),

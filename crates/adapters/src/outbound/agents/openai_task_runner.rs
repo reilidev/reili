@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
+use reili_core::secret::SecretString;
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig::{client::ProviderClient, providers::openai};
 
@@ -11,7 +12,7 @@ use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
 use crate::outbound::github::GitHubMcpConfig;
 
 pub struct OpenAiTaskRunnerInput {
-    pub api_key: String,
+    pub api_key: SecretString,
     pub model: String,
     pub reasoning_effort: String,
     pub datadog_mcp: DatadogMcpToolConfig,
@@ -22,7 +23,7 @@ pub struct OpenAiTaskRunnerInput {
 }
 
 pub struct OpenAiTaskRunner {
-    api_key: String,
+    api_key: SecretString,
     provider_settings: LlmProviderSettings,
     datadog_mcp: DatadogMcpToolConfig,
     github_mcp: GitHubMcpConfig,
@@ -52,7 +53,7 @@ impl OpenAiTaskRunner {
 impl TaskRunnerPort for OpenAiTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
         run_llm_task(RunLlmTaskInput {
-            client: openai::Client::from_val(self.api_key.clone().into()),
+            client: openai::Client::from_val(self.api_key.expose().to_string().into()),
             settings: self.provider_settings.clone(),
             datadog_mcp: self.datadog_mcp.clone(),
             github_mcp: self.github_mcp.clone(),

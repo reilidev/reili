@@ -137,6 +137,7 @@ mod tests {
         FetchSlackThreadHistoryInput, SlackLegacyAttachment, SlackLegacyAttachmentField,
         SlackMessageFile, SlackThreadHistoryPort, SlackThreadMessage,
     };
+    use reili_core::secret::SecretString;
     use serde_json::json;
     use wiremock::matchers::{method, path, query_param, query_param_is_missing};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -404,7 +405,7 @@ mod tests {
 
     fn create_client(base_url: &str) -> SlackWebApiClient {
         SlackWebApiClient::new(SlackWebApiClientConfig {
-            bot_token: "xoxb-test".to_string(),
+            bot_token: SecretString::from("xoxb-test"),
             base_url: Some(base_url.to_string()),
         })
         .expect("create slack api client")

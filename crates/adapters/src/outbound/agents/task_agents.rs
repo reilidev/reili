@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use reili_core::logger::Logger;
+use reili_core::secret::SecretString;
 use reili_core::task::{
     TASK_RUNNER_PROGRESS_OWNER_ID, TaskCancellation, TaskProgressEventPort, TaskRequest,
     TaskResources, TaskRuntime,
@@ -44,7 +45,7 @@ where
     pub language: String,
     pub additional_system_prompt: Option<String>,
     pub usage_collector: LlmUsageCollector,
-    pub slack_action_token: Option<String>,
+    pub slack_action_token: Option<SecretString>,
 }
 
 #[must_use]
