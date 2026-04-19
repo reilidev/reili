@@ -2644,6 +2644,7 @@ name = "reili_core"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "mockall",
  "serde",
  "serde_json",
