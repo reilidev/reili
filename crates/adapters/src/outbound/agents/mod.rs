@@ -9,7 +9,7 @@ mod llm_task_runner;
 mod llm_usage_collector;
 mod openai_task_runner;
 mod progress_reporting_sub_agent_tool;
-mod task_agents;
+mod task_agent;
 pub mod tools;
 mod vertex_ai_task_runner;
 

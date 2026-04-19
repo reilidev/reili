@@ -117,3 +117,49 @@ fn anthropic_max_tokens(model: &str) -> Option<u64> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        CreateAnthropicProviderSettingsInput, CreateOpenAiProviderSettingsInput,
+        create_anthropic_provider_settings, create_openai_provider_settings,
+    };
+
+    #[test]
+    fn provider_settings_enable_parallel_tool_calls() {
+        let settings = create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
+            model: "gpt-5.3-codex".to_string(),
+            reasoning_effort: "low".to_string(),
+        });
+        let params = settings.additional_params;
+
+        assert_eq!(
+            params.get("parallel_tool_calls"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(
+            params.get("text"),
+            Some(&json!({ "format": { "type": "text" } }))
+        );
+    }
+
+    #[test]
+    fn anthropic_provider_settings_assign_max_tokens_for_supported_models() {
+        let cases = [
+            ("claude-opus-4-6", Some(32_000)),
+            ("claude-sonnet-4-6", Some(64_000)),
+            ("claude-haiku-4-5", Some(4_096)),
+        ];
+
+        for (model, expected_max_tokens) in cases {
+            let settings =
+                create_anthropic_provider_settings(CreateAnthropicProviderSettingsInput {
+                    model: model.to_string(),
+                });
+
+            assert_eq!(settings.max_tokens, expected_max_tokens);
+        }
+    }
+}

@@ -1,3 +1,4 @@
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -27,6 +28,49 @@ pub struct SlackThreadMessage {
 }
 
 impl SlackThreadMessage {
+    pub fn posted_by(&self) -> &str {
+        self.user
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("system")
+    }
+
+    pub fn iso_timestamp(&self) -> String {
+        let mut parts = self.ts.split('.');
+        let seconds_part = parts.next().unwrap_or_default();
+        let milliseconds_part = parts.next().unwrap_or("0");
+
+        let seconds = match seconds_part.parse::<i64>() {
+            Ok(value) => value,
+            Err(_) => return "unknown".to_string(),
+        };
+
+        let mut normalized_milliseconds = milliseconds_part.to_string();
+        while normalized_milliseconds.len() < 3 {
+            normalized_milliseconds.push('0');
+        }
+        let milliseconds_slice = normalized_milliseconds.chars().take(3).collect::<String>();
+
+        let milliseconds = match milliseconds_slice.parse::<i64>() {
+            Ok(value) => value,
+            Err(_) => return "unknown".to_string(),
+        };
+
+        let unix_millis = match seconds
+            .checked_mul(1_000)
+            .and_then(|value| value.checked_add(milliseconds))
+        {
+            Some(value) => value,
+            None => return "unknown".to_string(),
+        };
+
+        match DateTime::<Utc>::from_timestamp_millis(unix_millis) {
+            Some(value) => value.to_rfc3339_opts(SecondsFormat::Millis, true),
+            None => "unknown".to_string(),
+        }
+    }
+
     pub fn rendered_text(&self) -> String {
         let mut sections = Vec::new();
         if !self.text.trim().is_empty() {
@@ -109,5 +153,61 @@ mod tests {
             message.rendered_text(),
             "attached_file: thread.txt\nplain_text:\nattachment context"
         );
+    }
+
+    #[test]
+    fn returns_posted_by_user_when_user_is_present() {
+        let message = SlackThreadMessage {
+            ts: "1710000000.000001".to_string(),
+            user: Some(" U123 ".to_string()),
+            text: "thread".to_string(),
+            legacy_attachments: Vec::new(),
+            files: Vec::new(),
+            metadata: None,
+        };
+
+        assert_eq!(message.posted_by(), "U123");
+    }
+
+    #[test]
+    fn returns_system_as_posted_by_when_user_is_missing() {
+        let message = SlackThreadMessage {
+            ts: "1710000000.000001".to_string(),
+            user: None,
+            text: "thread".to_string(),
+            legacy_attachments: Vec::new(),
+            files: Vec::new(),
+            metadata: None,
+        };
+
+        assert_eq!(message.posted_by(), "system");
+    }
+
+    #[test]
+    fn formats_slack_timestamp_as_iso_timestamp() {
+        let message = SlackThreadMessage {
+            ts: "1710000000.000001".to_string(),
+            user: Some("U001".to_string()),
+            text: "thread".to_string(),
+            legacy_attachments: Vec::new(),
+            files: Vec::new(),
+            metadata: None,
+        };
+
+        assert_eq!(message.iso_timestamp(), "2024-03-09T16:00:00.000Z");
+    }
+
+    #[test]
+    fn returns_unknown_iso_timestamp_when_slack_timestamp_is_invalid() {
+        let message = SlackThreadMessage {
+            ts: "invalid".to_string(),
+            user: Some("U001".to_string()),
+            text: "thread".to_string(),
+            legacy_attachments: Vec::new(),
+            files: Vec::new(),
+            metadata: None,
+        };
+
+        assert_eq!(message.iso_timestamp(), "unknown");
     }
 }

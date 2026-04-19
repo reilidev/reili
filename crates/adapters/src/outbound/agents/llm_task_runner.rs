@@ -15,7 +15,11 @@ use super::datadog_mcp_tools::{DatadogMcpToolConfig, connect_datadog_mcp_toolset
 use super::github_mcp_tools::connect_github_mcp_toolset;
 use super::llm_provider_settings::LlmProviderSettings;
 use super::llm_usage_collector::LlmUsageCollector;
-use super::task_agents::{BuildTaskAgentInput, build_task_agent, build_task_prompt};
+use super::task_agent::{
+    AgentInstructionsConfig, BuildTaskAgentInput, CreateTaskAgentFactoryInput, TaskAgentConfig,
+    TaskAgentExecutionContext, TaskAgentFactory, TaskAgentRunContext, TaskAgentToolsets,
+    build_task_prompt,
+};
 use crate::outbound::github::GitHubMcpConfig;
 
 pub struct RunLlmTaskInput<C>
@@ -80,22 +84,34 @@ where
                 })
             })?;
     let task_prompt = build_task_prompt(&input.run.request);
-    let task_agent = build_task_agent(BuildTaskAgentInput {
+    let task_agent_factory = TaskAgentFactory::new(CreateTaskAgentFactoryInput {
         client: input.client,
-        settings: input.settings.clone(),
-        resources: Arc::new(input.run.context.resources),
-        datadog_site: input.datadog_mcp.site.clone(),
-        datadog_mcp_toolset,
-        github_mcp_toolset,
-        github_scope_org: input.github_scope_org,
-        logger: Arc::clone(&input.run.logger),
-        runtime,
-        cancellation: input.run.context.cancellation.clone(),
-        on_progress_event: Arc::clone(&input.run.on_progress_event),
-        language: input.language,
-        additional_system_prompt: input.additional_system_prompt,
-        usage_collector: usage_collector.clone(),
-        slack_action_token: input.run.request.trigger_message.action_token.clone(),
+        config: TaskAgentConfig {
+            settings: input.settings.clone(),
+            instructions: AgentInstructionsConfig {
+                datadog_site: input.datadog_mcp.site.clone(),
+                github_scope_org: input.github_scope_org,
+                language: input.language,
+                additional_system_prompt: input.additional_system_prompt,
+            },
+        },
+    });
+    let task_agent = task_agent_factory.build(BuildTaskAgentInput {
+        run_context: TaskAgentRunContext {
+            resources: Arc::new(input.run.context.resources),
+            execution: TaskAgentExecutionContext {
+                logger: Arc::clone(&input.run.logger),
+                runtime,
+                cancellation: input.run.context.cancellation.clone(),
+                on_progress_event: Arc::clone(&input.run.on_progress_event),
+                usage_collector: usage_collector.clone(),
+            },
+            slack_action_token: input.run.request.trigger_message.action_token.clone(),
+        },
+        toolsets: TaskAgentToolsets {
+            datadog: datadog_mcp_toolset,
+            github: github_mcp_toolset,
+        },
     });
 
     let prompt_response_result = task_agent
