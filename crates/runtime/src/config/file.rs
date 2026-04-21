@@ -71,6 +71,7 @@ pub(crate) struct SlackFileConfig {
     pub socket_mode: bool,
     #[serde(default)]
     pub auth: SlackAuthFileConfig,
+    pub authorization: Option<SlackAuthorizationFileConfig>,
     pub socket: Option<SlackSocketFileConfig>,
     pub http: Option<SlackHttpFileConfig>,
 }
@@ -97,6 +98,27 @@ pub(crate) struct SlackSocketFileConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct SlackHttpFileConfig {
     pub signing_secret_env: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub(crate) struct SlackAuthorizationFileConfig {
+    pub channels: Option<SlackAuthorizationChannelsFileConfig>,
+    pub actors: Option<SlackAuthorizationActorsFileConfig>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub(crate) struct SlackAuthorizationChannelsFileConfig {
+    pub names: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub(crate) struct SlackAuthorizationActorsFileConfig {
+    pub user_ids: Option<Vec<String>>,
+    pub user_group_ids: Option<Vec<String>>,
+    pub allow_bot: Option<bool>,
 }
 
 impl Default for SlackSocketFileConfig {

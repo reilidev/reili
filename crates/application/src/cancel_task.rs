@@ -267,6 +267,7 @@ mod tests {
                     trigger: reili_core::messaging::slack::SlackTriggerType::AppMention,
                     channel: "C001".to_string(),
                     user: "U001".to_string(),
+                    actor_is_bot: false,
                     text: "please investigate".to_string(),
                     legacy_attachments: Vec::new(),
                     files: Vec::new(),

@@ -38,6 +38,7 @@ mod tests {
                     trigger: SlackTriggerType::AppMention,
                     channel: "C001".to_string(),
                     user: "U001".to_string(),
+                    actor_is_bot: false,
                     text: "check alert".to_string(),
                     legacy_attachments: Vec::new(),
                     files: Vec::new(),

@@ -12,6 +12,7 @@ oauth_config:
       - channels:history
       - channels:read
       - chat:write
+      - usergroups:read
       - assistant:write
       - search:read.files
       - search:read.public

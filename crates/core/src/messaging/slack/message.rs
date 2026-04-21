@@ -23,6 +23,8 @@ pub struct SlackMessage {
     pub trigger: SlackTriggerType,
     pub channel: String,
     pub user: String,
+    #[serde(default)]
+    pub actor_is_bot: bool,
     pub text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub legacy_attachments: Vec<SlackLegacyAttachment>,
@@ -70,6 +72,7 @@ mod tests {
             trigger: SlackTriggerType::Message,
             channel: "C001".to_string(),
             user: "U001".to_string(),
+            actor_is_bot: false,
             text: "hello".to_string(),
             legacy_attachments: Vec::new(),
             files: vec![SlackMessageFile {
@@ -97,6 +100,7 @@ mod tests {
             trigger: SlackTriggerType::Message,
             channel: "C001".to_string(),
             user: "U001".to_string(),
+            actor_is_bot: false,
             text: "hello".to_string(),
             legacy_attachments: Vec::new(),
             files: Vec::new(),
@@ -116,6 +120,7 @@ mod tests {
             trigger: SlackTriggerType::Message,
             channel: "C001".to_string(),
             user: "U001".to_string(),
+            actor_is_bot: false,
             text: "hello".to_string(),
             legacy_attachments: Vec::new(),
             files: Vec::new(),
@@ -134,6 +139,7 @@ mod tests {
             serde_json::from_str(json).expect("deserialize slack message without action token");
 
         assert_eq!(restored.action_token, None);
+        assert!(!restored.actor_is_bot);
         assert!(restored.legacy_attachments.is_empty());
         assert!(restored.files.is_empty());
     }
@@ -147,6 +153,7 @@ mod tests {
             trigger: SlackTriggerType::Message,
             channel: "C001".to_string(),
             user: "U001".to_string(),
+            actor_is_bot: false,
             text: "please investigate".to_string(),
             legacy_attachments: Vec::new(),
             files: vec![SlackMessageFile {

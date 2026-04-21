@@ -18,6 +18,39 @@ impl fmt::Debug for SlackConnectionMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlackAuthorizationConfig {
+    pub channels: SlackAuthorizationChannels,
+    pub actors: Option<SlackAuthorizationActors>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlackAuthorizationChannels {
+    pub names: Vec<SlackChannelNamePattern>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlackAuthorizationActors {
+    pub user_ids: Option<Vec<String>>,
+    pub user_group_ids: Option<Vec<String>>,
+    pub allow_bot: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlackChannelNamePattern {
+    value: String,
+}
+
+impl SlackChannelNamePattern {
+    pub fn new(value: String) -> Self {
+        Self { value }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.value
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmConfig {
     pub provider: LlmProviderConfig,
 }
@@ -90,6 +123,7 @@ pub struct AppConfig {
     pub slack_bot_token: SecretString,
     pub slack_signing_secret: Option<SecretString>,
     pub slack_connection_mode: SlackConnectionMode,
+    pub slack_authorization: Option<SlackAuthorizationConfig>,
     pub port: u16,
     pub worker_concurrency: u32,
     pub job_max_retry: u32,
@@ -118,6 +152,7 @@ mod tests {
             slack_connection_mode: SlackConnectionMode::SocketMode {
                 app_token: SecretString::new("xapp-secret".to_string()),
             },
+            slack_authorization: None,
             port: 3000,
             worker_concurrency: 2,
             job_max_retry: 2,

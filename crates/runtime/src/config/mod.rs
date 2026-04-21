@@ -11,7 +11,8 @@ use thiserror::Error;
 pub use loader::{ConfigLoadOptions, load_app_config};
 pub use model::{
     AppConfig, BedrockLlmConfig, GitHubConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig,
-    SlackConnectionMode, VertexAiLlmConfig,
+    SlackAuthorizationActors, SlackAuthorizationChannels, SlackAuthorizationConfig,
+    SlackChannelNamePattern, SlackConnectionMode, VertexAiLlmConfig,
 };
 
 #[derive(Debug, Error)]

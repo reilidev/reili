@@ -80,6 +80,7 @@ fn parse_message_event(
         return Ok(ParsedSlackEvent::Ignored);
     }
 
+    let actor_is_bot = input.event.bot_id.is_some() || input.event.bot_profile.is_some();
     let user = match input.event.user {
         Some(value) => value,
         None => return Ok(ParsedSlackEvent::Ignored),
@@ -113,6 +114,7 @@ fn parse_message_event(
         trigger,
         channel,
         user,
+        actor_is_bot,
         text,
         legacy_attachments,
         files,
@@ -140,6 +142,8 @@ struct SlackCallbackEvent {
     subtype: Option<String>,
     channel: Option<String>,
     user: Option<String>,
+    bot_id: Option<String>,
+    bot_profile: Option<serde_json::Value>,
     text: Option<String>,
     attachments: Option<Vec<SlackLegacyAttachment>>,
     files: Option<Vec<SlackMessageFile>>,
@@ -224,6 +228,7 @@ mod tests {
                 trigger: SlackTriggerType::Message,
                 channel: "C001".to_string(),
                 user: "U001".to_string(),
+                actor_is_bot: false,
                 text: "please investigate".to_string(),
                 legacy_attachments: Vec::new(),
                 files: Vec::new(),
@@ -265,6 +270,7 @@ mod tests {
                 trigger: SlackTriggerType::AppMention,
                 channel: "C001".to_string(),
                 user: "U002".to_string(),
+                actor_is_bot: false,
                 text: "<@U-BOT> investigate this alert".to_string(),
                 legacy_attachments: Vec::new(),
                 files: Vec::new(),
@@ -306,6 +312,7 @@ mod tests {
                 trigger: SlackTriggerType::AppMention,
                 channel: "C001".to_string(),
                 user: "U003".to_string(),
+                actor_is_bot: false,
                 text: "<@U-BOT> search slack".to_string(),
                 legacy_attachments: Vec::new(),
                 files: Vec::new(),
@@ -356,6 +363,7 @@ mod tests {
                 trigger: SlackTriggerType::Message,
                 channel: "C001".to_string(),
                 user: "U004".to_string(),
+                actor_is_bot: false,
                 text: "<None|Alert|> CPU usage is high".to_string(),
                 legacy_attachments: vec![SlackLegacyAttachment {
                     pretext: Some("Alert".to_string()),
@@ -408,6 +416,7 @@ mod tests {
                 trigger: SlackTriggerType::Message,
                 channel: "C001".to_string(),
                 user: "U005".to_string(),
+                actor_is_bot: false,
                 text: String::new(),
                 legacy_attachments: Vec::new(),
                 files: vec![SlackMessageFile {
@@ -469,6 +478,46 @@ mod tests {
         )
         .expect("parse bot event");
         assert_eq!(bot_message_event, ParsedSlackEvent::Ignored);
+    }
+
+    #[test]
+    fn marks_app_mention_actor_as_bot_when_bot_id_is_present() {
+        let parsed = parse_slack_event(
+            json!({
+                "type": "event_callback",
+                "event_id": "evt-bot-mention",
+                "event": {
+                    "type": "app_mention",
+                    "channel": "C001",
+                    "user": "U-BOT-ACTOR",
+                    "bot_id": "B001",
+                    "text": "<@U-BOT> investigate this alert",
+                    "ts": "1710000000.000007"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+            "U-BOT",
+        )
+        .expect("parse bot app mention");
+
+        assert_eq!(
+            parsed,
+            ParsedSlackEvent::Message(SlackMessage {
+                slack_event_id: "evt-bot-mention".to_string(),
+                team_id: None,
+                action_token: None,
+                trigger: SlackTriggerType::AppMention,
+                channel: "C001".to_string(),
+                user: "U-BOT-ACTOR".to_string(),
+                actor_is_bot: true,
+                text: "<@U-BOT> investigate this alert".to_string(),
+                legacy_attachments: Vec::new(),
+                files: Vec::new(),
+                ts: "1710000000.000007".to_string(),
+                thread_ts: None,
+            })
+        );
     }
 
     #[test]

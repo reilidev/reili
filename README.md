@@ -70,6 +70,7 @@ Non-secret settings live in `reili.toml`, including:
 - server port
 - conversation language
 - Slack connection mode
+- optional Slack mention authorization allowlists and bot actor access
 - selected AI backend and backend-specific non-secret settings
 - Datadog site
 - GitHub MCP URL, GitHub App ID, installation ID, and search scope org

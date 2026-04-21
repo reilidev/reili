@@ -1,3 +1,4 @@
+pub mod authorization;
 pub mod control_message;
 pub mod file;
 pub mod interaction;
@@ -33,6 +34,15 @@ pub use thread_history::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
 pub use thread_message::{SlackMessageMetadata, SlackThreadMessage};
 pub use thread_reply::{SlackThreadReplyInput, SlackThreadReplyPort};
 
+#[cfg(any(test, feature = "test-support"))]
+pub use authorization::{
+    MockSlackChannelLookupPort, MockSlackEphemeralMessagePort, MockSlackUserGroupMembershipPort,
+};
+pub use authorization::{
+    PostSlackEphemeralMessageInput, SlackAuthorizationContext, SlackAuthorizationDecision,
+    SlackAuthorizationDenyReason, SlackAuthorizationPolicy, SlackChannelInfo,
+    SlackChannelLookupPort, SlackEphemeralMessagePort, SlackUserGroupMembershipPort,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub use control_message::MockSlackTaskControlMessagePort;
 #[cfg(any(test, feature = "test-support"))]
