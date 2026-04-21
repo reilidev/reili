@@ -6,96 +6,188 @@ This document is for contributors and maintainers of `Reili`.
 
 - Rust stable toolchain
 - Slack App credentials
-- Datadog API credentials for the Datadog MCP server
-- OpenAI API key, AWS credentials for Bedrock, or Google Cloud ADC for Vertex AI
-- GitHub MCP token
+- Datadog API and application keys for the Datadog MCP server
+- GitHub App credentials for the repositories Reili investigates
+- At least one supported AI backend:
+  - OpenAI API key
+  - Anthropic API key
+  - AWS credentials for Amazon Bedrock
+  - Google Application Default Credentials for Vertex AI
+
+## Repository Layout
+
+Rust code lives in the `crates/` workspace:
+
+- `crates/core`: domain types, errors, and trait-based ports
+- `crates/application`: use cases and task orchestration
+- `crates/adapters`: inbound and outbound integration adapters
+- `crates/runtime`: config loading, dependency wiring, HTTP entrypoint, and Slack Socket Mode entrypoint
+
+Top-level runtime assets:
+
+- `config/default.toml`: full runtime config template
+- `config/minimum.toml`: minimal runtime config example
+- `.env.example`: secret environment variable template
+- `slack-app-manifest.yml`: Slack App manifest
+- `docs/permissions-and-boundaries.md`: current integration permissions and runtime boundaries
 
 ## Setup
 
-1. Prepare local environment file:
+1. Prepare a local runtime config:
+
+```bash
+cp config/default.toml reili.toml
+```
+
+2. Edit `reili.toml` for local development.
+
+Non-secret settings live in `reili.toml`, including:
+
+- server port
+- conversation language and optional additional system prompt
+- Slack connection mode
+- selected AI backend and backend-specific non-secret settings
+- Datadog site
+- GitHub MCP URL, GitHub App ID, installation ID, and search scope org
+
+3. Prepare local secrets:
 
 ```bash
 cp .env.example .env
 ```
 
-2. Fill required variables in `.env`:
+4. Fill the secret values referenced by `reili.toml`.
+
+Common required secrets:
 
 - `SLACK_BOT_TOKEN`
-- `SLACK_SIGNING_SECRET`
 - `DATADOG_API_KEY`
 - `DATADOG_APP_KEY`
-- `LLM_PROVIDER`
-- `LLM_OPENAI_API_KEY` when `LLM_PROVIDER=openai`
-- `LLM_ANTHROPIC_API_KEY` when `LLM_PROVIDER=anthropic`
-- `LLM_ANTHROPIC_MODEL` when `LLM_PROVIDER=anthropic`
-- `LLM_BEDROCK_MODEL_ID` when `LLM_PROVIDER=bedrock`
-- `LLM_VERTEX_AI_MODEL_ID` when `LLM_PROVIDER=vertexai`
-- `GOOGLE_CLOUD_LOCATION` when `LLM_PROVIDER=vertexai`
-- `GOOGLE_CLOUD_PROJECT` when `LLM_PROVIDER=vertexai`
-- `GITHUB_SEARCH_SCOPE_ORG`
-
-Optional:
-
-- `PORT` (default: `3000`)
-- `DATADOG_SITE` (default: `datadoghq.com`)
-- `LANGUAGE` (default: `English`)
-- `GITHUB_MCP_URL` (default: `https://api.githubcopilot.com/mcp/`)
-
-GitHub configuration:
-
-- `GITHUB_APP_ID`
 - `GITHUB_APP_PRIVATE_KEY`
-- `GITHUB_APP_INSTALLATION_ID`
 
-The GitHub MCP backend mints short-lived installation tokens from the GitHub App credentials at
-runtime. `GITHUB_MCP_TOKEN` is no longer used.
+Slack mode-specific secrets:
 
-When `LLM_PROVIDER=anthropic`, set `LLM_ANTHROPIC_API_KEY` and `LLM_ANTHROPIC_MODEL`. The
-supported `LLM_ANTHROPIC_MODEL` values are `claude-opus-4-6`, `claude-sonnet-4-6`, and
-`claude-haiku-4-5`. The
-`search_web` tool uses Anthropic's web search server tool, which must be enabled by your Anthropic
-organization administrator in Claude Console.
+- `SLACK_APP_TOKEN` when `channel.slack.socket_mode = true`
+- `SLACK_SIGNING_SECRET` when `channel.slack.socket_mode = false`
 
-When `LLM_PROVIDER=bedrock`, AWS credentials and region are loaded from the standard AWS SDK environment or profile chain. Set `AWS_PROFILE` to use a named AWS profile such as an AWS SSO profile, and set `AWS_REGION` if the selected profile does not already define a region.
+AI backend-specific secrets:
 
+- `LLM_OPENAI_API_KEY` when the selected backend uses `provider = "openai"`
+- `LLM_ANTHROPIC_API_KEY` when the selected backend uses `provider = "anthropic"`
+- Bedrock credentials are loaded from the standard AWS SDK environment/profile chain
+- Vertex AI credentials are loaded from Google Application Default Credentials
 
-When `LLM_PROVIDER=vertexai`, Google credentials are loaded from Application Default Credentials. Set `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `LLM_VERTEX_AI_MODEL_ID`. Vertex AI web search uses Gemini Grounding with Google Search, so the selected model and project must have access to that capability.
+`GITHUB_MCP_TOKEN` is not used. Reili signs a GitHub App JWT with `GITHUB_APP_PRIVATE_KEY`,
+exchanges it for a short-lived installation token, and uses that token as the GitHub MCP bearer
+token at runtime.
+
+## Runtime Config
+
+The runtime loads config from:
+
+1. `--config /path/to/reili.toml`
+2. `./reili.toml`
+
+If the selected config file does not exist, startup fails.
+
+Supported config schema version:
+
+```toml
+version = 1
+```
+
+The current AI backend selector is `ai.default_backend`, which points to one entry under
+`ai.backends`. Do not use the old `LLM_PROVIDER` environment variable pattern.
+
+Supported backend providers:
+
+- `openai`
+- `anthropic`
+- `bedrock`
+- `vertexai` (`vertex_ai` is also accepted by the loader)
+
+OpenAI backends require `model` and may set `reasoning_effort` to `low`, `medium`, `high`, or
+`xhigh`. Anthropic backends currently accept `claude-opus-4-6`, `claude-sonnet-4-6`, and
+`claude-haiku-4-5`. Bedrock and Vertex AI backends use `model_id`.
 
 ## Local Run
 
-Run the unified runtime in one terminal.
+Run from the repository root and pass the root `reili.toml` explicitly:
+
+```bash
+bash -lc 'set -a; source .env; set +a; cargo run --manifest-path crates/Cargo.toml -p reili_runtime -- --config reili.toml' 2>&1 | tee .tmp/reili.log
+```
+
+If you prefer running from `crates/`:
 
 ```bash
 cd crates
-bash -lc 'set -a; source ../.env; set +a; APP_VERSION=local cargo run -p reili_runtime' 2>&1 | tee ../.tmp/reili.log
+bash -lc 'set -a; source ../.env; set +a; cargo run -p reili_runtime -- --config ../reili.toml' 2>&1 | tee ../.tmp/reili.log
 ```
 
 If you use `cargo-watch`:
 
 ```bash
 cd crates
-bash -lc 'set -a; source ../.env; set +a; APP_VERSION=local cargo watch -x "run -p reili_runtime"' 2>&1 | tee ../.tmp/reili.log
+bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p reili_runtime -- --config ../reili.toml"' 2>&1 | tee ../.tmp/reili.log
 ```
 
-## Docker Run
+## Slack Runtime Modes
 
-Build a local image:
+Socket Mode is the default:
 
-```bash
-docker build --build-arg APP_VERSION=local -t reili:local .
-docker run --env-file .env -p 3000:3000 reili:local
+```toml
+[channel.slack]
+socket_mode = true
 ```
 
-To consume the published GitHub Container Registry image after release, set the image name in
-`compose.example.yaml` and start it with Docker Compose:
+Socket Mode requires `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`. The app token must be an App-Level
+Token that starts with `xapp-`.
+
+HTTP mode:
+
+```toml
+[channel.slack]
+socket_mode = false
+```
+
+HTTP mode requires `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET`. The runtime exposes:
+
+- `POST /slack/events`
+- `POST /slack/interactions`
+- `GET /healthz`
+
+For local HTTP mode testing, expose the app with a public HTTPS tunnel and configure both Slack
+Event Subscriptions and Interactivity to use that public URL.
+
+## Docker
+
+For normal local development, use `cargo run`. The checked-in `Dockerfile` is the release image
+packaging step: it expects a prebuilt `dist/docker/<arch>/reili` binary prepared by the release
+workflow.
+
+To run the published image, provide both `.env` and `reili.toml` as described in the README:
 
 ```bash
-docker compose -f compose.example.yaml up -d
+docker run --rm \
+  --env-file .env \
+  -v "$(pwd)/reili.toml:/home/reili/reili.toml:ro" \
+  ghcr.io/reilidev/reili:latest
+```
+
+For HTTP mode, publish the app port:
+
+```bash
+docker run --rm \
+  --env-file .env \
+  -v "$(pwd)/reili.toml:/home/reili/reili.toml:ro" \
+  -p 3000:3000 \
+  ghcr.io/reilidev/reili:latest
 ```
 
 ## Validation Commands
 
-Run these before opening a PR:
+Run these before opening a PR that changes Rust code:
 
 ```bash
 cd crates
@@ -104,37 +196,62 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+CI runs `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and
+`cargo test --workspace --locked --all-targets`.
+
 ## Architecture Rules
-
-Project layers:
-
-- `crates/runtime`: bootstrap and runtime entrypoints
-- `crates/application`: use case orchestration
-- `crates/core/src/ports`: boundary contracts
-- `crates/adapters`: concrete integrations
-- `crates/core`: cross-cutting types and utilities
 
 Dependency direction:
 
-- `application -> ports`
-- `adapters -> ports`
-- `runtime -> application + adapters + config`
-- Avoid `application -> adapters` direct imports.
+- `application -> core`
+- `adapters -> core`
+- `runtime -> application + adapters + core`
+- Avoid `application -> adapters` direct imports
+- Keep `core` independent from runtime and adapter concerns
 
-## Behavior Notes
+Use trait-based ports and constructor injection for external dependencies. Ports currently live in
+their domain modules under `crates/core/src`, for example `messaging/slack`, `knowledge`, `queue`,
+`source_code/github`, and `task`.
 
-- The runtime receives Slack events at `/slack/events` and enqueues task jobs directly into `InMemoryJobQueue`.
-- Worker tasks run in the same process and claim jobs from that queue.
-- Pending jobs are not durable across app restarts.
+When adding behavior:
+
+- Put domain data and boundary traits in `core`
+- Put orchestration in `application`
+- Put concrete external integrations in `adapters`
+- Wire concrete implementations in `runtime/bootstrap`
+- Prefer explicit input structs when a function or constructor needs several inputs
+- Avoid `unwrap` and `expect` in production code
+
+## Runtime Behavior Notes
+
+- Slack `app_mention` events enqueue task jobs into the in-memory queue.
+- The same runtime process starts worker tasks and claims jobs from that queue.
+- Jobs are not durable across app restarts.
+- Reili posts a task control message with a `Cancel` button, streams progress in the originating
+  Slack thread, and posts a final reply.
+- Cancel interactions are handled through Slack Interactivity in both Socket Mode and HTTP mode.
+- The current runtime is investigation-focused. It reads Datadog, GitHub, Slack thread history,
+  Slack public-channel search, and web lookup integrations, and writes only Slack progress/control
+  and result messages.
 
 ## Testing Conventions
 
 - Add Rust tests alongside implementation code with `#[cfg(test)]` or sibling test modules.
-- Prefer unit tests for `application` layer orchestration and adapter contract behavior.
+- Prefer unit tests for application orchestration, config resolution, and adapter contract behavior.
 - Keep tests deterministic and independent from external APIs.
+- Do not add tests that only verify logging.
+
+## Release Notes
+
+Releases are managed with `tagpr` using Git tags and changelog updates. Cargo manifest versions are
+kept at the workspace placeholder version and are not part of the release flow.
+
+Release binaries are built by `.github/workflows/_build-release-bundle.yml`. Container images are
+assembled from those prebuilt binaries and published by the release workflow.
 
 ## Useful Commands
 
-- `cargo run -p reili_runtime`: start the app
-- `cargo watch -x "run -p reili_runtime"`: start with reload if `cargo-watch` is installed
+- `cargo run -p reili_runtime -- --config ../reili.toml`: start the app from `crates/`
+- `cargo watch -x "run -p reili_runtime -- --config ../reili.toml"`: start with reload from `crates/`
 - `cargo test --workspace`: run Rust tests
+- `cargo clippy --workspace --all-targets -- -D warnings`: run lints
