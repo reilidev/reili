@@ -13,6 +13,15 @@ version = 1
 
 [channel.slack]
 
+# Optional mention authorization example:
+#[channel.slack.authorization.channels]
+#names = ["alerts-*"]
+#
+#[channel.slack.authorization.actors]
+#user_ids = ["U01234567"]
+#user_group_ids = ["S01234567"]
+#allow_bot = true
+
 [ai]
 default_backend = "primary"
 

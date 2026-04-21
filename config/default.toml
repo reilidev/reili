@@ -33,6 +33,23 @@ app_token_env = "SLACK_APP_TOKEN"
 # Defaults to `SLACK_SIGNING_SECRET`.
 signing_secret_env = "SLACK_SIGNING_SECRET"
 
+# Optional: restrict which `app_mention` events Reili is allowed to handle.
+# When omitted, all app mentions visible to the Slack app are handled.
+#[channel.slack.authorization.channels]
+# Required when `channel.slack.authorization` is configured: Slack channel name allowlist.
+# `*` matches zero or more characters. Set `names = []` to allow no channels.
+#names = ["alerts-prod", "*-prod", "alerts-*"]
+
+#[channel.slack.authorization.actors]
+# Optional: Slack user ID allowlist.
+# Omit this list to leave direct user IDs unset. Set `user_ids = []` to allow no direct users.
+#user_ids = ["U01234567", "W01234567"]
+# Optional: Slack user group ID allowlist.
+# Omit this list to leave user groups unset. Set `user_group_ids = []` to allow no user groups.
+#user_group_ids = ["S01234567", "S07654321"]
+# Optional: allow all Slack bot actors.
+#allow_bot = true
+
 # Required: AI backend selection.
 [ai]
 # Required: backend ID Reili uses for task execution.

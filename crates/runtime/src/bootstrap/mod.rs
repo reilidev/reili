@@ -14,9 +14,10 @@ use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearc
 use reili_adapters::outbound::github::GitHubMcpConfig;
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
-    SlackMessageSearchAdapter, SlackProgressReporter, SlackProgressReporterInput,
-    SlackReactionAdapter, SlackTaskControlMessageAdapter, SlackThreadHistoryAdapter,
-    SlackThreadReplyAdapter, SlackWebApiClient, SlackWebApiClientConfig,
+    SlackChannelLookupAdapter, SlackEphemeralMessageAdapter, SlackMessageSearchAdapter,
+    SlackProgressReporter, SlackProgressReporterInput, SlackReactionAdapter,
+    SlackTaskControlMessageAdapter, SlackThreadHistoryAdapter, SlackThreadReplyAdapter,
+    SlackUserGroupMembershipAdapter, SlackWebApiClient, SlackWebApiClientConfig,
 };
 use reili_adapters::outbound::vertex_ai::{
     VertexAiWebSearchAdapter, VertexAiWebSearchAdapterConfig,
@@ -25,13 +26,16 @@ use reili_adapters::queue::InMemoryJobQueue;
 use reili_application::task::{TaskExecutionDeps, TaskLogger};
 use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
-    HandleSlackInteractionUseCaseDeps, StartTaskWorkerRunnerUseCase,
+    HandleSlackInteractionUseCaseDeps, SlackMentionAuthorizationGate,
+    SlackMentionAuthorizationService, StartTaskWorkerRunnerUseCase,
     StartTaskWorkerRunnerUseCaseDeps,
 };
 use reili_core::error::PortError;
 use reili_core::knowledge::WebSearchPort;
 use reili_core::messaging::slack::{
+    SlackAuthorizationPolicy, SlackChannelLookupPort, SlackEphemeralMessagePort,
     SlackInteractionHandlerPort, SlackMessageHandlerPort, SlackTaskControlMessagePort,
+    SlackUserGroupMembershipPort,
 };
 use reili_core::messaging::slack::{
     SlackMessageSearchPort, SlackReactionPort, SlackThreadHistoryPort, SlackThreadReplyPort,
@@ -43,7 +47,8 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::config::{
-    AppConfig, LlmProviderConfig, SecretString, SlackConnectionMode, VertexAiLlmConfig,
+    AppConfig, LlmProviderConfig, SecretString, SlackAuthorizationConfig, SlackConnectionMode,
+    VertexAiLlmConfig,
 };
 
 pub struct RuntimeDeps {
@@ -131,7 +136,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         web_search_port: provider_ports.web_search_port,
     };
     let task_runner = provider_ports.task_runner;
-    let slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
+    let enqueue_slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
             slack_reaction_port,
@@ -139,6 +144,12 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
             slack_reply_port: Arc::clone(&slack_reply_port),
             logger: Arc::clone(&logger),
         }),
+    );
+    let slack_message_handler = build_slack_message_handler(
+        config.slack_authorization.as_ref(),
+        enqueue_slack_message_handler,
+        Arc::clone(&slack_web_api_client),
+        Arc::clone(&logger),
     );
     let slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort> = Arc::new(
         HandleSlackInteractionUseCase::new(HandleSlackInteractionUseCaseDeps {
@@ -180,6 +191,66 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         worker_runner,
         logger,
     })
+}
+
+fn build_slack_message_handler(
+    authorization: Option<&SlackAuthorizationConfig>,
+    next_handler: Arc<dyn SlackMessageHandlerPort>,
+    slack_web_api_client: Arc<SlackWebApiClient>,
+    logger: Arc<dyn TaskLogger>,
+) -> Arc<dyn SlackMessageHandlerPort> {
+    let authorization_service = SlackMentionAuthorizationService::new(
+        authorization
+            .map(build_slack_authorization_policy)
+            .unwrap_or_else(|| SlackAuthorizationPolicy::new(None, None, None, false)),
+        Arc::new(SlackChannelLookupAdapter::new(Arc::clone(
+            &slack_web_api_client,
+        ))) as Arc<dyn SlackChannelLookupPort>,
+        Arc::new(SlackUserGroupMembershipAdapter::new(Arc::clone(
+            &slack_web_api_client,
+        ))) as Arc<dyn SlackUserGroupMembershipPort>,
+        Arc::new(SlackEphemeralMessageAdapter::new(Arc::clone(
+            &slack_web_api_client,
+        ))) as Arc<dyn SlackEphemeralMessagePort>,
+        logger,
+    );
+
+    Arc::new(SlackMentionAuthorizationGate::new(
+        authorization_service,
+        next_handler,
+    ))
+}
+
+fn build_slack_authorization_policy(
+    authorization: &SlackAuthorizationConfig,
+) -> SlackAuthorizationPolicy {
+    let channel_name_patterns = Some(
+        authorization
+            .channels
+            .names
+            .iter()
+            .map(|pattern| pattern.as_str().to_string())
+            .collect(),
+    );
+    let actor_user_ids = authorization
+        .actors
+        .as_ref()
+        .and_then(|actors| actors.user_ids.clone());
+    let actor_user_group_ids = authorization
+        .actors
+        .as_ref()
+        .and_then(|actors| actors.user_group_ids.clone());
+    let actor_allow_bot = authorization
+        .actors
+        .as_ref()
+        .is_some_and(|actors| actors.allow_bot);
+
+    SlackAuthorizationPolicy::new(
+        channel_name_patterns,
+        actor_user_ids,
+        actor_user_group_ids,
+        actor_allow_bot,
+    )
 }
 
 fn build_slack_signature_verifier(

@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 use super::ConfigError;
 use super::env::{EnvironmentReader, ProcessEnvironment, read_required_secret};
 use super::file::{
-    AiBackendFileConfig, AiFileConfig, FileConfig, SlackFileConfig, parse_file_config,
+    AiBackendFileConfig, AiFileConfig, FileConfig, SlackAuthorizationFileConfig, SlackFileConfig,
+    parse_file_config,
 };
 use super::model::{
     AnthropicLlmConfig, AppConfig, BedrockLlmConfig, GitHubConfig, LlmConfig, LlmProviderConfig,
-    OpenAiLlmConfig, SlackConnectionMode, VertexAiLlmConfig,
+    OpenAiLlmConfig, SlackAuthorizationActors, SlackAuthorizationChannels,
+    SlackAuthorizationConfig, SlackChannelNamePattern, SlackConnectionMode, VertexAiLlmConfig,
 };
 use crate::config::SecretString;
 
@@ -110,6 +112,8 @@ fn resolve_app_config(
         "channel.slack.auth.bot_token_env",
     )?;
     let slack_resolution = resolve_slack_connection_mode(&file_config.channel.slack, env)?;
+    let slack_authorization =
+        resolve_slack_authorization(file_config.channel.slack.authorization.as_ref())?;
     let llm_provider = resolve_llm_provider(&file_config.ai, env)?;
     let github = resolve_github_config(&file_config, env)?;
 
@@ -117,6 +121,7 @@ fn resolve_app_config(
         slack_bot_token,
         slack_signing_secret: slack_resolution.signing_secret,
         slack_connection_mode: slack_resolution.connection_mode,
+        slack_authorization,
         port: validate_port(file_config.server.port, "server.port")?,
         worker_concurrency: DEFAULT_WORKER_CONCURRENCY,
         job_max_retry: DEFAULT_JOB_MAX_RETRY,
@@ -204,6 +209,55 @@ fn resolve_slack_connection_mode(
             })
         }
     }
+}
+
+fn resolve_slack_authorization(
+    authorization: Option<&SlackAuthorizationFileConfig>,
+) -> Result<Option<SlackAuthorizationConfig>, ConfigError> {
+    let Some(authorization) = authorization else {
+        return Ok(None);
+    };
+
+    let channel_names = authorization
+        .channels
+        .as_ref()
+        .and_then(|channels| channels.names.as_ref())
+        .ok_or_else(|| ConfigError::InvalidValue {
+            field: "channel.slack.authorization.channels.names".to_string(),
+            message: "must be set when channel.slack.authorization is configured".to_string(),
+        })?
+        .iter()
+        .cloned()
+        .map(SlackChannelNamePattern::new)
+        .collect::<Vec<_>>();
+    let user_ids = authorization
+        .actors
+        .as_ref()
+        .and_then(|actors| actors.user_ids.clone());
+    let user_group_ids = authorization
+        .actors
+        .as_ref()
+        .and_then(|actors| actors.user_group_ids.clone());
+    let allow_bot = authorization
+        .actors
+        .as_ref()
+        .and_then(|actors| actors.allow_bot)
+        .unwrap_or(false);
+
+    Ok(Some(SlackAuthorizationConfig {
+        channels: SlackAuthorizationChannels {
+            names: channel_names,
+        },
+        actors: if user_ids.is_some() || user_group_ids.is_some() || allow_bot {
+            Some(SlackAuthorizationActors {
+                user_ids,
+                user_group_ids,
+                allow_bot,
+            })
+        } else {
+            None
+        },
+    }))
 }
 
 fn resolve_llm_provider(
@@ -1007,6 +1061,209 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
                 .expose(),
             "signing-secret"
         );
+    }
+
+    #[test]
+    fn resolves_slack_mention_authorization_allowlists_from_toml_without_normalization() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[channel.slack.authorization.channels]
+names = [" Alerts-PROD ", "*-Prod", "alerts-prod"]
+
+[channel.slack.authorization.actors]
+user_ids = ["u001", "W002", "U001"]
+user_group_ids = ["s001", "S001"]
+allow_bot = true
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+        let authorization = config
+            .slack_authorization
+            .expect("slack authorization config");
+        let channel_names = authorization
+            .channels
+            .names
+            .iter()
+            .map(|pattern| pattern.as_str().to_string())
+            .collect::<Vec<_>>();
+        let actors = authorization.actors.expect("actor authorization");
+
+        assert_eq!(
+            channel_names,
+            vec![" Alerts-PROD ", "*-Prod", "alerts-prod"]
+        );
+        assert_eq!(
+            actors.user_ids,
+            Some(vec![
+                "u001".to_string(),
+                "W002".to_string(),
+                "U001".to_string()
+            ])
+        );
+        assert_eq!(
+            actors.user_group_ids,
+            Some(vec!["s001".to_string(), "S001".to_string()])
+        );
+        assert!(actors.allow_bot);
+    }
+
+    #[test]
+    fn preserves_empty_slack_authorization_arrays_as_configured_conditions() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[channel.slack.authorization.channels]
+names = []
+
+[channel.slack.authorization.actors]
+user_ids = []
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+        let authorization = config
+            .slack_authorization
+            .expect("slack authorization config");
+        let channels = authorization.channels;
+        let actors = authorization.actors.expect("actor authorization");
+
+        assert!(channels.names.is_empty());
+        assert_eq!(actors.user_ids, Some(Vec::new()));
+        assert_eq!(actors.user_group_ids, None);
+        assert!(!actors.allow_bot);
+    }
+
+    #[test]
+    fn resolves_slack_authorization_allow_bot_without_user_allowlists() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[channel.slack.authorization.channels]
+names = ["alerts-*"]
+
+[channel.slack.authorization.actors]
+allow_bot = true
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+        let actors = config
+            .slack_authorization
+            .expect("slack authorization config")
+            .actors
+            .expect("actor authorization");
+
+        assert_eq!(actors.user_ids, None);
+        assert_eq!(actors.user_group_ids, None);
+        assert!(actors.allow_bot);
+    }
+
+    #[test]
+    fn keeps_blank_slack_authorization_strings_as_configured_values() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[channel.slack.authorization.channels]
+names = [" "]
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+        let channel_names = config
+            .slack_authorization
+            .expect("slack authorization config")
+            .channels
+            .names
+            .iter()
+            .map(|pattern| pattern.as_str().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(channel_names, vec![" ".to_string()]);
+    }
+
+    #[test]
+    fn keeps_slack_authorization_actor_ids_without_format_validation() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[channel.slack.authorization.channels]
+names = ["alerts-*"]
+
+[channel.slack.authorization.actors]
+user_ids = ["S001"]
+user_group_ids = ["U001"]
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+        let actors = config
+            .slack_authorization
+            .expect("slack authorization config")
+            .actors
+            .expect("actor authorization");
+
+        assert_eq!(actors.user_ids, Some(vec!["S001".to_string()]));
+        assert_eq!(actors.user_group_ids, Some(vec!["U001".to_string()]));
+        assert!(!actors.allow_bot);
+    }
+
+    #[test]
+    fn rejects_slack_authorization_when_channel_names_are_missing() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[channel.slack.authorization]
+
+[ai]
+"#,
+        ));
+
+        let error = resolve_app_config(file_config, &env)
+            .expect_err("empty authorization config should fail");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "channel.slack.authorization.channels.names");
+                assert!(message.contains("must be set"));
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn rejects_slack_authorization_actors_without_channel_names() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[channel.slack.authorization.actors]
+user_ids = ["U001"]
+
+[ai]
+"#,
+        ));
+
+        let error = resolve_app_config(file_config, &env)
+            .expect_err("actor-only authorization config should fail");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "channel.slack.authorization.channels.names");
+                assert!(message.contains("must be set"));
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
     }
 
     #[test]

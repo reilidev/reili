@@ -63,11 +63,11 @@ Common settings for both modes:
 | Slack screen                          | Required setting                                                                                                   | Why                                                                                                              |
 |---------------------------------------|--------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
 | `Agents & AI Apps`                    | Turn on `Agent or Assistant`                                                                                       | Enables Slack agent search capabilities such as `assistant.search.context`                                       |
-| `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history`, `search:read.public` | Receive `app_mention`, mark accepted requests, reply in threads, read channel thread context, and search Slack public-channel messages |
+| `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history`, `channels:read`, `usergroups:read`, `search:read.public` | Receive `app_mention`, mark accepted requests, reply in threads, read channel thread context, resolve authorization allowlists, reject private-channel mentions, and search Slack public-channel messages |
 | `Event Subscriptions`                 | Turn on events and add the bot event `app_mention`                                                                 | `app_mention` is the intake trigger in both modes                                                                |
 | `Interactivity & Shortcuts`           | Turn on interactivity                                                                                              | Receive `block_actions` when a user clicks a task `Cancel` button                                                |
 | `Install App` / `OAuth & Permissions` | Install or reinstall the app after any scope change                                                                | Slack does not apply updated scopes until reinstall                                                              |
-| Slack workspace                       | Invite the app to every public or private channel where it should respond                                          | The app must be present in the conversation to receive mentions and post replies                                 |
+| Slack workspace                       | Invite the app to every public channel where it should respond                                                     | The app must be present in the conversation to receive mentions and post replies                                 |
 
 Required Slack app settings for Socket Mode:
 
@@ -92,9 +92,11 @@ Required Slack app settings for HTTP mode:
 Required Bot OAuth scopes:
 
 - `app_mentions:read`: receive `app_mention` events
-- `chat:write`: post progress and final replies into the originating thread, and post/update the task control message
+- `chat:write`: post progress and final replies into the originating thread, post/update the task control message, and post authorization deny notices as ephemeral messages
 - `reactions:write`: add an `:eyes:` reaction to the triggering message once the task is queued
 - `channels:history`: read public channel thread history when additional context is needed
+- `channels:read`: resolve public channel metadata for mention authorization
+- `usergroups:read`: resolve user group membership for mention authorization
 - `search:read.public`: call `assistant.search.context` for public-channel Slack message search with a Bot Token
 
 Required App-Level Token scope for Socket Mode:
@@ -113,19 +115,24 @@ Slack API methods currently used by the runtime:
 - `apps.connections.open`: obtains a temporary WebSocket URL when Socket Mode is enabled
 - `assistant.search.context`: searches Slack public-channel message history using the triggering event's `action_token`
 - `auth.test`: resolves the bot user ID at startup
+- `conversations.info`: resolves originating public channel metadata to evaluate channel name authorization patterns; private-channel lookup fails without `groups:read` and is denied before enqueue
 - `conversations.replies`: loads thread context when the triggering message is a thread reply
 - `chat.postMessage`: posts queue failures, the final task summary, and the task control message
+- `chat.postEphemeral`: posts a private deny notice to the mentioning user when mention authorization rejects a request
 - `chat.update`: updates the task control message as tasks move through running/cancelled/completed/failed states
+- `usergroups.users.list`: resolves configured user group membership for mention authorization
 - `reactions.add`: adds an `:eyes:` reaction to the triggering message after enqueue succeeds
 - `chat.startStream`, `chat.appendStream`, `chat.stopStream`: posts incremental task progress in the same thread
 
 Slack boundary:
 
+- Private channels are not supported; `app_mention` events from private channels are denied before enqueue
+- `groups:read` is intentionally not requested; private channel metadata is not read
+- When configured, handles only `app_mention` events matching the Slack channel name, user ID, user group, or bot actor authorization settings
 - Reads only the thread where the request was made, and only when additional thread context is needed
 - Searches only Slack public-channel messages permitted by the current app install, bot token scope, and `action_token` context
 - Posts only into the originating thread
-- Intended for channel conversations where the app is present, including public and private channels; DM and group DM
-  usage are out of scope
+- Intended for public channel conversations where the app is present; private channels, DM, and group DM usage are out of scope
 - Does not search private channels or DMs with the current Bot Token configuration
 - Does not delete messages, edit arbitrary messages, read files, manage channels, or administer the workspace
 
