@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
-const DEFAULT_TASK_RUNNER_MAX_TURNS: usize = 20;
-const DEFAULT_SPECIALIST_MAX_TURNS: usize = 50;
+const DEFAULT_TASK_RUNNER_MAX_TURNS: usize = 60;
+const DEFAULT_SPECIALIST_MAX_TURNS: usize = 80;
 const DEFAULT_TOOL_CONCURRENCY: usize = 8;
 const ANTHROPIC_OPUS_4_6_MODEL: &str = "claude-opus-4-6";
 const ANTHROPIC_SONNET_4_6_MODEL: &str = "claude-sonnet-4-6";
@@ -114,7 +114,7 @@ fn anthropic_max_tokens(model: &str) -> Option<u64> {
         ANTHROPIC_OPUS_4_6_MODEL => Some(32_000),
         ANTHROPIC_SONNET_4_6_MODEL => Some(64_000),
         ANTHROPIC_HAIKU_4_5_MODEL => Some(4_096),
-        _ => None,
+        _ => Some(32_000),
     }
 }
 
@@ -146,11 +146,23 @@ mod tests {
     }
 
     #[test]
+    fn provider_settings_assign_agent_turn_limits() {
+        let settings = create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
+            model: "gpt-5.3-codex".to_string(),
+            reasoning_effort: "low".to_string(),
+        });
+
+        assert_eq!(settings.task_runner_max_turns, 60);
+        assert_eq!(settings.specialist_max_turns, 80);
+    }
+
+    #[test]
     fn anthropic_provider_settings_assign_max_tokens_for_supported_models() {
         let cases = [
             ("claude-opus-4-6", Some(32_000)),
             ("claude-sonnet-4-6", Some(64_000)),
             ("claude-haiku-4-5", Some(4_096)),
+            ("claude-future-model", Some(32_000)),
         ];
 
         for (model, expected_max_tokens) in cases {
