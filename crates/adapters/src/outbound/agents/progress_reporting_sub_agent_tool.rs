@@ -71,16 +71,9 @@ where
 
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         let description = format!(
-            "
-            Prompt a sub-agent to do a task for you.
-
-            Agent name: {name}
-            Agent description: {description}
-            Agent system prompt: {sysprompt}
-            ",
+            "Prompt the {name} sub-agent to do a task for you.\n\nAgent description: {agent_description}",
             name = self.name(),
-            description = self.agent.description.clone().unwrap_or_default(),
-            sysprompt = self.agent.preamble.clone().unwrap_or_default()
+            agent_description = self.agent.description.as_deref().unwrap_or_default(),
         );
         ToolDefinition {
             name: self.name(),
