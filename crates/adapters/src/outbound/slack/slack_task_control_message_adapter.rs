@@ -86,30 +86,28 @@ fn build_control_metadata(job_id: &str, thread_ts: &str) -> serde_json::Value {
 
 fn render_control_text(state: &SlackTaskControlState) -> String {
     match state {
-        SlackTaskControlState::Queued => "Investigation queued.".to_string(),
-        SlackTaskControlState::Running => "Investigation is running.".to_string(),
+        SlackTaskControlState::Queued => "Task queued.".to_string(),
+        SlackTaskControlState::Running => "Task is in progress.".to_string(),
         SlackTaskControlState::CancellationRequested {
             requested_by_user_id,
         } => {
             if requested_by_user_id.is_empty() {
-                "Cancellation requested. Stopping the investigation...".to_string()
+                "Cancellation requested. Stopping the task...".to_string()
             } else {
-                format!(
-                    "Cancellation requested by <@{requested_by_user_id}>. Stopping the investigation..."
-                )
+                format!("Cancellation requested by <@{requested_by_user_id}>. Stopping the task...")
             }
         }
         SlackTaskControlState::Cancelled {
             cancelled_by_user_id,
         } => {
             if cancelled_by_user_id.is_empty() {
-                "Investigation cancelled.".to_string()
+                "Task cancelled.".to_string()
             } else {
-                format!("Investigation cancelled by <@{cancelled_by_user_id}>.")
+                format!("Task cancelled by <@{cancelled_by_user_id}>.")
             }
         }
-        SlackTaskControlState::Completed => "Investigation completed.".to_string(),
-        SlackTaskControlState::Failed => "Investigation failed.".to_string(),
+        SlackTaskControlState::Completed => "Task completed.".to_string(),
+        SlackTaskControlState::Failed => "Task failed.".to_string(),
     }
 }
 
@@ -176,13 +174,13 @@ mod tests {
             .and(body_json(json!({
                 "channel": "C123",
                 "thread_ts": "1710000000.000001",
-                "text": "Investigation queued.",
+                "text": "Task queued.",
                 "blocks": [
                     {
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": "Investigation queued."
+                            "text": "Task queued."
                         }
                     },
                     {
@@ -239,13 +237,13 @@ mod tests {
             .and(body_json(json!({
                 "channel": "C123",
                 "ts": "1710000000.000002",
-                "text": "Investigation completed.",
+                "text": "Task completed.",
                 "blocks": [
                     {
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": "Investigation completed."
+                            "text": "Task completed."
                         }
                     }
                 ],
@@ -275,6 +273,50 @@ mod tests {
             })
             .await
             .expect("update control message");
+    }
+
+    #[test]
+    fn renders_task_oriented_control_text() {
+        assert_eq!(
+            super::render_control_text(&SlackTaskControlState::Queued),
+            "Task queued."
+        );
+        assert_eq!(
+            super::render_control_text(&SlackTaskControlState::Running),
+            "Task is in progress."
+        );
+        assert_eq!(
+            super::render_control_text(&SlackTaskControlState::CancellationRequested {
+                requested_by_user_id: String::new(),
+            }),
+            "Cancellation requested. Stopping the task..."
+        );
+        assert_eq!(
+            super::render_control_text(&SlackTaskControlState::CancellationRequested {
+                requested_by_user_id: "U123".to_string(),
+            }),
+            "Cancellation requested by <@U123>. Stopping the task..."
+        );
+        assert_eq!(
+            super::render_control_text(&SlackTaskControlState::Cancelled {
+                cancelled_by_user_id: String::new(),
+            }),
+            "Task cancelled."
+        );
+        assert_eq!(
+            super::render_control_text(&SlackTaskControlState::Cancelled {
+                cancelled_by_user_id: "U123".to_string(),
+            }),
+            "Task cancelled by <@U123>."
+        );
+        assert_eq!(
+            super::render_control_text(&SlackTaskControlState::Completed),
+            "Task completed."
+        );
+        assert_eq!(
+            super::render_control_text(&SlackTaskControlState::Failed),
+            "Task failed."
+        );
     }
 
     fn create_client(base_url: &str) -> SlackWebApiClient {
