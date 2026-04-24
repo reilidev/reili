@@ -4,13 +4,14 @@ use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::logger::TracingLogger;
 use reili_adapters::outbound::agents::{
     AnthropicTaskRunner, AnthropicTaskRunnerInput, BedrockTaskRunner, BedrockTaskRunnerInput,
-    DatadogMcpToolConfig, OpenAiTaskRunner, OpenAiTaskRunnerInput, VertexAiGeminiClient,
-    VertexAiTaskRunner, VertexAiTaskRunnerInput,
+    DatadogMcpToolConfig, OpenAiTaskRunner, OpenAiTaskRunnerInput, TaskAgentConnectors,
+    TaskAgentEsaConnector, VertexAiGeminiClient, VertexAiTaskRunner, VertexAiTaskRunnerInput,
 };
 use reili_adapters::outbound::anthropic::{
     AnthropicWebSearchAdapter, AnthropicWebSearchAdapterConfig,
 };
 use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
+use reili_adapters::outbound::esa::{EsaClient, EsaClientConfig, EsaPostSearchPort};
 use reili_adapters::outbound::github::GitHubMcpConfig;
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
@@ -47,8 +48,8 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::config::{
-    AppConfig, LlmProviderConfig, SecretString, SlackAuthorizationConfig, SlackConnectionMode,
-    VertexAiLlmConfig,
+    AppConfig, EsaConfig, LlmProviderConfig, SecretString, SlackAuthorizationConfig,
+    SlackConnectionMode, VertexAiLlmConfig,
 };
 
 pub struct RuntimeDeps {
@@ -82,6 +83,7 @@ struct CreateProviderPortsInput<'a> {
     datadog_site: String,
     github_mcp: GitHubMcpConfig,
     github_scope_org: String,
+    connectors: TaskAgentConnectors,
     language: String,
     additional_system_prompt: Option<String>,
 }
@@ -112,6 +114,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let slack_message_search_port: Arc<dyn SlackMessageSearchPort> = Arc::new(
         SlackMessageSearchAdapter::new(Arc::clone(&slack_web_api_client)),
     );
+    let connectors = build_task_agent_connectors(config.esa.as_ref())?;
     let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
     let in_flight_job_registry = reili_application::task::services::InFlightJobRegistry::new();
     let provider_ports = create_provider_ports(CreateProviderPortsInput {
@@ -126,6 +129,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
             installation_id: config.github.installation_id,
         },
         github_scope_org: config.github.scope_org.clone(),
+        connectors,
         language: config.language.clone(),
         additional_system_prompt: config.additional_system_prompt.clone(),
     })
@@ -267,6 +271,32 @@ fn build_slack_signature_verifier(
     }
 }
 
+fn build_task_agent_connectors(
+    config: Option<&EsaConfig>,
+) -> Result<TaskAgentConnectors, PortError> {
+    let esa = config.map(build_esa_connector).transpose()?;
+
+    Ok(TaskAgentConnectors { esa })
+}
+
+fn build_esa_connector(config: &EsaConfig) -> Result<TaskAgentEsaConnector, PortError> {
+    let post_search_port = build_esa_post_search_port(config)?;
+
+    Ok(TaskAgentEsaConnector {
+        team_name: config.team_name.clone(),
+        post_search_port,
+    })
+}
+
+fn build_esa_post_search_port(config: &EsaConfig) -> Result<Arc<dyn EsaPostSearchPort>, PortError> {
+    let client = EsaClient::new(EsaClientConfig {
+        access_token: config.access_token.clone(),
+        team_name: config.team_name.clone(),
+    })?;
+
+    Ok(Arc::new(client))
+}
+
 async fn create_provider_ports(
     input: CreateProviderPortsInput<'_>,
 ) -> Result<ProviderPorts, RuntimeBootstrapError> {
@@ -286,6 +316,7 @@ async fn create_provider_ports(
                 },
                 github_mcp: input.github_mcp,
                 github_scope_org: input.github_scope_org,
+                connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
             })),
@@ -307,6 +338,7 @@ async fn create_provider_ports(
                 },
                 github_mcp: input.github_mcp,
                 github_scope_org: input.github_scope_org,
+                connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
             })),
@@ -328,6 +360,7 @@ async fn create_provider_ports(
                 },
                 github_mcp: input.github_mcp,
                 github_scope_org: input.github_scope_org,
+                connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
             })),
@@ -352,6 +385,7 @@ async fn create_provider_ports(
                     },
                     github_mcp: input.github_mcp,
                     github_scope_org: input.github_scope_org,
+                    connectors: input.connectors,
                     language: input.language,
                     additional_system_prompt: input.additional_system_prompt,
                 })),
@@ -395,8 +429,8 @@ async fn resolve_slack_bot_user_id(
 
 #[cfg(test)]
 mod tests {
-    use super::build_slack_signature_verifier;
-    use crate::config::{SecretString, SlackConnectionMode};
+    use super::{build_slack_signature_verifier, build_task_agent_connectors};
+    use crate::config::{EsaConfig, SecretString, SlackConnectionMode};
 
     #[test]
     fn socket_mode_does_not_build_signature_verifier_even_with_secret() {
@@ -426,5 +460,24 @@ mod tests {
             .expect("build verifier");
 
         assert!(verifier.is_none());
+    }
+
+    #[test]
+    fn task_agent_connectors_omit_esa_when_not_configured() {
+        let connectors = build_task_agent_connectors(None).expect("build optional connectors");
+
+        assert!(connectors.esa.is_none());
+    }
+
+    #[test]
+    fn task_agent_connectors_include_esa_when_configured() {
+        let connectors = build_task_agent_connectors(Some(&EsaConfig {
+            team_name: "docs".to_string(),
+            access_token: SecretString::from("esa-token"),
+        }))
+        .expect("build connectors");
+
+        let esa = connectors.esa.expect("esa connector");
+        assert_eq!(esa.team_name, "docs");
     }
 }

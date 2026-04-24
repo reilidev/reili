@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod anthropic;
 pub mod bedrock;
+pub mod esa;
 pub mod github;
 pub mod openai;
 pub mod slack;

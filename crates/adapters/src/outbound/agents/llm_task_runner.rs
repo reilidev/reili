@@ -17,8 +17,8 @@ use super::llm_provider_settings::LlmProviderSettings;
 use super::llm_usage_collector::LlmUsageCollector;
 use super::task_agent::{
     AgentInstructionsConfig, BuildTaskAgentInput, CreateTaskAgentFactoryInput, TaskAgentConfig,
-    TaskAgentExecutionContext, TaskAgentFactory, TaskAgentRunContext, TaskAgentToolsets,
-    build_task_prompt,
+    TaskAgentConnectors, TaskAgentExecutionContext, TaskAgentFactory, TaskAgentRunContext,
+    TaskAgentToolsets, build_task_prompt,
 };
 use crate::outbound::github::GitHubMcpConfig;
 
@@ -31,6 +31,7 @@ where
     pub datadog_mcp: DatadogMcpToolConfig,
     pub github_mcp: GitHubMcpConfig,
     pub github_scope_org: String,
+    pub connectors: TaskAgentConnectors,
     pub language: String,
     pub additional_system_prompt: Option<String>,
     pub run: RunTaskInput,
@@ -112,6 +113,7 @@ where
             datadog: datadog_mcp_toolset,
             github: github_mcp_toolset,
         },
+        connectors: input.connectors,
     });
 
     let prompt_response_result = task_agent

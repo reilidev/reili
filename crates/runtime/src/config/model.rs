@@ -119,6 +119,12 @@ impl GitHubConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EsaConfig {
+    pub team_name: String,
+    pub access_token: SecretString,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub slack_bot_token: SecretString,
     pub slack_signing_secret: Option<SecretString>,
@@ -133,6 +139,7 @@ pub struct AppConfig {
     pub datadog_site: String,
     pub llm: LlmConfig,
     pub github: GitHubConfig,
+    pub esa: Option<EsaConfig>,
     pub language: String,
     pub additional_system_prompt: Option<String>,
 }
@@ -140,8 +147,8 @@ pub struct AppConfig {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppConfig, GitHubConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig, SecretString,
-        SlackConnectionMode,
+        AppConfig, EsaConfig, GitHubConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig,
+        SecretString, SlackConnectionMode,
     };
 
     #[test]
@@ -174,6 +181,10 @@ mod tests {
                 installation_id: 99,
                 scope_org: "example-org".to_string(),
             },
+            esa: Some(EsaConfig {
+                team_name: "docs".to_string(),
+                access_token: SecretString::new("esa-token".to_string()),
+            }),
             language: "English".to_string(),
             additional_system_prompt: None,
         };
@@ -187,6 +198,7 @@ mod tests {
         assert!(!debug_output.contains("dd-app"));
         assert!(!debug_output.contains("openai-secret"));
         assert!(!debug_output.contains("private-key"));
+        assert!(!debug_output.contains("esa-token"));
         assert!(debug_output.contains("[REDACTED]"));
     }
 }

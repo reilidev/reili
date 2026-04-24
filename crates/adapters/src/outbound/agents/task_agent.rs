@@ -24,14 +24,16 @@ use super::{
     llm_provider_settings::LlmProviderSettings, llm_usage_collector::LlmUsageCollector,
     progress_reporting_sub_agent_tool::ProgressReportingSubAgentTool,
 };
+use crate::outbound::esa::EsaPostSearchPort;
 use instructions::{BuildTaskInstructionsInput, build_task_instructions};
 use specialists::{
-    BuildDatadogAgentInput, BuildGithubAgentInput, CreateSpecialistAgentFactoryInput,
-    SpecialistAgentConfig, SpecialistAgentFactory,
+    BuildDatadogAgentInput, BuildEsaAgentInput, BuildGithubAgentInput,
+    CreateSpecialistAgentFactoryInput, SpecialistAgentConfig, SpecialistAgentFactory,
 };
 
 pub(super) const DATADOG_PROGRESS_OWNER_ID: &str = "investigate_datadog";
 pub(super) const GITHUB_PROGRESS_OWNER_ID: &str = "investigate_github";
+pub(super) const ESA_PROGRESS_OWNER_ID: &str = "investigate_esa";
 
 type CompletionAgent<C> = Agent<<C as CompletionClient>::CompletionModel>;
 
@@ -54,6 +56,7 @@ where
 pub struct BuildTaskAgentInput {
     pub run_context: TaskAgentRunContext,
     pub toolsets: TaskAgentToolsets,
+    pub connectors: TaskAgentConnectors,
 }
 
 impl<C> TaskAgentFactory<C>
@@ -89,6 +92,18 @@ where
             toolset: input.toolsets.github.clone(),
             github_scope_org: self.config.instructions.github_scope_org.clone(),
         });
+        let esa_agent = input.connectors.esa.as_ref().map(|connector| {
+            specialist_factory.build_esa(BuildEsaAgentInput {
+                run_context: &input.run_context,
+                esa_post_search_port: Arc::clone(&connector.post_search_port),
+                esa_team_name: connector.team_name.clone(),
+            })
+        });
+        let esa_team_name = input
+            .connectors
+            .esa
+            .as_ref()
+            .map(|connector| connector.team_name.clone());
 
         let builder = self
             .client
@@ -98,6 +113,7 @@ where
             .preamble(&build_task_instructions(BuildTaskInstructionsInput {
                 datadog_site: self.config.instructions.datadog_site.clone(),
                 github_scope_org: self.config.instructions.github_scope_org.clone(),
+                esa_team_name,
                 runtime: input.run_context.execution.runtime.clone(),
                 language: self.config.instructions.language.clone(),
                 additional_system_prompt: self.config.instructions.additional_system_prompt.clone(),
@@ -106,7 +122,7 @@ where
             .additional_params(self.config.settings.additional_params.clone());
         let builder = with_max_tokens(builder, self.config.settings.max_tokens);
 
-        builder
+        let builder = builder
             .tools(input.toolsets.datadog.lead_tools())
             .tool(ReportProgressTool::new(ReportProgressToolInput {
                 on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
@@ -126,8 +142,17 @@ where
                 github_agent,
                 GITHUB_PROGRESS_OWNER_ID.to_string(),
                 Arc::clone(&input.run_context.execution.on_progress_event),
-            ))
-            .build()
+            ));
+        let builder = match esa_agent {
+            Some(esa_agent) => builder.tool(ProgressReportingSubAgentTool::new(
+                esa_agent,
+                ESA_PROGRESS_OWNER_ID.to_string(),
+                Arc::clone(&input.run_context.execution.on_progress_event),
+            )),
+            None => builder,
+        };
+
+        builder.build()
     }
 
     fn specialist_config(&self) -> SpecialistAgentConfig {
@@ -173,6 +198,19 @@ pub struct TaskAgentExecutionContext {
 pub struct TaskAgentToolsets {
     pub datadog: DatadogMcpToolset,
     pub github: GitHubMcpToolset,
+}
+
+#[derive(Clone)]
+pub struct TaskAgentConnectors {
+    // Datadog and GitHub should move here when their specialist dependencies are modeled as
+    // connector ports instead of MCP toolsets.
+    pub esa: Option<TaskAgentEsaConnector>,
+}
+
+#[derive(Clone)]
+pub struct TaskAgentEsaConnector {
+    pub team_name: String,
+    pub post_search_port: Arc<dyn EsaPostSearchPort>,
 }
 
 fn with_max_tokens<M, H>(
