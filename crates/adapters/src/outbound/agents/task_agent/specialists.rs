@@ -229,7 +229,7 @@ When instructing this specialist, include the relevant background, context, and 
             .agent(settings.specialist_model.clone())
             .name("investigate_esa")
             .description(
-                "Delegates esa internal documentation, runbook, operational note, and knowledge base search tasks.
+                "Delegates esa internal documentation, runbook, design note, team knowledge, and broader knowledge base search tasks.
 When instructing this specialist, include the relevant background, context, and why the documentation search matters, not just the immediate keywords.",
             )
             .preamble(&build_esa_instructions(BuildEsaInstructionsInput {

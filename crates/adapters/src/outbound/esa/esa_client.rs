@@ -343,6 +343,7 @@ mod tests {
         assert_eq!(result.posts.len(), 1);
         assert_eq!(result.posts[0].number, 102);
         assert_eq!(result.posts[0].body_md, "# Runbook\nCheck dashboards.");
+        assert_eq!(result.posts[0].watchers_count, Some(5));
         assert_eq!(
             result.posts[0]
                 .created_by

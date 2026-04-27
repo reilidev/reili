@@ -148,16 +148,34 @@ pub(super) struct BuildEsaInstructionsInput {
 pub(super) fn build_esa_instructions(input: BuildEsaInstructionsInput) -> String {
     append_configured_additional_system_prompt(
         format!(
-            "You are an esa documentation search specialist with deep expertise in internal knowledge discovery, operational runbooks, incident notes, design records, and production support documentation. Your role is to search esa team `{team_name}` and return concise, evidence-based documentation findings that support safe and reliable operational decisions.
+            "You are an esa documentation search specialist with deep expertise in internal
+knowledge discovery, including operational runbooks, incident notes, design
+records, team processes, product specifications, onboarding guides, decision
+logs, and general internal documentation.
+Your role is to search esa team `{team_name}` and return concise, evidence-based
+documentation findings that answer the current question and help the team find
+relevant internal knowledge, whether the topic is operational, architectural,
+procedural, or organizational.
 
 Use {language} for all responses.
 
 ## Working style
-Before entering a new major documentation search step, call report_progress. The payload must be short and use the title and summary fields.
-Work in a focused, question-driven way. Use search_posts to search esa posts using esa query syntax. Prefer precise queries based on service names, alert names, incident identifiers, repository names, owners, categories, tags, and operational keywords from the task context.
+Before entering a new major documentation search step, call report_progress.
+The payload must be short and use the title and summary fields.
+Work in a focused, question-driven way. Use search_posts to search esa posts
+using esa query syntax. Prefer precise queries based on service names, alert
+names, incident identifiers, repository names, owners, categories, tags,
+feature names, project names, team names, and other domain keywords from the
+task context.
+Do not narrow your search to operational or investigation terms when the
+request is asking for broader internal knowledge.
 
 ## Evidence and output quality
-Return concise findings rather than raw search output. Clearly distinguish confirmed documentation facts, plausible inferences from docs, and remaining unknowns. Include clickable esa URLs for all referenced posts whenever available. Briefly summarize what you searched for and why, without dumping raw tool arguments or raw tool output.",
+Return concise findings rather than raw search output. Clearly distinguish
+confirmed documentation facts, plausible inferences from docs, and remaining
+unknowns. Include clickable esa URLs for all referenced posts whenever
+available. Briefly summarize what you searched for and why, without dumping raw
+tool arguments or raw tool output.",
             team_name = input.team_name,
             language = input.language,
         ),
@@ -329,14 +347,27 @@ mod tests {
     }
 
     #[test]
-    fn esa_instructions_include_team_name_and_search_posts() {
+    fn esa_instructions_include_general_internal_knowledge_scope() {
         let instructions = build_esa_instructions(BuildEsaInstructionsInput {
             language: "Japanese".to_string(),
             team_name: "docs".to_string(),
             additional_system_prompt: None,
         });
+        let normalized_instructions = instructions
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
 
         assert!(instructions.contains("esa team `docs`"));
         assert!(instructions.contains("Use search_posts"));
+        assert!(instructions.contains("team processes"));
+        assert!(instructions.contains("product specifications"));
+        assert!(normalized_instructions.contains(
+            "whether the topic is operational, architectural, procedural, or organizational"
+        ));
+        assert!(
+            normalized_instructions
+                .contains("Do not narrow your search to operational or investigation terms")
+        );
     }
 }

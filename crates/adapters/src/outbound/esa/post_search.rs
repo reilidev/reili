@@ -55,6 +55,7 @@ pub struct EsaPost {
     pub created_by: Option<EsaUser>,
     pub updated_by: Option<EsaUser>,
     pub comments_count: Option<u32>,
+    pub watchers_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
