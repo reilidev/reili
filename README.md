@@ -10,7 +10,7 @@
 ## What is Reili?
 Reili works as an AI team member on your team, handling SRE and DevOps responsibilities.
 
-When you assign a task to Reili, it will gather information from sources such as Datadog, GitHub, and Slack to carry out the work
+When you assign a task to Reili, it will gather information from sources such as Datadog, GitHub, Slack, and configured knowledge bases to carry out the work
 As a general rule, Reili does not make changes to the production environment or perform recovery operations; instead,
 it uses the gathered information to investigate issues and generate reports.
 
@@ -24,7 +24,7 @@ Give Reili a Slack message or a task, and it will:
 
 - Investigate in Slack public channels like a teammate, working from the
   ongoing conversation where your team is already collaborating
-- Connect Datadog telemetry, GitHub repositories and changes, and
+- Connect Datadog telemetry, GitHub repositories and changes, optional esa knowledge base docs, and
   relevant Slack public-channel history to build investigation context
 - Report back with what it found so your team can decide what to do next
 - Expand over time to cover additional external services beyond Datadog, GitHub, and Slack
@@ -32,7 +32,7 @@ Give Reili a Slack message or a task, and it will:
 ## Core Features
 
 - **Investigation-focused**: Reili reads and reports — it never changes your infrastructure
-- **Cross-service**: works across Datadog, GitHub, and Slack today, with additional services planned over time
+- **Cross-service**: works across Datadog, GitHub, Slack, and optional esa knowledge base search today, with additional services planned over time
 - **Chat-based**: currently works in Slack
 
 ## Quick Start
@@ -52,6 +52,7 @@ Give Reili a Slack message or a task, and it will:
   - Create and install it from [pages/create-github-app.html](./pages/create-github-app.html)
   - Configure the required permissions and scope in
     [GitHub Permissions and Scope](./docs/permissions-and-boundaries.md#github-permissions-and-scope).
+- Optional esa access token with `read` scope when you want Reili to search esa posts.
 
 ### 2. Configure `reili.toml`
 
@@ -74,6 +75,7 @@ Non-secret settings live in `reili.toml`, including:
 - selected AI backend and backend-specific non-secret settings
 - Datadog site
 - GitHub MCP URL, GitHub App ID, installation ID, and search scope org
+- optional esa team name and access-token env var
 
 Runtime config resolution is:
 
@@ -100,6 +102,7 @@ Required secrets depend on your selected Slack mode and backend:
 - `DATADOG_API_KEY`
 - `DATADOG_APP_KEY`
 - `GITHUB_APP_PRIVATE_KEY`
+- `ESA_ACCESS_TOKEN` when `[connector.esa]` is configured
 - `LLM_OPENAI_API_KEY` when the selected backend uses `provider = "openai"`
 - `LLM_ANTHROPIC_API_KEY` when the selected backend uses `provider = "anthropic"`
 
@@ -112,6 +115,12 @@ The Datadog integration talks to the Datadog-hosted MCP server and internally re
 `core,security,dashboards,synthetics` toolsets. Reili still exposes only an allowlisted read-only
 subset of those tools, including dashboard detail retrieval and Synthetic test reads when Datadog
 returns them for your plan and application key permissions.
+
+The optional esa integration is enabled only when `[connector.esa]` is present in `reili.toml`.
+When configured, Reili registers the `investigate_esa` specialist agent. That specialist uses
+`search_posts`, which calls `GET /v1/teams/:team_name/posts` with the esa search query syntax in
+`q`. Omit `[connector.esa]` to avoid reading the esa token env var and to keep the specialist and
+tool unregistered.
 
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`.
 
@@ -189,7 +198,7 @@ What happens:
 
 1. It posts a task control message with a `Cancel` button in the thread
 2. It posts task progress in the thread
-3. It investigates across Datadog and GitHub
+3. It investigates across Datadog, GitHub, and configured knowledge sources
 4. It replies with an evidence-backed summary
 
 If you need to stop a queued or running investigation, click `Cancel` on that task's control
@@ -203,11 +212,11 @@ access, cluster access, or deployment credentials in production.
 
 At a high level, the current runtime:
 
-- reads from Datadog, GitHub, Slack thread history, Slack public-channel search, and web lookup
+- reads from Datadog, GitHub, optional esa posts, Slack thread history, Slack public-channel search, and web lookup
   integrations, and writes only Slack progress and result messages
 - exposes only read-only Datadog MCP tools, including dashboard detail retrieval and Synthetic
   test reads when Datadog returns them
-- does not register tools for Datadog mutations, GitHub writes, remediation, or deployments
+- does not register tools for Datadog mutations, GitHub writes, esa writes, remediation, or deployments
 - is designed to investigate and report, not to change infrastructure, Datadog state, or repository
   state
 

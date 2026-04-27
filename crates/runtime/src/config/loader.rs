@@ -8,8 +8,8 @@ use super::file::{
     parse_file_config,
 };
 use super::model::{
-    AnthropicLlmConfig, AppConfig, BedrockLlmConfig, GitHubConfig, LlmConfig, LlmProviderConfig,
-    OpenAiLlmConfig, SlackAuthorizationActors, SlackAuthorizationChannels,
+    AnthropicLlmConfig, AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, LlmConfig,
+    LlmProviderConfig, OpenAiLlmConfig, SlackAuthorizationActors, SlackAuthorizationChannels,
     SlackAuthorizationConfig, SlackChannelNamePattern, SlackConnectionMode, VertexAiLlmConfig,
 };
 use crate::config::SecretString;
@@ -116,6 +116,7 @@ fn resolve_app_config(
         resolve_slack_authorization(file_config.channel.slack.authorization.as_ref())?;
     let llm_provider = resolve_llm_provider(&file_config.ai, env)?;
     let github = resolve_github_config(&file_config, env)?;
+    let esa = resolve_esa_config(&file_config, env)?;
 
     Ok(AppConfig {
         slack_bot_token,
@@ -144,6 +145,7 @@ fn resolve_app_config(
             provider: llm_provider,
         },
         github,
+        esa,
         language: require_non_empty(&file_config.conversation.language, "conversation.language")?,
         additional_system_prompt: optional_trimmed(
             file_config.conversation.additional_system_prompt.as_deref(),
@@ -426,6 +428,24 @@ fn resolve_github_config(
     })
 }
 
+fn resolve_esa_config(
+    file_config: &FileConfig,
+    env: &dyn EnvironmentReader,
+) -> Result<Option<EsaConfig>, ConfigError> {
+    let Some(esa) = file_config.connector.esa.as_ref() else {
+        return Ok(None);
+    };
+
+    Ok(Some(EsaConfig {
+        team_name: require_non_empty(&esa.team_name, "connector.esa.team_name")?,
+        access_token: read_required_secret(
+            env,
+            &esa.access_token_env,
+            "connector.esa.access_token_env",
+        )?,
+    }))
+}
+
 fn normalize_multiline_secret(secret: SecretString) -> SecretString {
     SecretString::new(secret.expose().replace("\\n", "\n"))
 }
@@ -538,6 +558,10 @@ mod tests {
                     "GITHUB_APP_PRIVATE_KEY".to_string(),
                     "-----BEGIN RSA PRIVATE KEY-----\\nabc\\n-----END RSA PRIVATE KEY-----"
                         .to_string(),
+                ),
+                (
+                    "ESA_ACCESS_TOKEN".to_string(),
+                    "esa-access-token".to_string(),
                 ),
             ]);
 
@@ -932,6 +956,80 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
             config.github.private_key.expose(),
             "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
         );
+    }
+
+    #[test]
+    fn resolves_optional_esa_connector_when_configured() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[connector.esa]
+team_name = "docs"
+access_token_env = "ESA_ACCESS_TOKEN"
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+        let esa = config.esa.expect("esa config");
+
+        assert_eq!(esa.team_name, "docs");
+        assert_eq!(esa.access_token.expose(), "esa-access-token");
+    }
+
+    #[test]
+    fn omits_esa_connector_when_not_configured() {
+        let env = FixedEnvironment::with_overrides(&[("ESA_ACCESS_TOKEN", "")]);
+        let file_config = parse_runtime_config(&valid_openai_config());
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert!(config.esa.is_none());
+    }
+
+    #[test]
+    fn defaults_esa_access_token_env_when_omitted() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[connector.esa]
+team_name = "docs"
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert_eq!(
+            config.esa.expect("esa config").access_token.expose(),
+            "esa-access-token"
+        );
+    }
+
+    #[test]
+    fn rejects_esa_connector_with_missing_access_token_env() {
+        let env = FixedEnvironment::with_overrides(&[("ESA_ACCESS_TOKEN", "")]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[connector.esa]
+team_name = "docs"
+
+[ai]
+"#,
+        ));
+
+        let error = resolve_app_config(file_config, &env)
+            .expect_err("missing esa access token should fail");
+
+        match error {
+            ConfigError::MissingRequiredEnv { env, field } => {
+                assert_eq!(env, "ESA_ACCESS_TOKEN");
+                assert_eq!(field, "connector.esa.access_token_env");
+            }
+            other => panic!("expected missing-env error, got {other}"),
+        }
     }
 
     #[test]

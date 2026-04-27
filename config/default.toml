@@ -107,3 +107,11 @@ app_id = "123456"
 installation_id = "12345678"
 # Optional: env var name for the GitHub App private key. Defaults to `GITHUB_APP_PRIVATE_KEY`.
 private_key_env = "GITHUB_APP_PRIVATE_KEY"
+
+# Optional: esa knowledge base search. Omit this section to disable the `investigate_esa` specialist and its tools.
+#[connector.esa]
+# Required when configured: esa team name, e.g. `docs` for https://docs.esa.io/.
+#team_name = "docs"
+# Optional when configured: env var name for an esa access token with the `read` scope.
+# Defaults to `ESA_ACCESS_TOKEN`.
+#access_token_env = "ESA_ACCESS_TOKEN"

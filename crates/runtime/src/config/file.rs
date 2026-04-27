@@ -65,6 +65,10 @@ fn default_github_app_private_key_env() -> String {
     "GITHUB_APP_PRIVATE_KEY".to_string()
 }
 
+fn default_esa_access_token_env() -> String {
+    "ESA_ACCESS_TOKEN".to_string()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct SlackFileConfig {
     #[serde(default = "default_true")]
@@ -161,6 +165,7 @@ pub(crate) struct ConnectorFileConfig {
     #[serde(default)]
     pub datadog: DatadogConnectorFileConfig,
     pub github: GitHubConnectorFileConfig,
+    pub esa: Option<EsaConnectorFileConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -195,6 +200,13 @@ pub(crate) struct GitHubAppFileConfig {
     pub installation_id: String,
     #[serde(default = "default_github_app_private_key_env")]
     pub private_key_env: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct EsaConnectorFileConfig {
+    pub team_name: String,
+    #[serde(default = "default_esa_access_token_env")]
+    pub access_token_env: String,
 }
 
 pub(crate) fn parse_file_config(path: &Path, contents: &str) -> Result<FileConfig, ConfigError> {

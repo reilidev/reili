@@ -9,6 +9,7 @@ use super::llm_provider_settings::{
     CreateBedrockProviderSettingsInput, LlmProviderSettings, create_bedrock_provider_settings,
 };
 use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
+use super::task_agent::TaskAgentConnectors;
 use crate::outbound::github::GitHubMcpConfig;
 
 pub struct BedrockTaskRunnerInput {
@@ -18,6 +19,7 @@ pub struct BedrockTaskRunnerInput {
     pub datadog_mcp: DatadogMcpToolConfig,
     pub github_mcp: GitHubMcpConfig,
     pub github_scope_org: String,
+    pub connectors: TaskAgentConnectors,
     pub language: String,
     pub additional_system_prompt: Option<String>,
 }
@@ -29,6 +31,7 @@ pub struct BedrockTaskRunner {
     datadog_mcp: DatadogMcpToolConfig,
     github_mcp: GitHubMcpConfig,
     github_scope_org: String,
+    connectors: TaskAgentConnectors,
     language: String,
     additional_system_prompt: Option<String>,
 }
@@ -46,6 +49,7 @@ impl BedrockTaskRunner {
             datadog_mcp: input.datadog_mcp,
             github_mcp: input.github_mcp,
             github_scope_org: input.github_scope_org,
+            connectors: input.connectors,
             language: input.language,
             additional_system_prompt: input.additional_system_prompt,
         }
@@ -64,6 +68,7 @@ impl TaskRunnerPort for BedrockTaskRunner {
             datadog_mcp: self.datadog_mcp.clone(),
             github_mcp: self.github_mcp.clone(),
             github_scope_org: self.github_scope_org.clone(),
+            connectors: self.connectors.clone(),
             language: self.language.clone(),
             additional_system_prompt: self.additional_system_prompt.clone(),
             run: input,
@@ -91,6 +96,7 @@ mod tests {
 
     use super::BedrockTaskRunnerInput;
     use crate::outbound::agents::DatadogMcpToolConfig;
+    use crate::outbound::agents::TaskAgentConnectors;
     use crate::outbound::github::GitHubMcpConfig;
 
     #[test]
@@ -111,6 +117,7 @@ mod tests {
                 installation_id: 99,
             },
             github_scope_org: "example-org".to_string(),
+            connectors: TaskAgentConnectors { esa: None },
             language: "English".to_string(),
             additional_system_prompt: Some("Prefer runbook links.".to_string()),
         };

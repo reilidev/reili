@@ -4,6 +4,7 @@ use reili_core::task::TaskRuntime;
 pub(super) struct BuildTaskInstructionsInput {
     pub(super) datadog_site: String,
     pub(super) github_scope_org: String,
+    pub(super) esa_team_name: Option<String>,
     pub(super) runtime: TaskRuntime,
     pub(super) language: String,
     pub(super) additional_system_prompt: Option<String>,
@@ -15,6 +16,7 @@ pub(super) fn build_task_instructions(input: BuildTaskInstructionsInput) -> Stri
     } else {
         input.datadog_site
     };
+    let esa_team_line = format_esa_team_context_line(input.esa_team_name.as_deref());
 
     append_configured_additional_system_prompt(
         format!(
@@ -32,6 +34,7 @@ Current run context:
 - Slack Thread: {thread_ts}
 - GitHub Organization Scope: {github_scope_org}
 - Datadog Site: {datadog_site}
+{esa_team_line}
 
 You orchestrate SRE work end-to-end, including investigation, operational support, diagnostics, direct retrieval, change assessment, and production guidance.
 - First classify whether the request is operational investigation, operational support, direct retrieval, or another SRE task.
@@ -65,6 +68,7 @@ Final answer requirements:
         thread_ts = input.runtime.thread_ts,
         github_scope_org = input.github_scope_org,
         datadog_site = datadog_site,
+        esa_team_line = esa_team_line,
         ),
         input.additional_system_prompt.as_deref(),
     )
@@ -135,6 +139,50 @@ Whenever you reference GitHub evidence, include the supporting GitHub URL as a c
     )
 }
 
+pub(super) struct BuildEsaInstructionsInput {
+    pub(super) language: String,
+    pub(super) team_name: String,
+    pub(super) additional_system_prompt: Option<String>,
+}
+
+pub(super) fn build_esa_instructions(input: BuildEsaInstructionsInput) -> String {
+    append_configured_additional_system_prompt(
+        format!(
+            "You are an esa documentation search specialist with deep expertise in internal
+knowledge discovery, including operational runbooks, incident notes, design
+records, team processes, product specifications, onboarding guides, decision
+logs, and general internal documentation.
+Your role is to search esa team `{team_name}` and return concise, evidence-based
+documentation findings that answer the current question and help the team find
+relevant internal knowledge, whether the topic is operational, architectural,
+procedural, or organizational.
+
+Use {language} for all responses.
+
+## Working style
+Before entering a new major documentation search step, call report_progress.
+The payload must be short and use the title and summary fields.
+Work in a focused, question-driven way. Use search_posts to search esa posts
+using esa query syntax. Prefer precise queries based on service names, alert
+names, incident identifiers, repository names, owners, categories, tags,
+feature names, project names, team names, and other domain keywords from the
+task context.
+Do not narrow your search to operational or investigation terms when the
+request is asking for broader internal knowledge.
+
+## Evidence and output quality
+Return concise findings rather than raw search output. Clearly distinguish
+confirmed documentation facts, plausible inferences from docs, and remaining
+unknowns. Include clickable esa URLs for all referenced posts whenever
+available. Briefly summarize what you searched for and why, without dumping raw
+tool arguments or raw tool output.",
+            team_name = input.team_name,
+            language = input.language,
+        ),
+        input.additional_system_prompt.as_deref(),
+    )
+}
+
 fn append_configured_additional_system_prompt(
     base_instructions: String,
     additional_system_prompt: Option<&str>,
@@ -150,13 +198,22 @@ fn append_configured_additional_system_prompt(
     }
 }
 
+fn format_esa_team_context_line(team_name: Option<&str>) -> String {
+    team_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("- esa Team: {value}\n"))
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use reili_core::task::TaskRuntime;
 
     use super::{
-        BuildDatadogInstructionsInput, BuildGithubInstructionsInput, BuildTaskInstructionsInput,
-        build_datadog_instructions, build_github_instructions, build_task_instructions,
+        BuildDatadogInstructionsInput, BuildEsaInstructionsInput, BuildGithubInstructionsInput,
+        BuildTaskInstructionsInput, build_datadog_instructions, build_esa_instructions,
+        build_github_instructions, build_task_instructions,
     };
 
     #[test]
@@ -165,6 +222,7 @@ mod tests {
         let task_instructions = build_task_instructions(BuildTaskInstructionsInput {
             datadog_site: "datadoghq.com".to_string(),
             github_scope_org: "acme".to_string(),
+            esa_team_name: Some("docs".to_string()),
             runtime: TaskRuntime {
                 started_at_iso: "2026-01-01T00:00:00Z".to_string(),
                 channel: "C123".to_string(),
@@ -183,8 +241,18 @@ mod tests {
             github_scope_org: "acme".to_string(),
             additional_system_prompt: Some(configured_instructions.to_string()),
         });
+        let esa_instructions = build_esa_instructions(BuildEsaInstructionsInput {
+            language: "Japanese".to_string(),
+            team_name: "docs".to_string(),
+            additional_system_prompt: Some(configured_instructions.to_string()),
+        });
 
-        for instructions in [task_instructions, datadog_instructions, github_instructions] {
+        for instructions in [
+            task_instructions,
+            datadog_instructions,
+            github_instructions,
+            esa_instructions,
+        ] {
             assert!(instructions.contains("Configured additional system prompt instructions"));
             assert!(
                 instructions.contains(
@@ -201,6 +269,7 @@ mod tests {
         let instructions = build_task_instructions(BuildTaskInstructionsInput {
             datadog_site: "datadoghq.com".to_string(),
             github_scope_org: "acme".to_string(),
+            esa_team_name: None,
             runtime: TaskRuntime {
                 started_at_iso: "2026-01-01T00:00:00Z".to_string(),
                 channel: "C123".to_string(),
@@ -221,6 +290,7 @@ mod tests {
         let instructions = build_task_instructions(BuildTaskInstructionsInput {
             datadog_site: "datadoghq.com".to_string(),
             github_scope_org: "acme".to_string(),
+            esa_team_name: None,
             runtime: TaskRuntime {
                 started_at_iso: "2026-01-01T00:00:00Z".to_string(),
                 channel: "C123".to_string(),
@@ -244,5 +314,60 @@ mod tests {
         assert!(!instructions.contains("## Datadog usage"));
         assert!(!instructions.contains("`search_datadog_logs`"));
         assert!(instructions.contains("## Output expectations"));
+    }
+
+    #[test]
+    fn task_instructions_include_only_esa_team_when_configured() {
+        let runtime = TaskRuntime {
+            started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+            channel: "C123".to_string(),
+            thread_ts: "123.456".to_string(),
+            retry_count: 0,
+        };
+        let with_esa = build_task_instructions(BuildTaskInstructionsInput {
+            datadog_site: "datadoghq.com".to_string(),
+            github_scope_org: "acme".to_string(),
+            esa_team_name: Some("docs".to_string()),
+            runtime: runtime.clone(),
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
+        let without_esa = build_task_instructions(BuildTaskInstructionsInput {
+            datadog_site: "datadoghq.com".to_string(),
+            github_scope_org: "acme".to_string(),
+            esa_team_name: None,
+            runtime,
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
+
+        assert!(with_esa.contains("- esa Team: docs"));
+        assert!(!with_esa.contains("Use search_posts"));
+        assert!(!without_esa.contains("esa Team"));
+    }
+
+    #[test]
+    fn esa_instructions_include_general_internal_knowledge_scope() {
+        let instructions = build_esa_instructions(BuildEsaInstructionsInput {
+            language: "Japanese".to_string(),
+            team_name: "docs".to_string(),
+            additional_system_prompt: None,
+        });
+        let normalized_instructions = instructions
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(instructions.contains("esa team `docs`"));
+        assert!(instructions.contains("Use search_posts"));
+        assert!(instructions.contains("team processes"));
+        assert!(instructions.contains("product specifications"));
+        assert!(normalized_instructions.contains(
+            "whether the topic is operational, architectural, procedural, or organizational"
+        ));
+        assert!(
+            normalized_instructions
+                .contains("Do not narrow your search to operational or investigation terms")
+        );
     }
 }

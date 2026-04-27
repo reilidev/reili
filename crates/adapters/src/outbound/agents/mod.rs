@@ -18,4 +18,5 @@ pub use bedrock_task_runner::{BedrockTaskRunner, BedrockTaskRunnerInput};
 pub use datadog_mcp_tools::DatadogMcpToolConfig;
 pub use openai_task_runner::{OpenAiTaskRunner, OpenAiTaskRunnerInput};
 pub use rig_vertexai::Client as VertexAiGeminiClient;
+pub use task_agent::{TaskAgentConnectors, TaskAgentEsaConnector};
 pub use vertex_ai_task_runner::{VertexAiTaskRunner, VertexAiTaskRunnerInput};

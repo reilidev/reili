@@ -10,7 +10,7 @@ are the integrations and tools wired in this runtime.
 
 ## Agent Tool Inventory
 
-The task runner can call only the following tool families:
+The runtime can expose only the following tool families:
 
 - Slack progress reporting: `report_progress` (primarily used to post progress messages back to Slack)
 - Slack workspace lookup: `search_slack_messages` (searches prior Slack public-channel messages visible to the current invocation context)
@@ -24,10 +24,11 @@ The task runner can call only the following tool families:
 - GitHub MCP reads: `search_code`, `search_repositories`, `search_issues`,
   `search_pull_requests`, `get_file_contents`, `pull_request_read`, `actions_get`,
   `actions_list`, `get_job_logs`, `get_dependabot_alert`, `list_dependabot_alerts`
+- esa specialist delegation when `[connector.esa]` is configured: `investigate_esa`
 - External web lookup: `search_web`
 
 In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog
-mutations, remediation, or deployments.
+mutations, esa writes, remediation, or deployments.
 
 ## Slack Permissions and API Usage
 
@@ -267,6 +268,41 @@ GitHub boundary in the current runtime:
 - All GitHub search queries must stay inside `GITHUB_SEARCH_SCOPE_ORG`
 - Repository content, pull request, Actions, and Dependabot reads are rejected when the owner is
   outside `GITHUB_SEARCH_SCOPE_ORG`
+
+## esa Permissions and Scope
+
+Reili can optionally search an esa team's posts as an internal documentation source.
+This integration is disabled unless `[connector.esa]` is present in `reili.toml`.
+When the section is omitted, Reili does not read `ESA_ACCESS_TOKEN` and does not register
+`investigate_esa` or `search_posts`.
+
+Required esa credential when configured:
+
+- `ESA_ACCESS_TOKEN`: an esa access token with the `read` scope for the configured team
+
+Required `reili.toml` fields when configured:
+
+- `connector.esa.team_name`: esa team name, e.g. `docs` for `https://docs.esa.io/`
+- `connector.esa.access_token_env`: optional env var name; defaults to `ESA_ACCESS_TOKEN`
+
+esa API endpoint currently used by the runtime:
+
+- `GET /v1/teams/:team_name/posts`
+
+esa capabilities currently used by the runtime:
+
+- Delegate documentation investigation to the `investigate_esa` specialist agent
+- Search posts through the specialist's `search_posts` tool using esa's `q` search syntax
+- Return post metadata, links, tags, authors, pagination metadata, and Markdown body content from
+  the search response
+
+esa boundary:
+
+- No esa write endpoints are called by this runtime
+- Reili does not create, edit, delete, star, watch, archive, share, or comment on esa posts
+- Requests are scoped to the single configured esa team
+- Query construction is controlled by the agent through the `q` field and follows esa's post search
+  syntax
 
 ## LLM Boundary
 
