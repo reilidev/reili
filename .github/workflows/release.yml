@@ -32,7 +32,7 @@ jobs:
           app-id: ${{ vars.REILI_BOT_APP_ID }}
           private-key: ${{ secrets.REILI_BOT_APP_PRIVATE_KEY }}
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
@@ -43,7 +43,7 @@ jobs:
           toolchain: stable
 
       - id: tagpr
-        uses: Songmu/tagpr@v1.17.1
+        uses: Songmu/tagpr@b3fb89424646b06c8aa460f50307c60b6a541425 # v1.17.1
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
@@ -119,7 +119,7 @@ jobs:
           app-id: ${{ vars.REILI_BOT_APP_ID }}
           private-key: ${{ secrets.REILI_BOT_APP_PRIVATE_KEY }}
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: release-bundle-*
           merge-multiple: true
@@ -145,7 +145,7 @@ jobs:
       packages: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         id: app-token
@@ -182,18 +182,18 @@ jobs:
               "dist/docker/${arch}/${BIN_NAME}"
           done
 
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
 
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6
         with:
           images: ghcr.io/${{ github.repository }}
           flavor: |
@@ -204,7 +204,7 @@ jobs:
             type=raw,value=latest,enable=${{ !contains(needs.release-metadata.outputs.version, '-') }}
             type=sha
 
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
         with:
           context: .
           file: ./Dockerfile
@@ -228,14 +228,14 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
           name: ${{ env.PAGES_ARTIFACT_NAME }}
           path: pages
 
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
         with:
           artifact_name: ${{ env.PAGES_ARTIFACT_NAME }}
