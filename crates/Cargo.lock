@@ -1908,9 +1908,11 @@ dependencies = [
  "base64",
  "getrandom 0.2.17",
  "js-sys",
+ "pem",
  "serde",
  "serde_json",
  "signature",
+ "simple_asn1",
 ]
 
 [[package]]
@@ -2605,7 +2607,7 @@ dependencies = [
  "futures",
  "google-cloud-aiplatform-v1",
  "http 1.4.0",
- "jsonwebtoken 9.3.1",
+ "jsonwebtoken 10.3.0",
  "mockall",
  "octocrab",
  "reili_core",

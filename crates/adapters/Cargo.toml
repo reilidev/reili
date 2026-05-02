@@ -17,7 +17,7 @@ chrono = { version = "0.4.44", features = ["clock"] }
 futures = "0.3.32"
 google-cloud-aiplatform-v1 = { version = "1.9.0", default-features = false, features = ["prediction-service"] }
 http = "1.4.0"
-jsonwebtoken = "9.3.1"
+jsonwebtoken = "10.0.0"
 octocrab = "0.39.0"
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "query", "rustls"] }
 rig-core = { version = "0.34.0", features = ["rmcp"] }
