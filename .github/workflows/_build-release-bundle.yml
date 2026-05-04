@@ -30,7 +30,7 @@ jobs:
       contents: read
     runs-on: ${{ inputs.runner }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # release tag v1; upstream does not publish v1.x.y tags
         with:
@@ -68,7 +68,7 @@ jobs:
           tar -C dist -czf "dist/${package_name}.tar.gz" "${package_name}"
           sha256sum "dist/${package_name}.tar.gz" > "dist/${package_name}.sha256"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-bundle-${{ inputs.arch }}
           path: |
