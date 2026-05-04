@@ -311,7 +311,7 @@ mod tests {
 
         assert!(!instructions.contains("`search_datadog_services`"));
         assert!(!instructions.contains("`search_datadog_security_signals`"));
-        assert!(instructions.contains("Delegate detailed Datadog work to investigate_datadog"));
+        assert!(!instructions.contains("investigate_datadog"));
     }
 
     #[test]
