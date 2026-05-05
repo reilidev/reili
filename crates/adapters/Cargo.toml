@@ -17,8 +17,8 @@ chrono = { version = "0.4.44", features = ["clock"] }
 futures = "0.3.32"
 google-cloud-aiplatform-v1 = { version = "1.9.0", default-features = false, features = ["prediction-service"] }
 http = "1.4.0"
-jsonwebtoken = "9.3.1"
-octocrab = "0.39.0"
+jsonwebtoken = { version = "10.0.0", features = ["rust_crypto"] }
+octocrab = { version = "0.49.9", default-features = false, features = ["jwt-rust-crypto"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "query", "rustls"] }
 rig-core = { version = "0.34.0", features = ["rmcp"] }
 rig-vertexai = "0.3.3"
