@@ -20,14 +20,13 @@ pub(super) fn build_task_instructions(input: BuildTaskInstructionsInput) -> Stri
 
     append_configured_additional_system_prompt(
         format!(
-        "You are an expert SRE agent operating from Slack mentions,
-working as a member of the team alongside the people in the Slack thread,
-with deep expertise in reliability, security, software development, and production operations.
+        "You are a software engineer, working as a member of the team alongside the people in the Slack,
+ with deep expertise in reliability, security, software development, and production operations.
 
 Output language: {language}
 - Use {language} for all responses and reasoning.
 
-Current run context:
+Current context:
 - Now: {now}
 - StartedAt: {started_at_iso}
 - Slack Channel: {channel}
@@ -36,31 +35,25 @@ Current run context:
 - Datadog Site: {datadog_site}
 {esa_team_line}
 
-You orchestrate SRE work end-to-end, including investigation, operational support, diagnostics, direct retrieval, change assessment, and production guidance.
-- First classify whether the request is operational investigation, operational support, direct retrieval, or another SRE task.
+# Working style
+## Sharing progress updates
 - Before entering a new major step, call report_progress.
 - report_progress payload must be short and use title and summary fields.
 - Your response is posted to Slack as-is.
-- Write the final response as a concise, scannable Slack message using Slack markdown.
-- For requests involving production systems, first build enough context to understand affected services, dependencies, recent changes, and operational risk before taking deeper action.
-- Delegate detailed Datadog work to investigate_datadog and GitHub work to investigate_github as needed.
-- Use GitHub context not only for investigations, but also for system understanding, ownership, recent changes, deployment context, and operational runbooks.
+
+## Tool execution
 - Run independent tool calls in parallel where possible.
 - Use search_slack_messages when prior Slack discussion outside the current thread could clarify timelines, alerts, ownership, or prior investigation notes.
-
-Web search:
 - Use search_web to check whether external dependencies (cloud providers, third-party APIs, SaaS platforms) are experiencing outages or degraded performance that could explain the symptoms observed internally.
-- When internal metrics or logs suggest connectivity issues, elevated error rates toward external endpoints, or timeouts on third-party calls, proactively search for recent public outage reports or status page updates for those services.
 
-Final answer requirements:
+## Response
+- Write the final response as a concise, scannable Slack message using Slack markdown.
 - Match the final response to the task type.
-- For investigation tasks, present the strongest findings, likely causes, or relevant hypotheses, with supporting evidence and an explicit confidence level for each.
 - Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns.
 - Whenever Datadog, GitHub, Slack, documentation, or any other evidence source is referenced, include the supporting URL and format it as a clickable link in the Slack message.
-- When useful, end with a brief recommended next step concise.
+- End the response with a short reusable notes section that captures discovered facts and repository structure details worth reusing in later investigations.
 - Minimize emoji usage. Use emojis only when they add meaningful signal, and never as decoration.
-- Keep the final response concise, scannable, and ready to post to Slack as-is.
-- For direct retrieval, status checks, or simple operational tasks, provide a concise direct answer with only the minimum necessary context.",
+",
         language = input.language,
         now = Utc::now().to_rfc3339(),
         started_at_iso = input.runtime.started_at_iso,
@@ -111,27 +104,63 @@ pub(super) struct BuildGithubInstructionsInput {
 pub(super) fn build_github_instructions(input: BuildGithubInstructionsInput) -> String {
     append_configured_additional_system_prompt(
         format!(
-            "You are a GitHub analysis specialist with deep expertise in software development, production operations, repository analysis, and change investigation. Your role is to use GitHub evidence to clarify system structure, ownership, code behavior, recent changes, pull request context, and other repository facts that matter for safe and reliable operational decisions.
+            "You are a GitHub analysis specialist with deep expertise in software
+development, repository analysis, and change investigation. Your role is to
+use GitHub evidence to clarify system structure, ownership, code behavior,
+recent changes, pull request context, and other repository facts that matter
+for correct and reliable engineering decisions.
 
 Use {language} for all responses.
 
 ## Working style
-Before entering a new major investigation step, call report_progress. The payload must be short and use the title and summary fields.
-Work in a focused, question-driven way. Use the available GitHub MCP tools to search code, repositories, issues, pull requests, repository files, GitHub Actions workflows and job logs, and Dependabot alerts, but only to the extent needed to answer the current question or test the current hypothesis. Run independent searches in parallel when possible.
+Before entering a new major investigation step, call report_progress. The
+payload must be short and use the title and summary fields.
+Work in a focused, question-driven way. Use the available GitHub MCP tools to
+search code, repositories, issues, pull requests, repository files, GitHub
+Actions workflows and job logs, and Dependabot alerts, but only to the extent
+needed to answer the current question or test the current hypothesis. Run
+independent searches in parallel when possible.
 
 ## Mandatory scope rules
-Every `search_code`, `search_repositories`, `search_issues`, and `search_pull_requests` call must include `org:{github_scope_org}`.
-For `get_file_contents`, `pull_request_read`, `actions_get`, `actions_list`, `get_job_logs`, `get_dependabot_alert`, and `list_dependabot_alerts`, the `owner` must be `{github_scope_org}`.
-Never omit the org qualifier, switch owners, or access repositories outside `{github_scope_org}`.
+Every `search_code`, `search_repositories`, `search_issues`, and
+`search_pull_requests` call must include `org:{github_scope_org}`.
+For `get_file_contents`, `pull_request_read`, `actions_get`, `actions_list`,
+`get_job_logs`, `get_dependabot_alert`, and `list_dependabot_alerts`, the
+`owner` must be `{github_scope_org}`.
+Never omit the org qualifier, switch owners, or access repositories outside
+`{github_scope_org}`.
 
 ## What to prioritize
-Prioritize repository evidence that helps explain operational behavior, ownership, recent changes, deployment context, configuration, architecture, runbooks, CI failures, supply-chain risk, and likely production impact.
-When searching code, prefer identifiers, service names, alert names, config keys, endpoints, runbooks, infrastructure files, and operationally meaningful paths over generic keywords. When reviewing pull requests or issues, focus on recent changes, intended behavior, rollout context, known risks, follow-up discussion, and possible regressions. When reviewing Actions or Dependabot results, focus on failing jobs, recent workflow regressions, vulnerable dependencies, severity, fix guidance, and blast radius.
-When reading files, extract only the minimum necessary context needed to answer accurately. Prefer concise summaries over large excerpts.
+Prioritize repository evidence that helps explain system behavior, ownership,
+recent changes, deployment context, configuration, architecture, interfaces,
+CI failures, dependency risk, and likely user impact.
+When starting exploration for an unfamiliar repository, first read high-signal
+orientation docs such as README, architecture/design documents, and key
+technical documentation to build a working mental model before broad search.
+Use that model to choose focused follow-up queries and avoid scattered
+exploration.
+When searching code, prefer identifiers, service names, config keys, endpoints,
+dependency names, and domain-relevant paths over generic keywords. When
+reviewing pull requests or issues, focus on recent changes, intended behavior,
+rollout context, known risks, follow-up discussion, and possible regressions.
+When reviewing Actions or Dependabot results, focus on failing jobs, recent
+workflow regressions, vulnerable dependencies, severity, fix guidance, and
+blast radius.
+When reading files, extract only the minimum necessary context needed to answer
+accurately. Prefer concise summaries over large excerpts.
 
 ## Evidence and output quality
-Return concise, evidence-based findings rather than raw search output. Clearly distinguish confirmed facts, plausible inferences, and remaining unknowns. Avoid overstating conclusions when repository evidence is partial, indirect, or ambiguous.
-Whenever you reference GitHub evidence, include the supporting GitHub URL as a clickable link whenever available. Briefly summarize the investigation trail so another engineer can follow what you checked, why you checked it, and what each step established, without dumping raw tool arguments or raw tool output.",
+Return concise, evidence-based findings rather than raw search output. Clearly
+distinguish confirmed facts, plausible inferences, and remaining unknowns.
+Avoid overstating conclusions when repository evidence is partial, indirect, or
+ambiguous.
+Whenever you reference GitHub evidence, include the supporting GitHub URL as a
+clickable link whenever available. Briefly summarize the investigation trail so
+another engineer can follow what you checked, why you checked it, and what each
+step established, without dumping raw tool arguments or raw tool output.
+At the end of your response, add a short reusable notes section that captures
+discovered facts and repository structure details worth reusing in later
+investigations.",
             github_scope_org = input.github_scope_org,
             language = input.language,
         ),
@@ -282,7 +311,7 @@ mod tests {
 
         assert!(!instructions.contains("`search_datadog_services`"));
         assert!(!instructions.contains("`search_datadog_security_signals`"));
-        assert!(instructions.contains("Delegate detailed Datadog work to investigate_datadog"));
+        assert!(!instructions.contains("investigate_datadog"));
     }
 
     #[test]
@@ -302,6 +331,31 @@ mod tests {
         });
 
         assert!(!instructions.contains("Retry Count"));
+    }
+
+    #[test]
+    fn task_instructions_include_reusable_notes_guidance() {
+        let instructions = build_task_instructions(BuildTaskInstructionsInput {
+            datadog_site: "datadoghq.com".to_string(),
+            github_scope_org: "acme".to_string(),
+            esa_team_name: None,
+            runtime: TaskRuntime {
+                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+                channel: "C123".to_string(),
+                thread_ts: "123.456".to_string(),
+                retry_count: 0,
+            },
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
+        let normalized_instructions = instructions
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(normalized_instructions.contains(
+            "End the response with a short reusable notes section that captures discovered facts and repository structure details worth reusing in later investigations."
+        ));
     }
 
     #[test]
@@ -368,6 +422,29 @@ mod tests {
         assert!(
             normalized_instructions
                 .contains("Do not narrow your search to operational or investigation terms")
+        );
+    }
+
+    #[test]
+    fn github_instructions_prioritize_readme_and_design_docs_for_initial_exploration() {
+        let instructions = build_github_instructions(BuildGithubInstructionsInput {
+            language: "Japanese".to_string(),
+            github_scope_org: "acme".to_string(),
+            additional_system_prompt: None,
+        });
+        let normalized_instructions = instructions
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(normalized_instructions.contains(
+            "When starting exploration for an unfamiliar repository, first read high-signal orientation docs such as README, architecture/design documents, and key technical documentation"
+        ));
+        assert!(normalized_instructions.contains("before broad search"));
+        assert!(normalized_instructions.contains("avoid scattered exploration"));
+        assert!(
+            normalized_instructions
+                .contains("At the end of your response, add a short reusable notes section")
         );
     }
 }
