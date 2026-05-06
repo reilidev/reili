@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use crate::messaging::slack::SlackMessage;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TaskJobPayload {
     pub slack_event_id: String,
     pub message: SlackMessage,
@@ -11,7 +10,6 @@ pub struct TaskJobPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TaskJob {
     pub job_id: String,
     pub received_at: String,

@@ -14,7 +14,6 @@ pub enum SlackTriggerType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackMessage {
     pub slack_event_id: String,
     pub team_id: Option<String>,
@@ -133,7 +132,7 @@ mod tests {
 
     #[test]
     fn deserializes_without_action_token_for_backward_compatibility() {
-        let json = r#"{"slackEventId":"evt-1","teamId":"T001","trigger":"message","channel":"C001","user":"U001","text":"hello","ts":"123.456","threadTs":null}"#;
+        let json = r#"{"slack_event_id":"evt-1","team_id":"T001","trigger":"message","channel":"C001","user":"U001","text":"hello","ts":"123.456","thread_ts":null}"#;
 
         let restored: SlackMessage =
             serde_json::from_str(json).expect("deserialize slack message without action token");

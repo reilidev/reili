@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use reili_core::error::PortError;
 use reili_core::messaging::slack::{
-    SlackMessageSearchInput, SlackMessageSearchPort, SlackMessageSearchSort,
-    SlackMessageSearchSortDirection,
+    SlackContextMessage, SlackMessageSearchContextMessages, SlackMessageSearchInput,
+    SlackMessageSearchPort, SlackMessageSearchResult, SlackMessageSearchResultItem,
+    SlackMessageSearchSort, SlackMessageSearchSortDirection,
 };
 use reili_core::secret::SecretString;
 use rig::completion::ToolDefinition;
@@ -164,8 +165,106 @@ impl Tool for SearchSlackMessagesTool {
             })
             .await
         {
-            Ok(result) => to_json_string(&result),
+            Ok(result) => to_json_string(&SearchSlackMessagesOutput::from(result)),
             Err(error) => to_json_string(&to_slack_tool_soft_error(&error)),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchSlackMessagesOutput {
+    messages: Vec<SearchSlackMessageOutput>,
+    next_cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchSlackMessageOutput {
+    author_name: Option<String>,
+    author_user_id: Option<String>,
+    team_id: Option<String>,
+    channel_id: Option<String>,
+    channel_name: Option<String>,
+    message_ts: String,
+    thread_ts: Option<String>,
+    content: String,
+    is_author_bot: bool,
+    permalink: Option<String>,
+    context_messages: SearchSlackContextMessagesOutput,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchSlackContextMessagesOutput {
+    before: Vec<SearchSlackContextMessageOutput>,
+    after: Vec<SearchSlackContextMessageOutput>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchSlackContextMessageOutput {
+    author_name: Option<String>,
+    user_id: Option<String>,
+    ts: String,
+    text: String,
+}
+
+impl From<SlackMessageSearchResult> for SearchSlackMessagesOutput {
+    fn from(value: SlackMessageSearchResult) -> Self {
+        Self {
+            messages: value
+                .messages
+                .into_iter()
+                .map(SearchSlackMessageOutput::from)
+                .collect(),
+            next_cursor: value.next_cursor,
+        }
+    }
+}
+
+impl From<SlackMessageSearchResultItem> for SearchSlackMessageOutput {
+    fn from(value: SlackMessageSearchResultItem) -> Self {
+        Self {
+            author_name: value.author_name,
+            author_user_id: value.author_user_id,
+            team_id: value.team_id,
+            channel_id: value.channel_id,
+            channel_name: value.channel_name,
+            message_ts: value.message_ts,
+            thread_ts: value.thread_ts,
+            content: value.content,
+            is_author_bot: value.is_author_bot,
+            permalink: value.permalink,
+            context_messages: SearchSlackContextMessagesOutput::from(value.context_messages),
+        }
+    }
+}
+
+impl From<SlackMessageSearchContextMessages> for SearchSlackContextMessagesOutput {
+    fn from(value: SlackMessageSearchContextMessages) -> Self {
+        Self {
+            before: value
+                .before
+                .into_iter()
+                .map(SearchSlackContextMessageOutput::from)
+                .collect(),
+            after: value
+                .after
+                .into_iter()
+                .map(SearchSlackContextMessageOutput::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<SlackContextMessage> for SearchSlackContextMessageOutput {
+    fn from(value: SlackContextMessage) -> Self {
+        Self {
+            author_name: value.author_name,
+            user_id: value.user_id,
+            ts: value.ts,
+            text: value.text,
         }
     }
 }
@@ -257,6 +356,9 @@ mod tests {
             .expect("call search_slack_messages");
 
         assert!(output.contains("Discussing rollout issue"));
+        assert!(output.contains("\"authorName\""));
+        assert!(output.contains("\"messageTs\""));
+        assert!(output.contains("\"contextMessages\""));
 
         let captured = calls.lock().expect("lock calls");
         assert_eq!(captured.len(), 1);

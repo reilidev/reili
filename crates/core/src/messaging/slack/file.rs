@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackMessageFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,

@@ -36,14 +36,12 @@ pub enum SlackAuthorizationDenyReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackChannelInfo {
     pub name: String,
     pub is_private: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PostSlackEphemeralMessageInput {
     pub channel: String,
     pub user: String,

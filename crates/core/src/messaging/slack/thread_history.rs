@@ -6,7 +6,6 @@ use crate::error::PortError;
 use super::SlackThreadMessage;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct FetchSlackThreadHistoryInput {
     pub channel: String,
     pub thread_ts: String,

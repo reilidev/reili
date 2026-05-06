@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use crate::error::PortError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GithubPullRequestParams {
     pub owner: String,
     pub repo: String,
@@ -12,7 +11,6 @@ pub struct GithubPullRequestParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GithubPullRequestDiff {
     pub diff: String,
     pub html_url: String,
@@ -22,7 +20,6 @@ pub struct GithubPullRequestDiff {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GithubPullRequestSummary {
     pub number: u64,
     pub state: String,
