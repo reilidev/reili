@@ -3,11 +3,11 @@ use std::sync::Arc;
 use reili_core::task::{TaskProgressEvent, TaskProgressEventInput};
 use tokio::sync::Mutex;
 
-use super::progress_update_commands::{
+use super::commands::{
     RecordMessageOutputCreated, RecordProgressSummary, RecordToolCallCompleted,
     RecordToolCallStarted,
 };
-use super::task_progress_stream_session::TaskProgressStreamSession;
+use super::session::TaskProgressStreamSession;
 
 pub struct TaskProgressEventHandlerInput {
     pub progress_session: Arc<Mutex<Box<dyn TaskProgressStreamSession>>>,
@@ -27,10 +27,9 @@ mod tests {
     use tokio::sync::Mutex as TokioMutex;
 
     use super::{TaskProgressEventHandler, TaskProgressEventHandlerInput};
-    use crate::task::services::{
+    use crate::progress::{
         RecordMessageOutputCreated, RecordProgressSummary, RecordToolCallCompleted,
-        RecordToolCallStarted, TaskProgressStreamSession,
-        task_progress_stream_session::MockTaskProgressStreamSession,
+        RecordToolCallStarted, TaskProgressStreamSession, session::MockTaskProgressStreamSession,
     };
 
     #[tokio::test]

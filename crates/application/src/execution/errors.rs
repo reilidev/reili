@@ -2,8 +2,6 @@ use reili_core::error::{AgentRunFailedError, PortError, TaskExecutionFailedError
 use reili_core::task::LlmUsageSnapshot;
 use thiserror::Error;
 
-use super::services::create_empty_llm_usage_snapshot;
-
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ExecuteTaskJobError {
     #[error("{0}")]
@@ -60,8 +58,17 @@ pub fn resolve_task_failure_error(error: &ExecuteTaskJobError) -> ResolvedTaskFa
         },
         ExecuteTaskJobError::Port(value) => ResolvedTaskFailureError {
             error_message: value.message.clone(),
-            usage: create_empty_llm_usage_snapshot(),
+            usage: empty_llm_usage_snapshot(),
         },
+    }
+}
+
+fn empty_llm_usage_snapshot() -> LlmUsageSnapshot {
+    LlmUsageSnapshot {
+        requests: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
     }
 }
 

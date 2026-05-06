@@ -4,8 +4,7 @@ use std::time::Instant;
 use reili_core::messaging::slack::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
 use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage};
 
-use super::logger::{TaskLogMeta, TaskLogger};
-use crate::task::LogFieldValue;
+use crate::{LogFieldValue, TaskLogMeta, TaskLogger};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlackThreadContextLoaderInput {
@@ -112,7 +111,7 @@ mod tests {
     };
     use reili_core::messaging::slack::{SlackMessage, SlackThreadMessage, SlackTriggerType};
 
-    use crate::task::{LogFieldValue, TaskLogMeta, string_log_meta};
+    use crate::{LogEntry, LogFieldValue, TaskLogMeta, TaskLogger, string_log_meta};
 
     use super::{
         SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
@@ -135,8 +134,8 @@ mod tests {
         }
     }
 
-    impl crate::task::TaskLogger for ThreadContextLoaderLoggerMock {
-        fn log(&self, entry: crate::task::LogEntry) {
+    impl TaskLogger for ThreadContextLoaderLoggerMock {
+        fn log(&self, entry: LogEntry) {
             self.errors
                 .lock()
                 .expect("lock logger errors")
@@ -240,7 +239,7 @@ mod tests {
         let loader = SlackThreadContextLoader::new(SlackThreadContextLoaderDeps {
             slack_thread_history_port: Arc::clone(&thread_history_port)
                 as Arc<dyn SlackThreadHistoryPort>,
-            logger: Arc::clone(&logger) as Arc<dyn crate::task::TaskLogger>,
+            logger: Arc::clone(&logger) as Arc<dyn TaskLogger>,
         });
 
         let result = loader

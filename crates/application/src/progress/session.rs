@@ -8,13 +8,13 @@ use reili_core::task::{
     TaskProgressSessionPort as CoreTaskProgressSessionPort, TaskProgressUpdate,
 };
 
-use crate::task::logger::{TaskLogger, string_log_meta};
+use crate::{TaskLogger, string_log_meta};
 
-use super::progress_update_commands::{
+use super::commands::{
     RecordMessageOutputCreated, RecordProgressSummary, RecordToolCallCompleted,
     RecordToolCallStarted,
 };
-use super::progress_update_projector::{ProgressUpdateProjector, ToolCompletedProgressProjection};
+use super::projector::{ProgressUpdateProjector, ToolCompletedProgressProjection};
 
 pub struct CreateTaskProgressStreamSessionFactoryInput {
     pub progress_session_factory_port: Arc<dyn CoreTaskProgressSessionFactoryPort>,
@@ -230,7 +230,7 @@ mod tests {
         RecordToolCallStarted, TaskProgressStreamSessionFactory,
         create_task_progress_stream_session_factory,
     };
-    use crate::task::logger::{TaskLogMeta, TaskLogger};
+    use crate::{TaskLogMeta, TaskLogger};
     use reili_core::logger::{LogEntry, LogLevel};
 
     #[derive(Default)]

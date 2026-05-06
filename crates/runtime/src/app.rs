@@ -14,7 +14,7 @@ use reili_adapters::inbound::slack::{
     verify_slack_signature_middleware,
 };
 use reili_adapters::logger::init_json_logger;
-use reili_application::task::{TaskLogger, string_log_meta};
+use reili_application::{TaskLogger, string_log_meta};
 use reili_core::messaging::slack::{SlackInteractionHandlerPort, SlackMessageHandlerPort};
 use serde_json::json;
 

@@ -1,12 +1,12 @@
 use reili_core::task::{TaskProgressScopeStatus, TaskProgressUpdate};
 
-use super::progress_stream_state::{
-    ProgressStep, ProgressStepStatus, ProgressStreamState, ResolveToolStartedProgressStepOutput,
-    ToolCallStatus, resolve_progress_step_status,
-};
-use super::progress_update_commands::{
+use super::commands::{
     RecordMessageOutputCreated, RecordProgressSummary, RecordToolCallCompleted,
     RecordToolCallStarted,
+};
+use super::state::{
+    ProgressStep, ProgressStepStatus, ProgressStreamState, ResolveToolStartedProgressStepOutput,
+    ToolCallStatus, resolve_progress_step_status,
 };
 
 pub(super) struct ToolStartedProgressProjection {

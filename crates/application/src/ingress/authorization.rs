@@ -9,7 +9,7 @@ use reili_core::messaging::slack::{
     SlackTriggerType, SlackUserGroupMembershipPort,
 };
 
-use crate::task::{TaskLogger, string_log_meta};
+use crate::{TaskLogger, string_log_meta};
 
 const DENY_EPHEMERAL_MESSAGE: &str =
     "I cannot respond to this mention because this channel or Slack user is not authorized to use.";
