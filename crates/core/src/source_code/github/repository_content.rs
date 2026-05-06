@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use crate::error::PortError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GithubRepositoryContentParams {
     pub owner: String,
     pub repo: String,
@@ -13,7 +12,6 @@ pub struct GithubRepositoryContentParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GithubRepositoryFileContent {
     pub content: String,
     pub encoding: GithubRepositoryFileEncoding,
@@ -30,7 +28,6 @@ pub enum GithubRepositoryFileEncoding {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GithubRepositoryDirectoryEntry {
     pub name: String,
     pub path: String,
@@ -39,7 +36,6 @@ pub struct GithubRepositoryDirectoryEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GithubRepositoryDirectoryContent {
     pub html_url: String,
     pub entries: Vec<GithubRepositoryDirectoryEntry>,

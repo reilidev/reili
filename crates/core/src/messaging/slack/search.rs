@@ -19,7 +19,6 @@ pub enum SlackMessageSearchSortDirection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackMessageSearchInput {
     pub query: String,
     pub action_token: SecretString,
@@ -33,14 +32,12 @@ pub struct SlackMessageSearchInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackMessageSearchResult {
     pub messages: Vec<SlackMessageSearchResultItem>,
     pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackMessageSearchResultItem {
     pub author_name: Option<String>,
     pub author_user_id: Option<String>,
@@ -56,14 +53,12 @@ pub struct SlackMessageSearchResultItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackMessageSearchContextMessages {
     pub before: Vec<SlackContextMessage>,
     pub after: Vec<SlackContextMessage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackContextMessage {
     pub author_name: Option<String>,
     pub user_id: Option<String>,
@@ -124,27 +119,27 @@ mod tests {
             value,
             json!({
                 "messages": [{
-                    "authorName": "Jane Doe",
-                    "authorUserId": "U123",
-                    "teamId": "T123",
-                    "channelId": "C123",
-                    "channelName": "alerts",
-                    "messageTs": "1710000000.000001",
-                    "threadTs": "1710000000.000000",
+                    "author_name": "Jane Doe",
+                    "author_user_id": "U123",
+                    "team_id": "T123",
+                    "channel_id": "C123",
+                    "channel_name": "alerts",
+                    "message_ts": "1710000000.000001",
+                    "thread_ts": "1710000000.000000",
                     "content": "investigation started",
-                    "isAuthorBot": false,
+                    "is_author_bot": false,
                     "permalink": "https://example.slack.com/archives/C123/p1710000000000001",
-                    "contextMessages": {
+                    "context_messages": {
                         "before": [{
-                            "authorName": "Bot",
-                            "userId": "U999",
+                            "author_name": "Bot",
+                            "user_id": "U999",
                             "ts": "1710000000.000000",
                             "text": "alert fired"
                         }],
                         "after": []
                     }
                 }],
-                "nextCursor": "cursor-1"
+                "next_cursor": "cursor-1"
             })
         );
     }

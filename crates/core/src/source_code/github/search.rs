@@ -4,14 +4,12 @@ use serde::{Deserialize, Serialize};
 use crate::error::PortError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GithubSearchParams {
     pub query: String,
     pub limit: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GithubCodeSearchResultItem {
     pub name: String,
     pub path: String,
@@ -20,7 +18,6 @@ pub struct GithubCodeSearchResultItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GithubRepoSearchResultItem {
     pub full_name: String,
     pub description: Option<String>,
@@ -31,7 +28,6 @@ pub struct GithubRepoSearchResultItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GithubIssueSearchResultItem {
     pub number: u64,
     pub title: String,

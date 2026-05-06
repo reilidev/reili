@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use crate::error::PortError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackThreadReplyInput {
     pub channel: String,
     pub thread_ts: String,

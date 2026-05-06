@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use reili_core::error::PortError;
-use reili_core::knowledge::{WebSearchInput, WebSearchUserLocation};
+use reili_core::knowledge::{WebCitation, WebSearchInput, WebSearchResult, WebSearchUserLocation};
 use reili_core::task::TaskResources;
 use rig::completion::ToolDefinition;
 use rig::tool::Tool;
@@ -67,7 +67,42 @@ impl Tool for SearchWebTool {
         };
 
         let result = self.resources.web_search_port.search(input).await?;
-        to_json_string(&result)
+        to_json_string(&SearchWebOutput::from(result))
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchWebOutput {
+    summary_text: String,
+    citations: Vec<SearchWebCitationOutput>,
+}
+
+#[derive(Debug, Serialize)]
+struct SearchWebCitationOutput {
+    title: String,
+    url: String,
+}
+
+impl From<WebSearchResult> for SearchWebOutput {
+    fn from(value: WebSearchResult) -> Self {
+        Self {
+            summary_text: value.summary_text,
+            citations: value
+                .citations
+                .into_iter()
+                .map(SearchWebCitationOutput::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<WebCitation> for SearchWebCitationOutput {
+    fn from(value: WebCitation) -> Self {
+        Self {
+            title: value.title,
+            url: value.url,
+        }
     }
 }
 
@@ -150,6 +185,7 @@ mod tests {
             .expect("call search_web");
 
         assert!(output.contains("Summary"));
+        assert!(output.contains("\"summaryText\""));
         assert!(output.contains("https://example.com"));
 
         let captured = calls.lock().expect("lock calls");

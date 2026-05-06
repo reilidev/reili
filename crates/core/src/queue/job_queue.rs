@@ -28,19 +28,16 @@ impl QueueJob for TaskJob {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CompleteJobInput {
     pub job_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CancelJobInput {
     pub job_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct FailJobInput {
     pub job_id: String,
     pub reason: String,
@@ -56,7 +53,6 @@ pub enum JobFailStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct JobFailResult<TJob>
 where
     TJob: QueueJob,

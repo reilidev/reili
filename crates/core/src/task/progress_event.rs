@@ -15,7 +15,6 @@ pub enum TaskProgressEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TaskProgressEventInput {
     pub owner_id: String,
     pub event: TaskProgressEvent,

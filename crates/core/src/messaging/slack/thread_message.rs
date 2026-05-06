@@ -8,14 +8,12 @@ use super::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackMessageMetadata {
     pub event_type: String,
     pub event_payload: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackThreadMessage {
     pub ts: String,
     pub user: Option<String>,

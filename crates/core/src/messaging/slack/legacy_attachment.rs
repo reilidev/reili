@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackLegacyAttachment {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocks: Vec<Value>,
@@ -25,7 +24,6 @@ pub struct SlackLegacyAttachment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct SlackLegacyAttachmentField {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
