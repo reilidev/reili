@@ -7,9 +7,10 @@ use reili_core::messaging::slack::{
 };
 use reili_core::queue::TaskJobQueuePort;
 
-use crate::cancel_task::{CancelTaskInput, CancelTaskUseCase, CancelTaskUseCaseDeps};
-use crate::task::services::InFlightJobRegistry;
-use crate::task::{TaskLogger, string_log_meta};
+use crate::execution::{
+    CancelTaskInput, CancelTaskUseCase, CancelTaskUseCaseDeps, InFlightJobRegistry,
+};
+use crate::{TaskLogger, string_log_meta};
 
 pub struct HandleSlackInteractionUseCaseDeps {
     pub job_queue: Arc<TaskJobQueuePort>,

@@ -7,7 +7,7 @@ use futures::{SinkExt, StreamExt};
 use reili_adapters::inbound::slack::{
     ParsedSlackEvent, ParsedSlackInteraction, parse_slack_event, parse_slack_interaction_value,
 };
-use reili_application::task::{TaskLogger, string_log_meta};
+use reili_application::{TaskLogger, string_log_meta};
 use reili_core::messaging::slack::{SlackInteractionHandlerPort, SlackMessageHandlerPort};
 use reili_core::secret::SecretString;
 use serde::Deserialize;

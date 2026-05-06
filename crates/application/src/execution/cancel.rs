@@ -8,10 +8,9 @@ use reili_core::messaging::slack::{
 use reili_core::queue::{CancelJobInput, CancelJobResult, TaskJobQueuePort};
 use reili_core::task::TaskJob;
 
-use crate::task::services::{
-    InFlightJobCancellationInfo, InFlightJobRegistry, RequestCancelInFlightJobResult,
-};
-use crate::task::{TaskLogger, string_log_meta};
+use crate::{TaskLogger, string_log_meta};
+
+use super::{InFlightJobCancellationInfo, InFlightJobRegistry, RequestCancelInFlightJobResult};
 
 pub struct CancelTaskUseCaseDeps {
     pub job_queue: Arc<TaskJobQueuePort>,
@@ -196,8 +195,9 @@ mod tests {
     use reili_core::task::TaskJob;
 
     use super::{CancelTaskInput, CancelTaskUseCase, CancelTaskUseCaseDeps};
-    use crate::task::services::InFlightJobRegistry;
-    use crate::task::{LogEntry, TaskLogger};
+    use crate::{LogEntry, TaskLogger};
+
+    use super::InFlightJobRegistry;
 
     #[derive(Default)]
     struct NoopLogger;

@@ -12,12 +12,12 @@ use reili_core::task::{TaskCancellation, TaskJob};
 use tokio::task::spawn;
 use tokio::time::sleep;
 
-use crate::task::services::{
+use crate::{TaskLogger, string_log_meta};
+
+use super::in_flight_registry::{
     AttachCancellationResult, InFlightJobCancellationInfo, InFlightJobRegistry,
 };
-use crate::task::{
-    ExecuteTaskJobInput, TaskExecutionDeps, TaskExecutionOutcome, execute_task_job, string_log_meta,
-};
+use super::{ExecuteTaskJobInput, TaskExecutionDeps, TaskExecutionOutcome, execute_task_job};
 
 const IDLE_WAIT_MS: u64 = 150;
 
@@ -494,7 +494,7 @@ async fn handle_failed_claimed_job(input: HandleFailedClaimedJobInput) {
 
 async fn update_task_control_message(
     slack_task_control_message_port: Arc<dyn SlackTaskControlMessagePort>,
-    logger: Arc<dyn crate::task::TaskLogger>,
+    logger: Arc<dyn TaskLogger>,
     job: &TaskJob,
     state: SlackTaskControlState,
 ) {
@@ -583,7 +583,7 @@ mod tests {
         SlackThreadReplyPort, StartTaskWorkerRunnerUseCaseDeps, TaskExecutionDeps, TaskJob,
         TaskJobQueuePort, handle_failed_claimed_job, process_claimed_job,
     };
-    use crate::task::TaskLogMeta;
+    use crate::TaskLogMeta;
     use reili_core::knowledge::{MockWebSearchPort, WebSearchPort};
     use reili_core::logger::{LogEntry as CoreLogEntry, LogLevel};
     use reili_core::messaging::slack::{
@@ -600,8 +600,9 @@ mod tests {
     };
     use std::sync::Mutex;
 
-    use crate::task::services::InFlightJobRegistry;
-    use crate::task::{LogFieldValue, TaskLogger};
+    use crate::{LogFieldValue, TaskLogger};
+
+    use super::InFlightJobRegistry;
 
     const USAGE_SNAPSHOT: LlmUsageSnapshot = LlmUsageSnapshot {
         requests: 1,

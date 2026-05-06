@@ -14,14 +14,15 @@ use reili_core::task::{
 };
 use tokio::sync::{Mutex, mpsc};
 
-use super::execution_errors::{ExecuteTaskJobError, resolve_task_failure_error};
-use super::logger::{LogFieldValue, TaskLogMeta, TaskLogger, string_log_meta};
-use super::services::{
+use crate::progress::{
     CreateTaskProgressStreamSessionFactoryInput, CreateTaskProgressStreamSessionInput,
     TaskProgressEventHandler, TaskProgressEventHandlerInput, TaskProgressStreamSession,
     TaskProgressStreamSessionFactory, create_task_progress_stream_session_factory,
 };
-use super::slack_thread_context_loader::{
+use crate::{LogFieldValue, TaskLogMeta, TaskLogger, string_log_meta};
+
+use super::errors::{ExecuteTaskJobError, resolve_task_failure_error};
+use super::thread_context::{
     SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
 };
 
@@ -388,7 +389,7 @@ mod tests {
     };
 
     use super::{ExecuteTaskJobInput, TaskExecutionDeps, execute_task_job};
-    use crate::task::logger::{LogFieldValue, TaskLogger};
+    use crate::{LogFieldValue, TaskLogger};
 
     const USAGE_SNAPSHOT: LlmUsageSnapshot = LlmUsageSnapshot {
         requests: 1,

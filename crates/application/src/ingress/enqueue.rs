@@ -15,7 +15,7 @@ use reili_core::queue::TaskJobQueuePort;
 use reili_core::task::{TaskJob, TaskJobPayload};
 use uuid::Uuid;
 
-use crate::task::{TaskLogger, string_log_meta};
+use crate::{TaskLogger, string_log_meta};
 
 const QUEUED_REACTION_NAME: &str = "eyes";
 const SLACK_ALREADY_REACTED_ERROR_CODE: &str = "already_reacted";

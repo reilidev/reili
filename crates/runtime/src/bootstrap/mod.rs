@@ -24,12 +24,11 @@ use reili_adapters::outbound::vertex_ai::{
     VertexAiWebSearchAdapter, VertexAiWebSearchAdapterConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
-use reili_application::task::{TaskExecutionDeps, TaskLogger};
 use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
-    HandleSlackInteractionUseCaseDeps, SlackMentionAuthorizationGate,
+    HandleSlackInteractionUseCaseDeps, InFlightJobRegistry, SlackMentionAuthorizationGate,
     SlackMentionAuthorizationService, StartTaskWorkerRunnerUseCase,
-    StartTaskWorkerRunnerUseCaseDeps,
+    StartTaskWorkerRunnerUseCaseDeps, TaskExecutionDeps, TaskLogger,
 };
 use reili_core::error::PortError;
 use reili_core::knowledge::WebSearchPort;
@@ -116,7 +115,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     );
     let connectors = build_task_agent_connectors(config.esa.as_ref())?;
     let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
-    let in_flight_job_registry = reili_application::task::services::InFlightJobRegistry::new();
+    let in_flight_job_registry = InFlightJobRegistry::new();
     let provider_ports = create_provider_ports(CreateProviderPortsInput {
         llm_provider: &config.llm.provider,
         datadog_api_key: config.datadog_api_key.clone(),

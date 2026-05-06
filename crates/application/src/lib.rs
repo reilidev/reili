@@ -1,19 +1,27 @@
-pub mod cancel_task;
-pub mod enqueue_slack_event;
-pub mod handle_slack_interaction;
-pub mod slack_mention_authorization_service;
-pub mod start_task_worker_runner;
-pub mod task;
+pub mod execution;
+pub mod ingress;
+pub mod progress;
 
-pub use cancel_task::{CancelTaskInput, CancelTaskUseCase, CancelTaskUseCaseDeps};
-pub use enqueue_slack_event::{EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps};
-pub use handle_slack_interaction::{
-    HandleSlackInteractionUseCase, HandleSlackInteractionUseCaseDeps,
+pub use execution::{
+    CancelTaskInput, CancelTaskUseCase, CancelTaskUseCaseDeps, ExecuteTaskJobError,
+    ExecuteTaskJobInput, InFlightJobRegistry, ResolvedTaskFailureError, SlackThreadContextLoader,
+    SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput, StartTaskWorkerRunnerUseCase,
+    StartTaskWorkerRunnerUseCaseDeps, TaskExecutionDeps, TaskExecutionOutcome,
+    ThreadContextFetchFailedLogInput, execute_task_job, resolve_task_failure_error,
 };
-pub use slack_mention_authorization_service::{
-    SlackMentionAuthorizationGate, SlackMentionAuthorizationOutcome,
-    SlackMentionAuthorizationService,
+pub use ingress::{
+    EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
+    HandleSlackInteractionUseCaseDeps, SlackMentionAuthorizationGate,
+    SlackMentionAuthorizationOutcome, SlackMentionAuthorizationService,
 };
-pub use start_task_worker_runner::{
-    StartTaskWorkerRunnerUseCase, StartTaskWorkerRunnerUseCaseDeps,
+pub use progress::{
+    CreateTaskProgressStreamSessionFactoryInput, CreateTaskProgressStreamSessionInput,
+    RecordMessageOutputCreated, RecordProgressSummary, RecordToolCallCompleted,
+    RecordToolCallStarted, TaskProgressEventHandler, TaskProgressEventHandlerInput,
+    TaskProgressStreamSession, TaskProgressStreamSessionFactory,
+    create_task_progress_stream_session_factory,
+};
+pub use reili_core::logger::{
+    LogEntry, LogFieldValue, LogFields as TaskLogMeta, LogLevel, Logger as TaskLogger,
+    log_fields as string_log_meta,
 };
