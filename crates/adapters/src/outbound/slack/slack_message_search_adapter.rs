@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::slack_web_api_client::SlackWebApiClient;
 
-const MAX_SEARCH_RESULTS: u32 = 5;
+const MAX_SEARCH_RESULTS: u32 = 20;
 
 #[derive(Debug, Clone)]
 pub struct SlackMessageSearchAdapter {
@@ -21,6 +21,8 @@ pub struct SlackMessageSearchAdapter {
 struct AssistantSearchContextRequest<'a> {
     query: &'a str,
     action_token: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_channel_id: Option<&'a str>,
     content_types: [&'static str; 1],
     channel_types: [&'static str; 1],
     include_bots: bool,
@@ -110,6 +112,7 @@ impl SlackMessageSearchPort for SlackMessageSearchAdapter {
                 &AssistantSearchContextRequest {
                     query: &query,
                     action_token: &action_token,
+                    context_channel_id: input.context_channel_id.as_deref(),
                     content_types: ["messages"],
                     channel_types: ["public_channel"],
                     include_bots: input.include_bots,
@@ -244,6 +247,7 @@ mod tests {
             .and(body_json(json!({
                 "query": "error budget burn",
                 "action_token": "action-token",
+                "context_channel_id": "C123",
                 "content_types": ["messages"],
                 "channel_types": ["public_channel"],
                 "include_bots": true,
@@ -295,6 +299,7 @@ mod tests {
             .search_messages(SlackMessageSearchInput {
                 query: " error budget burn ".to_string(),
                 action_token: SecretString::from(" action-token "),
+                context_channel_id: Some("C123".to_string()),
                 limit: 5,
                 include_bots: true,
                 include_context_messages: true,
@@ -326,7 +331,8 @@ mod tests {
             .search_messages(SlackMessageSearchInput {
                 query: "search".to_string(),
                 action_token: SecretString::from("action-token"),
-                limit: 6,
+                context_channel_id: None,
+                limit: 21,
                 include_bots: false,
                 include_context_messages: true,
                 before: None,
@@ -340,7 +346,7 @@ mod tests {
         assert!(
             error
                 .message
-                .contains("Slack search limit must be between 1 and 5")
+                .contains("Slack search limit must be between 1 and 20")
         );
     }
 

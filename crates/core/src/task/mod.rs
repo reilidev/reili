@@ -1,6 +1,7 @@
 pub mod cancellation;
 pub mod context;
 pub mod job;
+pub mod memory;
 pub mod progress_event;
 pub mod progress_reporting;
 pub mod request;
@@ -10,6 +11,7 @@ pub mod telemetry;
 pub use cancellation::TaskCancellation;
 pub use context::{TaskContext, TaskResources, TaskRuntime};
 pub use job::{TaskJob, TaskJobPayload};
+pub use memory::{TaskMemoryItem, TaskMemorySource};
 pub use progress_event::{
     TASK_RUNNER_PROGRESS_OWNER_ID, TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort,
 };

@@ -3,8 +3,11 @@ use reili_core::task::TaskRequest;
 pub fn build_task_prompt(request: &TaskRequest) -> String {
     let trigger_message_text = request.trigger_message.rendered_text();
     let thread_transcript = build_thread_transcript(&request.thread_messages);
+    let memory_context = build_memory_context(&request.memory_items);
 
-    format!("# User\n{trigger_message_text}\n\n# Thread Context\n{thread_transcript}")
+    format!(
+        "# User\n{trigger_message_text}\n\n# Thread Context\n{thread_transcript}\n\n# Memory Context\n{memory_context}"
+    )
 }
 
 fn build_thread_transcript(
@@ -27,12 +30,40 @@ fn build_thread_transcript(
         .join("\n---\n")
 }
 
+fn build_memory_context(memory_items: &[reili_core::task::TaskMemoryItem]) -> String {
+    if memory_items.is_empty() {
+        return "No reusable memories found.".to_string();
+    }
+
+    let entries = memory_items
+        .iter()
+        .map(|item| {
+            let source = item
+                .source
+                .permalink
+                .as_deref()
+                .unwrap_or("permalink_unavailable");
+            format!(
+                "source: {source}\nchannel: {}, ts: {}\nmemory:\n{}",
+                item.source.channel_id,
+                item.source.message_ts,
+                item.content.trim()
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n---\n");
+
+    format!(
+        "The following entries are prior Reili reusable notes from Slack. Treat them as hints, not proof.\nVerify important facts with Datadog, GitHub, Slack links, or documentation before relying on them.\n\n{entries}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use reili_core::messaging::slack::{
         SlackMessage, SlackMessageFile, SlackThreadMessage, SlackTriggerType,
     };
-    use reili_core::task::TaskRequest;
+    use reili_core::task::{TaskMemoryItem, TaskMemorySource, TaskRequest};
 
     use super::build_task_prompt;
 
@@ -65,6 +96,7 @@ mod tests {
                 files: Vec::new(),
                 metadata: None,
             }],
+            memory_items: Vec::new(),
         };
         let prompt = build_task_prompt(&request);
         assert!(prompt.contains("# User\nPlease investigate this alert"));
@@ -78,13 +110,14 @@ mod tests {
         let request = TaskRequest {
             trigger_message: sample_trigger_message(),
             thread_messages: vec![],
+            memory_items: Vec::new(),
         };
 
         let prompt = build_task_prompt(&request);
 
         assert_eq!(
             prompt,
-            "# User\nPlease investigate this alert\n\n# Thread Context\n"
+            "# User\nPlease investigate this alert\n\n# Thread Context\n\n\n# Memory Context\nNo reusable memories found."
         );
     }
 
@@ -93,6 +126,7 @@ mod tests {
         let request = TaskRequest {
             trigger_message: sample_trigger_message(),
             thread_messages: vec![],
+            memory_items: Vec::new(),
         };
         let prompt = build_task_prompt(&request);
         assert!(prompt.contains("# User\nPlease investigate this alert"));
@@ -113,6 +147,7 @@ mod tests {
                 files: Vec::new(),
                 metadata: None,
             }],
+            memory_items: Vec::new(),
         };
         let prompt = build_task_prompt(&request);
         assert!(prompt.contains("posted_by: U999"));
@@ -142,6 +177,7 @@ mod tests {
                     metadata: None,
                 },
             ],
+            memory_items: Vec::new(),
         };
         let prompt = build_task_prompt(&request);
         assert!(prompt.contains(
@@ -164,6 +200,7 @@ mod tests {
         let request = TaskRequest {
             trigger_message: trigger,
             thread_messages: vec![],
+            memory_items: Vec::new(),
         };
 
         let prompt = build_task_prompt(&request);
@@ -188,6 +225,7 @@ mod tests {
                 }],
                 metadata: None,
             }],
+            memory_items: Vec::new(),
         };
 
         let prompt = build_task_prompt(&request);
@@ -195,5 +233,33 @@ mod tests {
         assert!(prompt.contains("posted_by: U123"));
         assert!(prompt.contains("message:attached_file: aws-health.eml"));
         assert!(prompt.contains("plain_text:\nscheduled upgrade required"));
+    }
+
+    #[test]
+    fn includes_memory_context_in_prompt() {
+        let request = TaskRequest {
+            trigger_message: sample_trigger_message(),
+            thread_messages: vec![],
+            memory_items: vec![TaskMemoryItem {
+                source: TaskMemorySource {
+                    channel_id: "C001".to_string(),
+                    message_ts: "1760000000.000001".to_string(),
+                    thread_ts: Some("1760000000.000000".to_string()),
+                    permalink: Some(
+                        "https://example.slack.com/archives/C001/p1760000000000001".to_string(),
+                    ),
+                },
+                content: "- service: checkout-api".to_string(),
+            }],
+        };
+
+        let prompt = build_task_prompt(&request);
+
+        assert!(prompt.contains("# Memory Context\n"));
+        assert!(prompt.contains("Treat them as hints, not proof."));
+        assert!(
+            prompt.contains("source: https://example.slack.com/archives/C001/p1760000000000001")
+        );
+        assert!(prompt.contains("memory:\n- service: checkout-api"));
     }
 }

@@ -22,6 +22,9 @@ use crate::progress::{
 use crate::{LogFieldValue, TaskLogMeta, TaskLogger, string_log_meta};
 
 use super::errors::{ExecuteTaskJobError, resolve_task_failure_error};
+use super::memory_context::{
+    SlackMemoryContextLoader, SlackMemoryContextLoaderDeps, SlackMemoryContextLoaderInput,
+};
 use super::thread_context::{
     SlackThreadContextLoader, SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput,
 };
@@ -36,6 +39,7 @@ pub struct TaskExecutionDeps {
     pub task_resources: TaskResources,
     pub task_runner: Arc<dyn TaskRunnerPort>,
     pub logger: Arc<dyn TaskLogger>,
+    pub slack_bot_user_id: String,
 }
 
 pub struct ExecuteTaskJobInput {
@@ -57,7 +61,9 @@ pub async fn execute_task_job(
 ) -> Result<TaskExecutionOutcome, ExecuteTaskJobError> {
     let thread_ts = input.payload.message.thread_ts_or_ts().to_string();
     let started_at = Instant::now();
-    let started_at_iso = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+    let started_at_utc = Utc::now();
+    let started_at_iso = started_at_utc.to_rfc3339_opts(SecondsFormat::Millis, true);
+    let started_at_unix_seconds = started_at_utc.timestamp();
 
     let base_log_meta = string_log_meta([
         ("slackEventId", input.payload.slack_event_id.clone()),
@@ -100,15 +106,19 @@ pub async fn execute_task_job(
         logger: Arc::clone(&input.deps.logger),
     });
 
-    let execution_result = run_task(
-        &input,
-        &thread_ts,
-        &started_at_iso,
-        &base_log_meta,
-        Arc::clone(&progress_session),
-        Arc::clone(&on_progress_event),
+    let execution_result = run_task(RunTaskStageInput {
+        retry_count: input.retry_count,
+        payload: input.payload.clone(),
+        task_cancellation: input.task_cancellation.clone(),
+        deps: input.deps.clone(),
+        thread_ts: thread_ts.clone(),
+        started_at_iso: started_at_iso.clone(),
+        started_at_unix_seconds,
+        base_log_meta: base_log_meta.clone(),
+        progress_session: Arc::clone(&progress_session),
+        on_progress_event: Arc::clone(&on_progress_event),
         thread_context_loader,
-    )
+    })
     .await;
 
     drop(on_progress_event);
@@ -204,31 +214,52 @@ struct TaskExecutionRunSuccess {
     llm_execution: LlmExecutionMetadata,
 }
 
-async fn run_task(
-    input: &ExecuteTaskJobInput,
-    thread_ts: &str,
-    started_at_iso: &str,
-    base_log_meta: &TaskLogMeta,
+struct RunTaskStageInput {
+    retry_count: u32,
+    payload: TaskJobPayload,
+    task_cancellation: TaskCancellation,
+    deps: TaskExecutionDeps,
+    thread_ts: String,
+    started_at_iso: String,
+    started_at_unix_seconds: i64,
+    base_log_meta: TaskLogMeta,
     progress_session: Arc<Mutex<Box<dyn TaskProgressStreamSession>>>,
     on_progress_event: Arc<dyn TaskProgressEventPort>,
     thread_context_loader: SlackThreadContextLoader,
-) -> Result<TaskExecutionSuccess, ExecuteTaskJobError> {
-    let thread_messages = thread_context_loader
+}
+
+async fn run_task(input: RunTaskStageInput) -> Result<TaskExecutionSuccess, ExecuteTaskJobError> {
+    let thread_messages = input
+        .thread_context_loader
         .load_for_message(SlackThreadContextLoaderInput {
             message: input.payload.message.clone(),
-            base_log_meta: base_log_meta.clone(),
+            base_log_meta: input.base_log_meta.clone(),
+        })
+        .await;
+
+    let memory_context_loader = SlackMemoryContextLoader::new(SlackMemoryContextLoaderDeps {
+        slack_message_search_port: Arc::clone(&input.deps.task_resources.slack_message_search_port),
+        logger: Arc::clone(&input.deps.logger),
+        bot_user_id: input.deps.slack_bot_user_id.clone(),
+    });
+    let memory_items = memory_context_loader
+        .load_for_message(SlackMemoryContextLoaderInput {
+            message: input.payload.message.clone(),
+            started_at_unix_seconds: input.started_at_unix_seconds,
+            base_log_meta: input.base_log_meta.clone(),
         })
         .await;
 
     let request = TaskRequest {
         trigger_message: input.payload.message.clone(),
         thread_messages,
+        memory_items,
     };
 
     let runtime = TaskRuntime {
-        started_at_iso: started_at_iso.to_string(),
+        started_at_iso: input.started_at_iso,
         channel: input.payload.message.channel.clone(),
-        thread_ts: thread_ts.to_string(),
+        thread_ts: input.thread_ts,
         retry_count: input.retry_count,
     };
     let context = TaskContext {
@@ -238,14 +269,14 @@ async fn run_task(
     };
 
     {
-        let mut session = progress_session.lock().await;
+        let mut session = input.progress_session.lock().await;
         session.start().await;
     }
 
     let task_runner_future = input.deps.task_runner.run(RunTaskInput {
         request,
         context,
-        on_progress_event: Arc::clone(&on_progress_event),
+        on_progress_event: Arc::clone(&input.on_progress_event),
         logger: Arc::clone(&input.deps.logger),
     });
     tokio::pin!(task_runner_future);
@@ -378,9 +409,12 @@ mod tests {
     use reili_core::logger::LogEntry;
     use reili_core::messaging::slack::{
         FetchSlackThreadHistoryInput, MockSlackMessageSearchPort, MockSlackThreadHistoryPort,
-        MockSlackThreadReplyPort, SlackMessage, SlackMessageSearchPort, SlackThreadHistoryPort,
-        SlackThreadMessage, SlackThreadReplyInput, SlackThreadReplyPort, SlackTriggerType,
+        MockSlackThreadReplyPort, SlackMessage, SlackMessageSearchContextMessages,
+        SlackMessageSearchInput, SlackMessageSearchPort, SlackMessageSearchResult,
+        SlackMessageSearchResultItem, SlackThreadHistoryPort, SlackThreadMessage,
+        SlackThreadReplyInput, SlackThreadReplyPort, SlackTriggerType,
     };
+    use reili_core::secret::SecretString;
     use reili_core::task::{
         LlmExecutionMetadata, LlmUsageSnapshot, MockTaskProgressSessionFactoryPort,
         MockTaskProgressSessionPort, MockTaskRunnerPort, RunTaskInput, TaskCancellation,
@@ -461,14 +495,23 @@ mod tests {
         deps: TaskExecutionDeps,
         slack_reply_calls: Arc<Mutex<Vec<SlackThreadReplyInput>>>,
         slack_thread_history_calls: Arc<Mutex<Vec<FetchSlackThreadHistoryInput>>>,
+        slack_message_search_calls: Arc<Mutex<Vec<SlackMessageSearchInput>>>,
         task_runs: Arc<Mutex<Vec<CapturedTaskRunInput>>>,
     }
 
     fn create_execution_fixtures(
         thread_history_response: Option<Result<Vec<SlackThreadMessage>, PortError>>,
     ) -> ExecutionFixtures {
+        create_execution_fixtures_with_memory_search(thread_history_response, None)
+    }
+
+    fn create_execution_fixtures_with_memory_search(
+        thread_history_response: Option<Result<Vec<SlackThreadMessage>, PortError>>,
+        memory_search_response: Option<Result<SlackMessageSearchResult, PortError>>,
+    ) -> ExecutionFixtures {
         let slack_reply_calls = Arc::new(Mutex::new(Vec::new()));
         let slack_thread_history_calls = Arc::new(Mutex::new(Vec::new()));
+        let slack_message_search_calls = Arc::new(Mutex::new(Vec::new()));
         let task_runs = Arc::new(Mutex::new(Vec::new()));
 
         let mut slack_reply_port = MockSlackThreadReplyPort::new();
@@ -527,20 +570,43 @@ mod tests {
                 }))
             });
 
+        let mut slack_message_search_port = MockSlackMessageSearchPort::new();
+        match memory_search_response {
+            Some(response) => {
+                let search_calls = Arc::clone(&slack_message_search_calls);
+                slack_message_search_port
+                    .expect_search_messages()
+                    .times(1)
+                    .returning(move |input: SlackMessageSearchInput| {
+                        search_calls.lock().expect("lock search calls").push(input);
+                        response.clone()
+                    });
+            }
+            None => {
+                slack_message_search_port.expect_search_messages().times(0);
+            }
+        }
+
         let deps = TaskExecutionDeps {
             slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
             task_progress_session_factory_port: create_progress_session_factory(),
             slack_thread_history_port: Arc::new(slack_thread_history_port)
                 as Arc<dyn SlackThreadHistoryPort>,
-            task_resources: create_resources(),
+            task_resources: TaskResources {
+                slack_message_search_port: Arc::new(slack_message_search_port)
+                    as Arc<dyn SlackMessageSearchPort>,
+                web_search_port: create_resources().web_search_port,
+            },
             task_runner: Arc::new(task_runner) as Arc<dyn TaskRunnerPort>,
             logger: Arc::new(NoopLogger) as Arc<dyn TaskLogger>,
+            slack_bot_user_id: "UBOT".to_string(),
         };
 
         ExecutionFixtures {
             deps,
             slack_reply_calls,
             slack_thread_history_calls,
+            slack_message_search_calls,
             task_runs,
         }
     }
@@ -559,6 +625,7 @@ mod tests {
             deps,
             slack_reply_calls,
             slack_thread_history_calls,
+            slack_message_search_calls,
             task_runs,
         } = fixtures;
 
@@ -597,6 +664,13 @@ mod tests {
         assert_eq!(
             captured[0].request.thread_messages[0].text,
             "thread context"
+        );
+        assert!(captured[0].request.memory_items.is_empty());
+        assert!(
+            slack_message_search_calls
+                .lock()
+                .expect("lock search calls")
+                .is_empty()
         );
         assert_eq!(
             slack_reply_calls.lock().expect("lock reply calls").clone(),
@@ -638,6 +712,7 @@ mod tests {
         let captured = task_runs.lock().expect("lock captured runs").clone();
         assert_eq!(captured.len(), 1);
         assert!(captured[0].request.thread_messages.is_empty());
+        assert!(captured[0].request.memory_items.is_empty());
     }
 
     #[tokio::test]
@@ -661,6 +736,67 @@ mod tests {
         let captured = task_runs.lock().expect("lock captured runs").clone();
         assert_eq!(captured.len(), 1);
         assert!(captured[0].request.thread_messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn includes_slack_memory_context_when_action_token_is_available() {
+        let fixtures = create_execution_fixtures_with_memory_search(
+            None,
+            Some(Ok(SlackMessageSearchResult {
+                messages: vec![SlackMessageSearchResultItem {
+                    author_name: Some("Reili".to_string()),
+                    author_user_id: Some("UBOT".to_string()),
+                    team_id: Some("T001".to_string()),
+                    channel_id: Some("C001".to_string()),
+                    channel_name: Some("alerts".to_string()),
+                    message_ts: "1760000000.000001".to_string(),
+                    thread_ts: Some("1760000000.000000".to_string()),
+                    content: "*Reusable notes*\nreili_memory_v1\n- service: checkout-api"
+                        .to_string(),
+                    is_author_bot: true,
+                    permalink: Some("https://slack/memory".to_string()),
+                    context_messages: SlackMessageSearchContextMessages {
+                        before: Vec::new(),
+                        after: Vec::new(),
+                    },
+                }],
+                next_cursor: None,
+            })),
+        );
+        let ExecutionFixtures {
+            deps,
+            slack_message_search_calls,
+            task_runs,
+            ..
+        } = fixtures;
+        let mut payload = create_payload("1760000100.000001", None, None);
+        payload.message.action_token = Some(SecretString::from("action-token"));
+
+        let result = execute_task_job(ExecuteTaskJobInput {
+            job_id: "job-4".to_string(),
+            retry_count: 0,
+            payload,
+            task_cancellation: TaskCancellation::new(),
+            deps,
+        })
+        .await;
+
+        assert!(result.is_ok());
+        let captured = task_runs.lock().expect("lock captured runs").clone();
+        assert_eq!(captured[0].request.memory_items.len(), 1);
+        assert_eq!(
+            captured[0].request.memory_items[0].content,
+            "- service: checkout-api"
+        );
+
+        let calls = slack_message_search_calls
+            .lock()
+            .expect("lock search calls")
+            .clone();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].query, "reili_memory_v1");
+        assert_eq!(calls[0].context_channel_id, Some("C001".to_string()));
+        assert_eq!(calls[0].limit, 10);
     }
 
     #[test]

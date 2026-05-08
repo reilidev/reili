@@ -17,6 +17,7 @@ pub(super) fn build_task_instructions(input: BuildTaskInstructionsInput) -> Stri
         input.datadog_site
     };
     let esa_team_line = format_esa_team_context_line(input.esa_team_name.as_deref());
+    let reusable_notes_instruction = reusable_notes_instruction();
 
     append_configured_additional_system_prompt(
         format!(
@@ -28,7 +29,6 @@ Output language: {language}
 
 Current context:
 - Now: {now}
-- StartedAt: {started_at_iso}
 - Slack Channel: {channel}
 - Slack Thread: {thread_ts}
 - GitHub Organization Scope: {github_scope_org}
@@ -45,23 +45,25 @@ Current context:
 - Run independent tool calls in parallel where possible.
 - Use search_slack_messages when prior Slack discussion outside the current thread could clarify timelines, alerts, ownership, or prior investigation notes.
 - Use search_web to check whether external dependencies (cloud providers, third-party APIs, SaaS platforms) are experiencing outages or degraded performance that could explain the symptoms observed internally.
+- Memory Context contains prior Reili reusable notes from Slack. Treat it as investigation hints, not proof. Verify important facts with current Datadog, GitHub, Slack, documentation, or web evidence before relying on them.
 
 ## Response
 - Write the final response as a concise, scannable Slack message using Slack markdown.
 - Match the final response to the task type.
 - Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns.
 - Whenever Datadog, GitHub, Slack, documentation, or any other evidence source is referenced, include the supporting URL and format it as a clickable link in the Slack message.
-- End the response with a short reusable notes section that captures discovered facts and repository structure details worth reusing in later investigations.
 - Minimize emoji usage. Use emojis only when they add meaningful signal, and never as decoration.
+
+{reusable_notes_instruction}
 ",
         language = input.language,
         now = Utc::now().to_rfc3339(),
-        started_at_iso = input.runtime.started_at_iso,
         channel = input.runtime.channel,
         thread_ts = input.runtime.thread_ts,
         github_scope_org = input.github_scope_org,
         datadog_site = datadog_site,
         esa_team_line = esa_team_line,
+        reusable_notes_instruction = reusable_notes_instruction,
         ),
         input.additional_system_prompt.as_deref(),
     )
@@ -73,6 +75,8 @@ pub(super) struct BuildDatadogInstructionsInput {
 }
 
 pub(super) fn build_datadog_instructions(input: BuildDatadogInstructionsInput) -> String {
+    let reusable_notes_instruction = reusable_notes_instruction();
+
     append_configured_additional_system_prompt(
         format!(
         "You are a Datadog investigation specialist with deep expertise in production reliability, observability, failure analysis, operational diagnostics, and security investigation.
@@ -87,9 +91,12 @@ Before entering a new major investigation step, call report_progress. The payloa
 ## Output expectations
 Prioritize the most operationally relevant questions first: customer impact, affected scope, onset time, likely trigger, severity, and whether the issue is ongoing.
 Return concise, high-signal findings rather than raw tool output. Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns. Avoid overstating conclusions, and state uncertainty explicitly when evidence is partial, indirect, or conflicting.
-Include clickable Datadog links for all referenced evidence whenever available. Briefly summarize the investigation trail so another engineer can follow what you checked, why you checked it, and what each step established, without dumping raw tool arguments or raw tool output."
+Include clickable Datadog links for all referenced evidence whenever available. Briefly summarize the investigation trail so another engineer can follow what you checked, why you checked it, and what each step established, without dumping raw tool arguments or raw tool output.
+
+{reusable_notes_instruction}"
             ,
             language = input.language,
+            reusable_notes_instruction = reusable_notes_instruction,
         ),
         input.additional_system_prompt.as_deref(),
     )
@@ -102,6 +109,8 @@ pub(super) struct BuildGithubInstructionsInput {
 }
 
 pub(super) fn build_github_instructions(input: BuildGithubInstructionsInput) -> String {
+    let reusable_notes_instruction = reusable_notes_instruction();
+
     append_configured_additional_system_prompt(
         format!(
             "You are a GitHub analysis specialist with deep expertise in software
@@ -158,11 +167,11 @@ Whenever you reference GitHub evidence, include the supporting GitHub URL as a
 clickable link whenever available. Briefly summarize the investigation trail so
 another engineer can follow what you checked, why you checked it, and what each
 step established, without dumping raw tool arguments or raw tool output.
-At the end of your response, add a short reusable notes section that captures
-discovered facts and repository structure details worth reusing in later
-investigations.",
+
+{reusable_notes_instruction}",
             github_scope_org = input.github_scope_org,
             language = input.language,
+            reusable_notes_instruction = reusable_notes_instruction,
         ),
         input.additional_system_prompt.as_deref(),
     )
@@ -175,6 +184,8 @@ pub(super) struct BuildEsaInstructionsInput {
 }
 
 pub(super) fn build_esa_instructions(input: BuildEsaInstructionsInput) -> String {
+    let reusable_notes_instruction = reusable_notes_instruction();
+
     append_configured_additional_system_prompt(
         format!(
             "You are an esa documentation search specialist with deep expertise in internal
@@ -204,12 +215,80 @@ Return concise findings rather than raw search output. Clearly distinguish
 confirmed documentation facts, plausible inferences from docs, and remaining
 unknowns. Include clickable esa URLs for all referenced posts whenever
 available. Briefly summarize what you searched for and why, without dumping raw
-tool arguments or raw tool output.",
+tool arguments or raw tool output.
+
+{reusable_notes_instruction}",
             team_name = input.team_name,
             language = input.language,
+            reusable_notes_instruction = reusable_notes_instruction,
         ),
         input.additional_system_prompt.as_deref(),
     )
+}
+
+fn reusable_notes_instruction() -> &'static str {
+    r#"# Memory
+
+End the response with a short reusable notes section that includes `reili_memory_v1` and captures only confirmed facts worth reusing in later investigations.
+
+Useful categories of facts to remember include:
+
+Architecture and Codebase Facts:
+- Where important responsibilities live in the codebase.
+- Which modules, services, or components own specific behavior.
+- Important dependencies between systems.
+- Existing design patterns or conventions that should guide future recommendations.
+- Known boundaries between frontend, backend, infrastructure, data, and third-party integrations.
+
+Product and Domain Facts:
+- Business rules that affect implementation or operational behavior.
+- Product constraints, feature behavior, user eligibility rules, billing rules, permissions, or workflow requirements.
+- Domain terminology and how it maps to code, data models, APIs, or operational processes.
+
+Engineering Practice Facts:
+- Team conventions for testing, reviewing, releasing, documenting, or triaging work.
+- Preferred investigation workflows.
+- Expected evidence before recommending an action.
+- PR, ticket, or escalation practices.
+- Known areas where humans prefer extra caution or manual review.
+
+Operations Facts:
+- Deployment, release, rollback, and feature flag processes.
+- Operational constraints for production systems.
+- Monitoring, alerting, dashboards, SLOs, SLIs, and important metrics.
+- Runbook guidance for common incidents or failure modes.
+- Known operational risks, recurring failure patterns, and recommended investigation entry points.
+- Ownership, escalation paths, approval requirements, and on-call responsibilities.
+- Data retention, logging, audit, privacy, or security handling rules.
+
+When saving a memory, use this structure:
+Memory:
+- Fact: A concise, specific statement of the verified fact.
+- Evidence: Where this was confirmed, such as file path, document name, ticket, runbook, log source, monitoring dashboard, or user instruction.
+- Scope: The project, repository, service, environment, workflow, or operational area where this applies.
+
+When saving multiple memories, separate each Memory block with `---`.
+
+Example:
+
+Memory:
+- Fact: Production feature flag changes require approval from the on-call engineer before rollout.
+- Evidence: Confirmed in the release runbook.
+- Scope: Production release and feature rollout workflow.
+---
+Memory:
+- Fact: API latency investigations should start from the service latency dashboard.
+- Evidence: Confirmed in the incident response runbook.
+- Scope: API production incident triage.
+
+Security and privacy rule:
+Never save secrets or sensitive data in memory.
+
+For example, save:
+"Production logs must not include email addresses; use user IDs for investigation."
+
+Do not save:
+Actual email addresses, access tokens, customer records, private URLs, or raw log lines containing sensitive data."#
 }
 
 fn append_configured_additional_system_prompt(
@@ -315,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn task_instructions_omit_retry_count_from_run_context() {
+    fn task_instructions_omit_started_at_and_retry_count_from_run_context() {
         let instructions = build_task_instructions(BuildTaskInstructionsInput {
             datadog_site: "datadoghq.com".to_string(),
             github_scope_org: "acme".to_string(),
@@ -330,6 +409,8 @@ mod tests {
             additional_system_prompt: None,
         });
 
+        assert!(!instructions.contains("StartedAt"));
+        assert!(!instructions.contains("2026-01-01T00:00:00Z"));
         assert!(!instructions.contains("Retry Count"));
     }
 
@@ -354,8 +435,60 @@ mod tests {
             .join(" ");
 
         assert!(normalized_instructions.contains(
-            "End the response with a short reusable notes section that captures discovered facts and repository structure details worth reusing in later investigations."
+            "End the response with a short reusable notes section that includes `reili_memory_v1` and captures only confirmed facts worth reusing in later investigations."
         ));
+        assert!(instructions.contains("# Memory"));
+        assert!(instructions.contains("Architecture and Codebase Facts:"));
+        assert!(instructions.contains("Operations Facts:"));
+        assert!(instructions.contains("Never save secrets or sensitive data in memory."));
+        assert!(
+            instructions.contains("- Fact: A concise, specific statement of the verified fact.")
+        );
+        assert!(instructions.contains("- Evidence: Where this was confirmed"));
+        assert!(instructions.contains("- Scope: The project, repository, service, environment, workflow, or operational area where this applies."));
+        assert!(
+            instructions
+                .contains("When saving multiple memories, separate each Memory block with `---`.")
+        );
+        assert!(instructions.contains("---\nMemory:\n- Fact: API latency investigations should start from the service latency dashboard."));
+    }
+
+    #[test]
+    fn specialist_instructions_include_reusable_notes_guidance() {
+        let datadog_instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
+        let github_instructions = build_github_instructions(BuildGithubInstructionsInput {
+            language: "Japanese".to_string(),
+            github_scope_org: "acme".to_string(),
+            additional_system_prompt: None,
+        });
+        let esa_instructions = build_esa_instructions(BuildEsaInstructionsInput {
+            language: "Japanese".to_string(),
+            team_name: "docs".to_string(),
+            additional_system_prompt: None,
+        });
+
+        for instructions in [datadog_instructions, github_instructions, esa_instructions] {
+            let normalized_instructions = instructions
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            assert!(normalized_instructions.contains(
+                "End the response with a short reusable notes section that includes `reili_memory_v1` and captures only confirmed facts worth reusing in later investigations."
+            ));
+            assert!(instructions.contains("# Memory"));
+            assert!(instructions.contains("Product and Domain Facts:"));
+            assert!(instructions.contains("Engineering Practice Facts:"));
+            assert!(
+                instructions.contains(
+                    "When saving multiple memories, separate each Memory block with `---`."
+                )
+            );
+            assert!(instructions.contains("Do not save:"));
+        }
     }
 
     #[test]
@@ -444,7 +577,7 @@ mod tests {
         assert!(normalized_instructions.contains("avoid scattered exploration"));
         assert!(
             normalized_instructions
-                .contains("At the end of your response, add a short reusable notes section")
+                .contains("End the response with a short reusable notes section")
         );
     }
 }

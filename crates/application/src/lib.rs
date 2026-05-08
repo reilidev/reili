@@ -4,7 +4,8 @@ pub mod progress;
 
 pub use execution::{
     CancelTaskInput, CancelTaskUseCase, CancelTaskUseCaseDeps, ExecuteTaskJobError,
-    ExecuteTaskJobInput, InFlightJobRegistry, ResolvedTaskFailureError, SlackThreadContextLoader,
+    ExecuteTaskJobInput, InFlightJobRegistry, ResolvedTaskFailureError, SlackMemoryContextLoader,
+    SlackMemoryContextLoaderDeps, SlackMemoryContextLoaderInput, SlackThreadContextLoader,
     SlackThreadContextLoaderDeps, SlackThreadContextLoaderInput, StartTaskWorkerRunnerUseCase,
     StartTaskWorkerRunnerUseCaseDeps, TaskExecutionDeps, TaskExecutionOutcome,
     ThreadContextFetchFailedLogInput, execute_task_job, resolve_task_failure_error,
