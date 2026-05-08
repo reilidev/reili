@@ -26,6 +26,8 @@ Give Reili a Slack message or a task, and it will:
   ongoing conversation where your team is already collaborating
 - Connect Datadog telemetry, GitHub repositories and changes, optional esa knowledge base docs, and
   relevant Slack public-channel history to build investigation context
+- Reuse prior Reili Slack notes as lightweight memory when they are available in the current
+  Slack search context
 - Report back with what it found so your team can decide what to do next
 - Expand over time to cover additional external services beyond Datadog, GitHub, and Slack
 
@@ -198,8 +200,9 @@ What happens:
 
 1. It posts a task control message with a `Cancel` button in the thread
 2. It posts task progress in the thread
-3. It investigates across Datadog, GitHub, and configured knowledge sources
-4. It replies with an evidence-backed summary
+3. It loads current thread context and any recent reusable Reili notes visible through Slack search
+4. It investigates across Datadog, GitHub, and configured knowledge sources
+5. It replies with an evidence-backed summary
 
 If you need to stop a queued or running investigation, click `Cancel` on that task's control
 message in the same Slack thread.

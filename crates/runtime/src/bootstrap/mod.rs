@@ -173,6 +173,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
             task_resources,
             task_runner,
             logger: Arc::clone(&logger),
+            slack_bot_user_id: bot_user_id.clone(),
         },
         worker_concurrency: config.worker_concurrency,
         job_max_retry: config.job_max_retry,

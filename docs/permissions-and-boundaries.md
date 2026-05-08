@@ -13,7 +13,8 @@ are the integrations and tools wired in this runtime.
 The runtime can expose only the following tool families:
 
 - Slack progress reporting: `report_progress` (primarily used to post progress messages back to Slack)
-- Slack workspace lookup: `search_slack_messages` (searches prior Slack public-channel messages visible to the current invocation context)
+- Slack workspace lookup and lightweight memory: `search_slack_messages` plus startup memory loading
+  (searches prior Slack public-channel messages visible to the current invocation context)
 - Datadog MCP reads: `search_datadog_services`, `search_datadog_logs`, `analyze_datadog_logs`,
   `search_datadog_metrics`, `get_datadog_metric`, `get_datadog_metric_context`,
   `search_datadog_events`, `search_datadog_monitors`, `search_datadog_dashboards`,
@@ -114,7 +115,9 @@ Not in scope for Slack:
 Slack API methods currently used by the runtime:
 
 - `apps.connections.open`: obtains a temporary WebSocket URL when Socket Mode is enabled
-- `assistant.search.context`: searches Slack public-channel message history using the triggering event's `action_token`
+- `assistant.search.context`: searches Slack public-channel message history using the triggering event's `action_token`;
+  Reili uses this both for the `search_slack_messages` tool and for startup loading of recent
+  Reili reusable notes marked with `reili_memory_v1`
 - `auth.test`: resolves the bot user ID at startup
 - `conversations.info`: resolves originating public channel metadata to evaluate channel name authorization patterns; private-channel lookup fails without `groups:read` and is denied before enqueue
 - `conversations.replies`: loads thread context when the triggering message is a thread reply
@@ -132,6 +135,8 @@ Slack boundary:
 - When configured, handles only `app_mention` events matching the Slack channel name, user ID, user group, or bot actor authorization settings
 - Reads only the thread where the request was made, and only when additional thread context is needed
 - Searches only Slack public-channel messages permitted by the current app install, bot token scope, and `action_token` context
+- Loads lightweight memory only from Reili bot-authored Slack replies in the current public channel
+  when they contain the `reili_memory_v1` marker
 - Posts only into the originating thread
 - Intended for public channel conversations where the app is present; private channels, DM, and group DM usage are out of scope
 - Does not search private channels or DMs with the current Bot Token configuration

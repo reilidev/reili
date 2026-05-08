@@ -1,6 +1,7 @@
 pub mod cancel;
 pub mod errors;
 pub mod in_flight_registry;
+pub mod memory_context;
 pub mod task;
 pub mod thread_context;
 pub mod worker;
@@ -10,6 +11,9 @@ pub use errors::{ExecuteTaskJobError, ResolvedTaskFailureError, resolve_task_fai
 pub use in_flight_registry::{
     AttachCancellationResult, InFlightJobCancellationInfo, InFlightJobRegistry,
     RequestCancelInFlightJobResult,
+};
+pub use memory_context::{
+    SlackMemoryContextLoader, SlackMemoryContextLoaderDeps, SlackMemoryContextLoaderInput,
 };
 pub use task::{ExecuteTaskJobInput, TaskExecutionDeps, TaskExecutionOutcome, execute_task_job};
 pub use thread_context::{

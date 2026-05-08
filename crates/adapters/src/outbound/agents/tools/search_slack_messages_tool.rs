@@ -138,6 +138,12 @@ impl Tool for SearchSlackMessagesTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        if args.limit == 0 || args.limit > 5 {
+            return to_json_string(&to_slack_tool_soft_error(&PortError::invalid_input(
+                "Slack search tool limit must be between 1 and 5",
+            )));
+        }
+
         let Some(action_token) = self
             .action_token
             .as_ref()
@@ -155,6 +161,7 @@ impl Tool for SearchSlackMessagesTool {
             .search_messages(SlackMessageSearchInput {
                 query: args.query,
                 action_token: SecretString::from(action_token),
+                context_channel_id: None,
                 limit: args.limit,
                 include_bots: args.include_bots,
                 include_context_messages: args.include_context_messages,
@@ -364,7 +371,38 @@ mod tests {
         assert_eq!(captured.len(), 1);
         assert_eq!(captured[0].query, "rollout issue");
         assert_eq!(captured[0].action_token, SecretString::from("action-token"));
+        assert_eq!(captured[0].context_channel_id, None);
         assert_eq!(captured[0].limit, 5);
+    }
+
+    #[tokio::test]
+    async fn returns_soft_error_when_limit_exceeds_tool_maximum() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let tool = build_tool(
+            Arc::clone(&calls),
+            Some(SecretString::from("action-token")),
+            SlackMessageSearchResult {
+                messages: Vec::new(),
+                next_cursor: None,
+            },
+        );
+
+        let output = tool
+            .call(SearchSlackMessagesArgs {
+                query: "outage".to_string(),
+                limit: 10,
+                include_bots: true,
+                include_context_messages: true,
+                before: None,
+                after: None,
+                sort: SlackMessageSearchSort::Score,
+                sort_direction: SlackMessageSearchSortDirection::Desc,
+            })
+            .await
+            .expect("call search_slack_messages");
+
+        assert!(output.contains("Slack search tool limit must be between 1 and 5"));
+        assert!(calls.lock().expect("lock calls").is_empty());
     }
 
     #[tokio::test]

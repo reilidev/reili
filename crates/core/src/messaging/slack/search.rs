@@ -22,6 +22,7 @@ pub enum SlackMessageSearchSortDirection {
 pub struct SlackMessageSearchInput {
     pub query: String,
     pub action_token: SecretString,
+    pub context_channel_id: Option<String>,
     pub limit: u32,
     pub include_bots: bool,
     pub include_context_messages: bool,
