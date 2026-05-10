@@ -35,7 +35,7 @@ fn build_memory_context(memory_items: &[reili_core::task::TaskMemoryItem]) -> St
         return "No reusable memories found.".to_string();
     }
 
-    let entries = memory_items
+    memory_items
         .iter()
         .map(|item| {
             let source = item
@@ -51,11 +51,7 @@ fn build_memory_context(memory_items: &[reili_core::task::TaskMemoryItem]) -> St
             )
         })
         .collect::<Vec<String>>()
-        .join("\n---\n");
-
-    format!(
-        "The following entries are prior Reili reusable notes from Slack. Treat them as hints, not proof.\nVerify important facts with Datadog, GitHub, Slack links, or documentation before relying on them.\n\n{entries}"
-    )
+        .join("\n---\n")
 }
 
 #[cfg(test)]
@@ -256,7 +252,8 @@ mod tests {
         let prompt = build_task_prompt(&request);
 
         assert!(prompt.contains("# Memory Context\n"));
-        assert!(prompt.contains("Treat them as hints, not proof."));
+        assert!(!prompt.contains("Treat them as hints, not proof."));
+        assert!(!prompt.contains("Verify important facts"));
         assert!(
             prompt.contains("source: https://example.slack.com/archives/C001/p1760000000000001")
         );
