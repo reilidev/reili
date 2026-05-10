@@ -80,12 +80,8 @@ impl DatadogMcpHttpClient {
     }
 
     async fn initialize_session(&self) -> Result<Option<Arc<str>>, PortError> {
-        let initialize_request: ClientRequest = InitializeRequest {
-            method: Default::default(),
-            params: self.client_info.clone(),
-            extensions: Default::default(),
-        }
-        .into();
+        let initialize_request: ClientRequest =
+            InitializeRequest::new(self.client_info.clone()).into();
         let initialize_response = self
             .http_client
             .post_message(
@@ -135,7 +131,7 @@ impl DatadogMcpHttpClient {
             .map_err(|error| {
                 format_streamable_http_error("send initialized notification to Datadog MCP", error)
             })?
-            .expect_accepted::<reqwest::Error>()
+            .expect_accepted_or_json::<reqwest::Error>()
             .map_err(|error| {
                 format_streamable_http_error(
                     "process initialized notification response from Datadog MCP",
@@ -182,17 +178,11 @@ impl DatadogMcpHttpClient {
         arguments: Option<serde_json::Map<String, serde_json::Value>>,
         session_id: Option<Arc<str>>,
     ) -> Result<CallToolResult, PortError> {
-        let call_tool_request: ClientRequest = CallToolRequest {
-            method: Default::default(),
-            params: CallToolRequestParams {
-                name: name.into(),
-                arguments,
-                meta: None,
-                task: None,
-            },
-            extensions: Default::default(),
-        }
-        .into();
+        let params = match arguments {
+            Some(arguments) => CallToolRequestParams::new(name).with_arguments(arguments),
+            None => CallToolRequestParams::new(name),
+        };
+        let call_tool_request: ClientRequest = CallToolRequest::new(params).into();
         let response = self
             .http_client
             .post_message(
@@ -220,7 +210,7 @@ impl DatadogMcpHttpClient {
 
         if let Err(error) = self
             .http_client
-            .delete_session(Arc::clone(&self.uri), session_id, None)
+            .delete_session(Arc::clone(&self.uri), session_id, None, HashMap::new())
             .await
         {
             error!(
@@ -236,20 +226,11 @@ impl DatadogMcpHttpClient {
 }
 
 fn build_client_info() -> ClientInfo {
-    ClientInfo {
-        protocol_version: Default::default(),
-        capabilities: ClientCapabilities::default(),
-        client_info: build_client_implementation(),
-        meta: None,
-    }
+    ClientInfo::new(ClientCapabilities::default(), build_client_implementation())
 }
 
 fn build_client_implementation() -> Implementation {
-    Implementation {
-        name: DATADOG_MCP_CLIENT_NAME.to_string(),
-        version: DATADOG_MCP_CLIENT_VERSION_FALLBACK.to_string(),
-        ..Default::default()
-    }
+    Implementation::new(DATADOG_MCP_CLIENT_NAME, DATADOG_MCP_CLIENT_VERSION_FALLBACK)
 }
 
 fn build_datadog_mcp_http_client(
@@ -369,6 +350,9 @@ async fn read_server_result(
         StreamableHttpPostResponse::Sse(_, session_id) => Err(PortError::new(format!(
             "Datadog MCP returned an unexpected SSE response for session {}",
             session_id.as_deref().unwrap_or("<none>")
+        ))),
+        other => Err(PortError::new(format!(
+            "Datadog MCP returned an unsupported streamable HTTP response: {other:?}"
         ))),
     }
 }

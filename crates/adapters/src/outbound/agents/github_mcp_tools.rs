@@ -406,26 +406,18 @@ mod tests {
 
     #[test]
     fn formats_success_from_structured_content_when_text_content_is_empty() {
-        let result = rmcp::model::CallToolResult {
-            content: vec![],
-            structured_content: Some(json!({ "items": [] })),
-            is_error: Some(false),
-            meta: None,
-        };
+        let mut result = rmcp::model::CallToolResult::success(vec![]);
+        result.structured_content = Some(json!({ "items": [] }));
 
         assert_eq!(format_github_mcp_tool_success(&result), "{\"items\":[]}");
     }
 
     #[test]
     fn formats_tool_error_with_text_and_structured_content() {
-        let result = rmcp::model::CallToolResult {
-            content: vec![rmcp::model::Content::text("request failed")],
-            structured_content: Some(
-                json!({ "details": "permission denied", "error_code": "FORBIDDEN" }),
-            ),
-            is_error: Some(true),
-            meta: None,
-        };
+        let mut result =
+            rmcp::model::CallToolResult::error(vec![rmcp::model::Content::text("request failed")]);
+        result.structured_content =
+            Some(json!({ "details": "permission denied", "error_code": "FORBIDDEN" }));
 
         assert_eq!(
             format_github_mcp_tool_error("search_code", &result),
