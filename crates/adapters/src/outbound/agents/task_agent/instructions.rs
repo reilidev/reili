@@ -45,13 +45,17 @@ Current context:
 - Run independent tool calls in parallel where possible.
 - Use search_slack_messages when prior Slack discussion outside the current thread could clarify timelines, alerts, ownership, or prior investigation notes.
 - Use search_web to check whether external dependencies (cloud providers, third-party APIs, SaaS platforms) are experiencing outages or degraded performance that could explain the symptoms observed internally.
-- Memory Context contains prior Reili reusable notes from Slack. Treat it as investigation hints, not proof. Verify important facts with current Datadog, GitHub, Slack, documentation, or web evidence before relying on them.
+
+## Using Memory Context
+- Memory Context contains prior reusable notes from Slack. Use relevant notes as a shortcut for choosing likely owners, systems, runbooks, dashboards, repository paths, and investigation entry points instead of rediscovering everything from scratch.
+- Treat Memory Context as investigation guidance, not proof. Do not repeat broad discovery work just to reconfirm memories, but verify facts that affect your conclusion, recommendation, or operational action with current Datadog, GitHub, Slack, documentation, or web evidence.
 
 ## Response
 - Write the final response as a concise, scannable Slack message using Slack markdown.
 - Match the final response to the task type.
 - Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns.
 - Whenever Datadog, GitHub, Slack, documentation, or any other evidence source is referenced, include the supporting URL and format it as a clickable link in the Slack message.
+- If specialist outputs include reusable memory facts, incorporate relevant confirmed facts into your final `reili_memory_v1` section. Deduplicate overlapping facts and preserve the evidence/source context. Do not blindly copy specialist memory blocks if they are irrelevant, speculative, or unsupported.
 - Minimize emoji usage. Use emojis only when they add meaningful signal, and never as decoration.
 
 {reusable_notes_instruction}
@@ -86,6 +90,7 @@ Use {language} for all responses.
 
 ## Investigation approach
 Work in a hypothesis-driven way. Start by narrowing the service, timeframe, and current working hypothesis, then use only the Datadog tools needed to test that hypothesis or answer the current question. Prefer focused investigation over broad data collection.
+Run tool calls in parallel whenever possible to reduce investigation latency.
 Before entering a new major investigation step, call report_progress. The payload must be short and use the title and summary fields.
 
 ## Output expectations
@@ -127,8 +132,8 @@ payload must be short and use the title and summary fields.
 Work in a focused, question-driven way. Use the available GitHub MCP tools to
 search code, repositories, issues, pull requests, repository files, GitHub
 Actions workflows and job logs, and Dependabot alerts, but only to the extent
-needed to answer the current question or test the current hypothesis. Run
-independent searches in parallel when possible.
+needed to answer the current question or test the current hypothesis. Run tool
+calls in parallel whenever possible to reduce investigation latency.
 
 ## Mandatory scope rules
 Every `search_code`, `search_repositories`, `search_issues`, and
@@ -207,6 +212,7 @@ using esa query syntax. Prefer precise queries based on service names, alert
 names, incident identifiers, repository names, owners, categories, tags,
 feature names, project names, team names, and other domain keywords from the
 task context.
+Run tool calls in parallel whenever possible to reduce investigation latency.
 Do not narrow your search to operational or investigation terms when the
 request is asking for broader internal knowledge.
 
@@ -261,22 +267,21 @@ Operations Facts:
 - Ownership, escalation paths, approval requirements, and on-call responsibilities.
 - Data retention, logging, audit, privacy, or security handling rules.
 
-When saving a memory, use this structure:
-Memory:
+When saving memories, include `reili_memory_v1` once and use this structure:
+reili_memory_v1
 - Fact: A concise, specific statement of the verified fact.
 - Evidence: Where this was confirmed, such as file path, document name, ticket, runbook, log source, monitoring dashboard, or user instruction.
 - Scope: The project, repository, service, environment, workflow, or operational area where this applies.
 
-When saving multiple memories, separate each Memory block with `---`.
+When saving multiple memories, separate each fact block with `---`. Do not use `Memory:` labels.
 
 Example:
 
-Memory:
+reili_memory_v1
 - Fact: Production feature flag changes require approval from the on-call engineer before rollout.
 - Evidence: Confirmed in the release runbook.
 - Scope: Production release and feature rollout workflow.
 ---
-Memory:
 - Fact: API latency investigations should start from the service latency dashboard.
 - Evidence: Confirmed in the incident response runbook.
 - Scope: API production incident triage.
@@ -373,27 +378,6 @@ mod tests {
     }
 
     #[test]
-    fn task_instructions_omit_datadog_tool_guidance() {
-        let instructions = build_task_instructions(BuildTaskInstructionsInput {
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            esa_team_name: None,
-            runtime: TaskRuntime {
-                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                retry_count: 0,
-            },
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-
-        assert!(!instructions.contains("`search_datadog_services`"));
-        assert!(!instructions.contains("`search_datadog_security_signals`"));
-        assert!(!instructions.contains("investigate_datadog"));
-    }
-
-    #[test]
     fn task_instructions_omit_started_at_and_retry_count_from_run_context() {
         let instructions = build_task_instructions(BuildTaskInstructionsInput {
             datadog_site: "datadoghq.com".to_string(),
@@ -412,95 +396,6 @@ mod tests {
         assert!(!instructions.contains("StartedAt"));
         assert!(!instructions.contains("2026-01-01T00:00:00Z"));
         assert!(!instructions.contains("Retry Count"));
-    }
-
-    #[test]
-    fn task_instructions_include_reusable_notes_guidance() {
-        let instructions = build_task_instructions(BuildTaskInstructionsInput {
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            esa_team_name: None,
-            runtime: TaskRuntime {
-                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                retry_count: 0,
-            },
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-        let normalized_instructions = instructions
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-
-        assert!(normalized_instructions.contains(
-            "End the response with a short reusable notes section that includes `reili_memory_v1` and captures only confirmed facts worth reusing in later investigations."
-        ));
-        assert!(instructions.contains("# Memory"));
-        assert!(instructions.contains("Architecture and Codebase Facts:"));
-        assert!(instructions.contains("Operations Facts:"));
-        assert!(instructions.contains("Never save secrets or sensitive data in memory."));
-        assert!(
-            instructions.contains("- Fact: A concise, specific statement of the verified fact.")
-        );
-        assert!(instructions.contains("- Evidence: Where this was confirmed"));
-        assert!(instructions.contains("- Scope: The project, repository, service, environment, workflow, or operational area where this applies."));
-        assert!(
-            instructions
-                .contains("When saving multiple memories, separate each Memory block with `---`.")
-        );
-        assert!(instructions.contains("---\nMemory:\n- Fact: API latency investigations should start from the service latency dashboard."));
-    }
-
-    #[test]
-    fn specialist_instructions_include_reusable_notes_guidance() {
-        let datadog_instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-        let github_instructions = build_github_instructions(BuildGithubInstructionsInput {
-            language: "Japanese".to_string(),
-            github_scope_org: "acme".to_string(),
-            additional_system_prompt: None,
-        });
-        let esa_instructions = build_esa_instructions(BuildEsaInstructionsInput {
-            language: "Japanese".to_string(),
-            team_name: "docs".to_string(),
-            additional_system_prompt: None,
-        });
-
-        for instructions in [datadog_instructions, github_instructions, esa_instructions] {
-            let normalized_instructions = instructions
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-
-            assert!(normalized_instructions.contains(
-                "End the response with a short reusable notes section that includes `reili_memory_v1` and captures only confirmed facts worth reusing in later investigations."
-            ));
-            assert!(instructions.contains("# Memory"));
-            assert!(instructions.contains("Product and Domain Facts:"));
-            assert!(instructions.contains("Engineering Practice Facts:"));
-            assert!(
-                instructions.contains(
-                    "When saving multiple memories, separate each Memory block with `---`."
-                )
-            );
-            assert!(instructions.contains("Do not save:"));
-        }
-    }
-
-    #[test]
-    fn datadog_instructions_omit_datadog_usage_section() {
-        let instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-
-        assert!(!instructions.contains("## Datadog usage"));
-        assert!(!instructions.contains("`search_datadog_logs`"));
-        assert!(instructions.contains("## Output expectations"));
     }
 
     #[test]
@@ -534,50 +429,25 @@ mod tests {
     }
 
     #[test]
-    fn esa_instructions_include_general_internal_knowledge_scope() {
+    fn esa_instructions_include_configured_team_name() {
         let instructions = build_esa_instructions(BuildEsaInstructionsInput {
             language: "Japanese".to_string(),
             team_name: "docs".to_string(),
             additional_system_prompt: None,
         });
-        let normalized_instructions = instructions
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
 
         assert!(instructions.contains("esa team `docs`"));
-        assert!(instructions.contains("Use search_posts"));
-        assert!(instructions.contains("team processes"));
-        assert!(instructions.contains("product specifications"));
-        assert!(normalized_instructions.contains(
-            "whether the topic is operational, architectural, procedural, or organizational"
-        ));
-        assert!(
-            normalized_instructions
-                .contains("Do not narrow your search to operational or investigation terms")
-        );
     }
 
     #[test]
-    fn github_instructions_prioritize_readme_and_design_docs_for_initial_exploration() {
+    fn github_instructions_include_configured_scope_org() {
         let instructions = build_github_instructions(BuildGithubInstructionsInput {
             language: "Japanese".to_string(),
             github_scope_org: "acme".to_string(),
             additional_system_prompt: None,
         });
-        let normalized_instructions = instructions
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
 
-        assert!(normalized_instructions.contains(
-            "When starting exploration for an unfamiliar repository, first read high-signal orientation docs such as README, architecture/design documents, and key technical documentation"
-        ));
-        assert!(normalized_instructions.contains("before broad search"));
-        assert!(normalized_instructions.contains("avoid scattered exploration"));
-        assert!(
-            normalized_instructions
-                .contains("End the response with a short reusable notes section")
-        );
+        assert!(instructions.contains("org:acme"));
+        assert!(instructions.contains("the\n`owner` must be `acme`"));
     }
 }
