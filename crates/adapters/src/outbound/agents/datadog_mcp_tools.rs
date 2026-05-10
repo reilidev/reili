@@ -374,12 +374,8 @@ mod tests {
 
     #[test]
     fn formats_success_from_structured_content_when_text_content_is_empty() {
-        let result = rmcp::model::CallToolResult {
-            content: vec![],
-            structured_content: Some(serde_json::json!({"status":"ok"})),
-            is_error: Some(false),
-            meta: None,
-        };
+        let mut result = rmcp::model::CallToolResult::success(vec![]);
+        result.structured_content = Some(serde_json::json!({"status":"ok"}));
 
         assert_eq!(
             format_datadog_mcp_tool_success(&result),
@@ -389,15 +385,12 @@ mod tests {
 
     #[test]
     fn formats_tool_error_with_text_and_structured_content() {
-        let result = rmcp::model::CallToolResult {
-            content: vec![rmcp::model::Content::text("request failed")],
-            structured_content: Some(serde_json::json!({
+        let mut result =
+            rmcp::model::CallToolResult::error(vec![rmcp::model::Content::text("request failed")]);
+        result.structured_content = Some(serde_json::json!({
                 "error_code": "FORBIDDEN",
                 "details": "permission denied"
-            })),
-            is_error: Some(true),
-            meta: None,
-        };
+        }));
 
         assert_eq!(
             format_datadog_mcp_tool_error("search_datadog_logs", &result),
@@ -407,15 +400,10 @@ mod tests {
 
     #[test]
     fn formats_tool_error_from_embedded_text_resource() {
-        let result = rmcp::model::CallToolResult {
-            content: vec![rmcp::model::Content::embedded_text(
-                "datadog://error",
-                "resource failure",
-            )],
-            structured_content: None,
-            is_error: Some(true),
-            meta: None,
-        };
+        let result = rmcp::model::CallToolResult::error(vec![rmcp::model::Content::embedded_text(
+            "datadog://error",
+            "resource failure",
+        )]);
 
         assert_eq!(
             format_datadog_mcp_tool_error("search_datadog_metrics", &result),

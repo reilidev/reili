@@ -121,12 +121,8 @@ impl GitHubMcpHttpClient {
     }
 
     async fn initialize_session(&self) -> Result<Option<Arc<str>>, PortError> {
-        let initialize_request: ClientRequest = InitializeRequest {
-            method: Default::default(),
-            params: self.client_info.clone(),
-            extensions: Default::default(),
-        }
-        .into();
+        let initialize_request: ClientRequest =
+            InitializeRequest::new(self.client_info.clone()).into();
         let initialize_response = self
             .authorized_mcp_client()
             .await?
@@ -178,7 +174,7 @@ impl GitHubMcpHttpClient {
             .map_err(|error| {
                 format_streamable_http_error("send initialized notification to GitHub MCP", error)
             })?
-            .expect_accepted::<reqwest::Error>()
+            .expect_accepted_or_json::<reqwest::Error>()
             .map_err(|error| {
                 format_streamable_http_error(
                     "process initialized notification response from GitHub MCP",
@@ -226,17 +222,11 @@ impl GitHubMcpHttpClient {
         arguments: Option<Map<String, Value>>,
         session_id: Option<Arc<str>>,
     ) -> Result<CallToolResult, PortError> {
-        let call_tool_request: ClientRequest = CallToolRequest {
-            method: Default::default(),
-            params: CallToolRequestParams {
-                name: name.into(),
-                arguments,
-                meta: None,
-                task: None,
-            },
-            extensions: Default::default(),
-        }
-        .into();
+        let params = match arguments {
+            Some(arguments) => CallToolRequestParams::new(name).with_arguments(arguments),
+            None => CallToolRequestParams::new(name),
+        };
+        let call_tool_request: ClientRequest = CallToolRequest::new(params).into();
         let response = self
             .authorized_mcp_client()
             .await?
@@ -275,7 +265,7 @@ impl GitHubMcpHttpClient {
         };
 
         if let Err(error) = client
-            .delete_session(Arc::clone(&self.uri), session_id, None)
+            .delete_session(Arc::clone(&self.uri), session_id, None, HashMap::new())
             .await
         {
             error!(
@@ -467,20 +457,11 @@ fn build_github_mcp_headers(auth_header: HeaderValue) -> HeaderMap {
 }
 
 fn build_client_info() -> ClientInfo {
-    ClientInfo {
-        protocol_version: Default::default(),
-        capabilities: ClientCapabilities::default(),
-        client_info: build_client_implementation(),
-        meta: None,
-    }
+    ClientInfo::new(ClientCapabilities::default(), build_client_implementation())
 }
 
 fn build_client_implementation() -> Implementation {
-    Implementation {
-        name: GITHUB_MCP_CLIENT_NAME.to_string(),
-        version: GITHUB_MCP_CLIENT_VERSION_FALLBACK.to_string(),
-        ..Default::default()
-    }
+    Implementation::new(GITHUB_MCP_CLIENT_NAME, GITHUB_MCP_CLIENT_VERSION_FALLBACK)
 }
 
 fn build_bearer_auth_header(token: &str) -> Result<HeaderValue, PortError> {
@@ -545,6 +526,9 @@ async fn read_server_result(
                 session_id.as_deref().unwrap_or("<none>")
             )))
         }
+        other => Err(PortError::new(format!(
+            "GitHub MCP returned an unsupported streamable HTTP response: {other:?}"
+        ))),
     }
 }
 
