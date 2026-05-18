@@ -8,7 +8,7 @@ use super::datadog_mcp_tools::DatadogMcpToolConfig;
 use super::llm_provider_settings::{
     CreateOpenAiProviderSettingsInput, LlmProviderSettings, create_openai_provider_settings,
 };
-use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
+use super::llm_task_runner::{RunLlmTaskRunnerInput, run_task};
 use super::task_agent::TaskAgentConnectors;
 use crate::outbound::github::GitHubMcpConfig;
 
@@ -56,7 +56,7 @@ impl OpenAiTaskRunner {
 #[async_trait]
 impl TaskRunnerPort for OpenAiTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
-        run_llm_task(RunLlmTaskInput {
+        run_task(RunLlmTaskRunnerInput {
             client: openai::Client::from_val(self.api_key.expose().to_string().into()),
             settings: self.provider_settings.clone(),
             datadog_mcp: self.datadog_mcp.clone(),

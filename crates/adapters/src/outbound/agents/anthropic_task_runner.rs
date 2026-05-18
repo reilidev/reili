@@ -8,7 +8,7 @@ use super::datadog_mcp_tools::DatadogMcpToolConfig;
 use super::llm_provider_settings::{
     CreateAnthropicProviderSettingsInput, LlmProviderSettings, create_anthropic_provider_settings,
 };
-use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
+use super::llm_task_runner::{RunLlmTaskRunnerInput, run_task};
 use super::task_agent::TaskAgentConnectors;
 use crate::outbound::github::GitHubMcpConfig;
 
@@ -54,7 +54,7 @@ impl AnthropicTaskRunner {
 #[async_trait]
 impl TaskRunnerPort for AnthropicTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
-        run_llm_task(RunLlmTaskInput {
+        run_task(RunLlmTaskRunnerInput {
             client: anthropic::Client::from_val(self.api_key.expose().to_string()),
             settings: self.provider_settings.clone(),
             datadog_mcp: self.datadog_mcp.clone(),

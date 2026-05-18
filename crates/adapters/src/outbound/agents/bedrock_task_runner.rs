@@ -8,7 +8,7 @@ use super::datadog_mcp_tools::DatadogMcpToolConfig;
 use super::llm_provider_settings::{
     CreateBedrockProviderSettingsInput, LlmProviderSettings, create_bedrock_provider_settings,
 };
-use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
+use super::llm_task_runner::{RunLlmTaskRunnerInput, run_task};
 use super::task_agent::TaskAgentConnectors;
 use crate::outbound::github::GitHubMcpConfig;
 
@@ -62,7 +62,7 @@ impl TaskRunnerPort for BedrockTaskRunner {
         let client =
             create_bedrock_client(self.aws_profile.as_deref(), self.aws_region.as_deref()).await;
 
-        run_llm_task(RunLlmTaskInput {
+        run_task(RunLlmTaskRunnerInput {
             client,
             settings: self.provider_settings.clone(),
             datadog_mcp: self.datadog_mcp.clone(),
