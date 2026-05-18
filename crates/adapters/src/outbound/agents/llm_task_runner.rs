@@ -22,7 +22,7 @@ use super::task_agent::{
 };
 use crate::outbound::github::GitHubMcpConfig;
 
-pub struct RunLlmTaskInput<C>
+pub struct RunLlmTaskRunnerInput<C>
 where
     C: CompletionClient,
 {
@@ -37,8 +37,8 @@ where
     pub run: RunTaskInput,
 }
 
-pub async fn run_llm_task<C>(
-    input: RunLlmTaskInput<C>,
+pub async fn run_task<C>(
+    input: RunLlmTaskRunnerInput<C>,
 ) -> Result<TaskRunOutcome, AgentRunFailedError>
 where
     C: CompletionClient + Clone,

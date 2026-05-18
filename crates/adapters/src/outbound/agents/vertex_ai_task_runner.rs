@@ -7,7 +7,7 @@ use super::datadog_mcp_tools::DatadogMcpToolConfig;
 use super::llm_provider_settings::{
     CreateVertexAiProviderSettingsInput, LlmProviderSettings, create_vertex_ai_provider_settings,
 };
-use super::llm_task_runner::{RunLlmTaskInput, run_llm_task};
+use super::llm_task_runner::{RunLlmTaskRunnerInput, run_task};
 use super::task_agent::TaskAgentConnectors;
 use crate::outbound::github::GitHubMcpConfig;
 
@@ -55,7 +55,7 @@ impl VertexAiTaskRunner {
 #[async_trait]
 impl TaskRunnerPort for VertexAiTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
-        run_llm_task(RunLlmTaskInput {
+        run_task(RunLlmTaskRunnerInput {
             client: self.client.clone(),
             settings: self.provider_settings.clone(),
             datadog_mcp: self.datadog_mcp.clone(),
