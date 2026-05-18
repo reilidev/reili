@@ -118,6 +118,7 @@ where
             .name("investigate_datadog")
             .description(
                 "Delegates Datadog observability and security investigation tasks.
+This tool is designed to be split into scopes and used in parallel.
 When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.",
             )
             .preamble(&build_datadog_instructions(BuildDatadogInstructionsInput {
@@ -174,6 +175,7 @@ When instructing this specialist, include the relevant background, context, and 
             .name("investigate_github")
             .description(
                 "Delegates GitHub repository, code, pull request, Actions, and Dependabot investigation tasks.
+This tool is designed to be split into scopes and used in parallel.
 When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.",
             )
             .preamble(&build_github_instructions(BuildGithubInstructionsInput {

@@ -85,6 +85,7 @@ where
                 })
             })?;
     let task_prompt = build_task_prompt(&input.run.request);
+    let memory_items = input.run.request.memory_items.clone();
     let task_agent_factory = TaskAgentFactory::new(CreateTaskAgentFactoryInput {
         client: input.client,
         config: TaskAgentConfig {
@@ -108,6 +109,7 @@ where
                 usage_collector: usage_collector.clone(),
             },
             slack_action_token: input.run.request.trigger_message.action_token.clone(),
+            memory_items,
         },
         toolsets: TaskAgentToolsets {
             datadog: datadog_mcp_toolset,

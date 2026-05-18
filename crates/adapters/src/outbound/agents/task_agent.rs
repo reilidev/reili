@@ -21,8 +21,11 @@ use super::tools::{
     ReportProgressTool, ReportProgressToolInput, SearchSlackMessagesTool, SearchWebTool,
 };
 use super::{
-    llm_provider_settings::LlmProviderSettings, llm_usage_collector::LlmUsageCollector,
-    progress_reporting_sub_agent_tool::ProgressReportingSubAgentTool,
+    llm_provider_settings::LlmProviderSettings,
+    llm_usage_collector::LlmUsageCollector,
+    progress_reporting_sub_agent_tool::{
+        ProgressReportingSubAgentTool, ProgressReportingSubAgentToolInput,
+    },
 };
 use crate::outbound::esa::EsaPostSearchPort;
 use instructions::{BuildTaskInstructionsInput, build_task_instructions};
@@ -63,7 +66,6 @@ impl<C> TaskAgentFactory<C>
 where
     C: CompletionClient,
 {
-    #[must_use]
     pub fn new(input: CreateTaskAgentFactoryInput<C>) -> Self {
         Self {
             client: input.client,
@@ -104,6 +106,7 @@ where
             .esa
             .as_ref()
             .map(|connector| connector.team_name.clone());
+        let memory_context_section = build_memory_context_section(&input.run_context.memory_items);
 
         let builder = self
             .client
@@ -129,9 +132,13 @@ where
                 owner_id: TASK_RUNNER_PROGRESS_OWNER_ID.to_string(),
             }))
             .tool(ProgressReportingSubAgentTool::new(
-                datadog_agent,
-                DATADOG_PROGRESS_OWNER_ID.to_string(),
-                Arc::clone(&input.run_context.execution.on_progress_event),
+                ProgressReportingSubAgentToolInput {
+                    agent: datadog_agent,
+                    owner_id: DATADOG_PROGRESS_OWNER_ID.to_string(),
+                    on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
+                    tool_concurrency: self.config.settings.tool_concurrency,
+                    shared_prompt_context: memory_context_section.clone(),
+                },
             ))
             .tool(SearchSlackMessagesTool::new(
                 Arc::clone(&input.run_context.resources.slack_message_search_port),
@@ -139,15 +146,23 @@ where
             ))
             .tool(SearchWebTool::new(Arc::clone(&input.run_context.resources)))
             .tool(ProgressReportingSubAgentTool::new(
-                github_agent,
-                GITHUB_PROGRESS_OWNER_ID.to_string(),
-                Arc::clone(&input.run_context.execution.on_progress_event),
+                ProgressReportingSubAgentToolInput {
+                    agent: github_agent,
+                    owner_id: GITHUB_PROGRESS_OWNER_ID.to_string(),
+                    on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
+                    tool_concurrency: self.config.settings.tool_concurrency,
+                    shared_prompt_context: memory_context_section.clone(),
+                },
             ));
         let builder = match esa_agent {
             Some(esa_agent) => builder.tool(ProgressReportingSubAgentTool::new(
-                esa_agent,
-                ESA_PROGRESS_OWNER_ID.to_string(),
-                Arc::clone(&input.run_context.execution.on_progress_event),
+                ProgressReportingSubAgentToolInput {
+                    agent: esa_agent,
+                    owner_id: ESA_PROGRESS_OWNER_ID.to_string(),
+                    on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
+                    tool_concurrency: self.config.settings.tool_concurrency,
+                    shared_prompt_context: memory_context_section,
+                },
             )),
             None => builder,
         };
@@ -183,6 +198,7 @@ pub struct TaskAgentRunContext {
     pub resources: Arc<TaskResources>,
     pub execution: TaskAgentExecutionContext,
     pub slack_action_token: Option<SecretString>,
+    pub memory_items: Vec<reili_core::task::TaskMemoryItem>,
 }
 
 #[derive(Clone)]
@@ -225,4 +241,17 @@ where
         Some(value) => builder.max_tokens(value),
         None => builder,
     }
+}
+
+fn build_memory_context_section(
+    memory_items: &[reili_core::task::TaskMemoryItem],
+) -> Option<String> {
+    if memory_items.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "# Memory Context\n{}",
+        prompt::build_memory_context(memory_items)
+    ))
 }

@@ -30,7 +30,7 @@ fn build_thread_transcript(
         .join("\n---\n")
 }
 
-fn build_memory_context(memory_items: &[reili_core::task::TaskMemoryItem]) -> String {
+pub(super) fn build_memory_context(memory_items: &[reili_core::task::TaskMemoryItem]) -> String {
     if memory_items.is_empty() {
         return "No reusable memories found.".to_string();
     }
