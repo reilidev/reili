@@ -43,6 +43,7 @@ Current context:
 
 ## Tool execution
 - Run independent tool calls in parallel where possible.
+- Because investigative tools such as `investigate_github` can take a long time to return results, run them in parallel whenever possible, splitting the work by research scope and objective.
 - Use search_slack_messages when prior Slack discussion outside the current thread could clarify timelines, alerts, ownership, or prior investigation notes.
 - Use search_web to check whether external dependencies (cloud providers, third-party APIs, SaaS platforms) are experiencing outages or degraded performance that could explain the symptoms observed internally.
 
@@ -80,6 +81,7 @@ pub(super) struct BuildDatadogInstructionsInput {
 
 pub(super) fn build_datadog_instructions(input: BuildDatadogInstructionsInput) -> String {
     let reusable_notes_instruction = reusable_notes_instruction();
+    let memory_context_instruction = specialist_memory_context_instruction();
 
     append_configured_additional_system_prompt(
         format!(
@@ -93,6 +95,8 @@ Work in a hypothesis-driven way. Start by narrowing the service, timeframe, and 
 Run tool calls in parallel whenever possible to reduce investigation latency.
 Before entering a new major investigation step, call report_progress. The payload must be short and use the title and summary fields.
 
+{memory_context_instruction}
+
 ## Output expectations
 Prioritize the most operationally relevant questions first: customer impact, affected scope, onset time, likely trigger, severity, and whether the issue is ongoing.
 Return concise, high-signal findings rather than raw tool output. Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns. Avoid overstating conclusions, and state uncertainty explicitly when evidence is partial, indirect, or conflicting.
@@ -101,6 +105,7 @@ Include clickable Datadog links for all referenced evidence whenever available. 
 {reusable_notes_instruction}"
             ,
             language = input.language,
+            memory_context_instruction = memory_context_instruction,
             reusable_notes_instruction = reusable_notes_instruction,
         ),
         input.additional_system_prompt.as_deref(),
@@ -115,10 +120,11 @@ pub(super) struct BuildGithubInstructionsInput {
 
 pub(super) fn build_github_instructions(input: BuildGithubInstructionsInput) -> String {
     let reusable_notes_instruction = reusable_notes_instruction();
+    let memory_context_instruction = specialist_memory_context_instruction();
 
     append_configured_additional_system_prompt(
         format!(
-            "You are a GitHub analysis specialist with deep expertise in software
+            "You are a GitHub specialist with deep expertise in software
 development, repository analysis, and change investigation. Your role is to
 use GitHub evidence to clarify system structure, ownership, code behavior,
 recent changes, pull request context, and other repository facts that matter
@@ -134,6 +140,8 @@ search code, repositories, issues, pull requests, repository files, GitHub
 Actions workflows and job logs, and Dependabot alerts, but only to the extent
 needed to answer the current question or test the current hypothesis. Run tool
 calls in parallel whenever possible to reduce investigation latency.
+
+{memory_context_instruction}
 
 ## Mandatory scope rules
 Every `search_code`, `search_repositories`, `search_issues`, and
@@ -176,6 +184,7 @@ step established, without dumping raw tool arguments or raw tool output.
 {reusable_notes_instruction}",
             github_scope_org = input.github_scope_org,
             language = input.language,
+            memory_context_instruction = memory_context_instruction,
             reusable_notes_instruction = reusable_notes_instruction,
         ),
         input.additional_system_prompt.as_deref(),
@@ -190,6 +199,7 @@ pub(super) struct BuildEsaInstructionsInput {
 
 pub(super) fn build_esa_instructions(input: BuildEsaInstructionsInput) -> String {
     let reusable_notes_instruction = reusable_notes_instruction();
+    let memory_context_instruction = specialist_memory_context_instruction();
 
     append_configured_additional_system_prompt(
         format!(
@@ -216,6 +226,8 @@ Run tool calls in parallel whenever possible to reduce investigation latency.
 Do not narrow your search to operational or investigation terms when the
 request is asking for broader internal knowledge.
 
+{memory_context_instruction}
+
 ## Evidence and output quality
 Return concise findings rather than raw search output. Clearly distinguish
 confirmed documentation facts, plausible inferences from docs, and remaining
@@ -226,16 +238,28 @@ tool arguments or raw tool output.
 {reusable_notes_instruction}",
             team_name = input.team_name,
             language = input.language,
+            memory_context_instruction = memory_context_instruction,
             reusable_notes_instruction = reusable_notes_instruction,
         ),
         input.additional_system_prompt.as_deref(),
     )
 }
 
+fn specialist_memory_context_instruction() -> &'static str {
+    r#"## Using Memory Context
+If the delegated task prompt includes Memory Context, use relevant memories as investigation guidance for likely owners, systems, runbooks, dashboards, repository paths, and search terms. Treat memories as hints, not proof. Verify facts that affect your conclusion, recommendation, or operational action with current evidence from your available tools. Do not copy prior memory entries into reusable notes unless you confirmed them during this investigation."#
+}
+
 fn reusable_notes_instruction() -> &'static str {
     r#"# Memory
 
 End the response with a short reusable notes section that includes `reili_memory_v1` and captures only confirmed facts worth reusing in later investigations.
+
+Memory should describe durable knowledge, not a timeline of this investigation.
+Before saving a memory, apply all of these checks:
+- Would this still help a future investigation if read weeks later?
+- Is it a durable mapping, owner, runbook, dashboard, log source, code path, domain rule, operational rule, or repeatable investigation entry point?
+- Is the evidence source clear enough that a future agent can verify it?
 
 Useful categories of facts to remember include:
 
@@ -266,6 +290,20 @@ Operations Facts:
 - Known operational risks, recurring failure patterns, and recommended investigation entry points.
 - Ownership, escalation paths, approval requirements, and on-call responsibilities.
 - Data retention, logging, audit, privacy, or security handling rules.
+
+Do not save ephemeral investigation observations, including:
+- Time-bounded findings such as "last 5 minutes", "today", "currently", "during this run", or one-off incident state.
+- Negative evidence from a single time window, such as no errors, no alerts, no deploys, or no matching logs.
+- Raw metric/log snapshots, counts, timestamps, trace IDs, request IDs, or temporary thresholds unless they define durable instrumentation or runbook guidance.
+- Hypotheses, likely causes, partial conclusions, or action items that were not confirmed as durable team knowledge.
+
+If a log or metric check produces reusable guidance, save the durable source or investigation entry point, not the observed result from the current time window.
+
+For example, save:
+"process_admin investigations should check backend SessionService/Session logs and frontend middleware logs as initial log sources."
+
+Do not save:
+"process_admin had no errors or alerts in the last 5 minutes."
 
 When saving memories, include `reili_memory_v1` once and use this structure:
 reili_memory_v1
@@ -449,5 +487,29 @@ mod tests {
 
         assert!(instructions.contains("org:acme"));
         assert!(instructions.contains("the\n`owner` must be `acme`"));
+    }
+
+    #[test]
+    fn specialist_instructions_explain_memory_context_usage() {
+        let datadog_instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
+        let github_instructions = build_github_instructions(BuildGithubInstructionsInput {
+            language: "Japanese".to_string(),
+            github_scope_org: "acme".to_string(),
+            additional_system_prompt: None,
+        });
+        let esa_instructions = build_esa_instructions(BuildEsaInstructionsInput {
+            language: "Japanese".to_string(),
+            team_name: "docs".to_string(),
+            additional_system_prompt: None,
+        });
+
+        for instructions in [datadog_instructions, github_instructions, esa_instructions] {
+            assert!(instructions.contains("## Using Memory Context"));
+            assert!(instructions.contains("Treat memories as hints, not proof."));
+            assert!(instructions.contains("Do not copy prior memory entries"));
+        }
     }
 }
