@@ -8,10 +8,7 @@ use super::instructions::{
     BuildDatadogInstructionsInput, BuildEsaInstructionsInput, BuildGithubInstructionsInput,
     build_datadog_instructions, build_esa_instructions, build_github_instructions,
 };
-use super::{
-    DATADOG_PROGRESS_OWNER_ID, ESA_PROGRESS_OWNER_ID, GITHUB_PROGRESS_OWNER_ID,
-    TaskAgentExecutionContext, TaskAgentRunContext, with_max_tokens,
-};
+use super::{TaskAgentExecutionContext, TaskAgentRunContext, with_max_tokens};
 use crate::outbound::agents::agent_execution_hook::AgentExecutionHook;
 use crate::outbound::agents::datadog_mcp_tools::DatadogMcpToolset;
 use crate::outbound::agents::github_mcp_tools::GitHubMcpToolset;
@@ -23,6 +20,22 @@ use crate::outbound::esa::EsaPostSearchPort;
 
 type SpecialistAgent<C> = Agent<<C as CompletionClient>::CompletionModel, AgentExecutionHook>;
 
+pub(super) const DATADOG_AGENT_NAME: &str = "investigate_datadog";
+pub(super) const DATADOG_AGENT_DESCRIPTION: &str =
+    "Delegates Datadog observability and security investigation tasks.
+This tool is designed to be split into scopes and used in parallel.
+When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.";
+pub(super) const GITHUB_AGENT_NAME: &str = "investigate_github";
+pub(super) const GITHUB_AGENT_DESCRIPTION: &str =
+    "Delegates GitHub repository, code, pull request, Actions, and Dependabot investigation tasks.
+This tool is designed to be split into scopes and used in parallel.
+When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.";
+pub(super) const ESA_AGENT_NAME: &str = "investigate_esa";
+pub(super) const ESA_AGENT_DESCRIPTION: &str =
+    "Delegates esa internal documentation, runbook, design note, team knowledge, and broader knowledge base search tasks.
+When instructing this specialist, include the relevant background, context, and why the documentation search matters, not just the immediate keywords.";
+
+#[derive(Clone)]
 pub(super) struct SpecialistAgentFactory<C>
 where
     C: CompletionClient,
@@ -49,18 +62,21 @@ pub(super) struct SpecialistAgentConfig {
 pub(super) struct BuildDatadogAgentInput<'a> {
     pub(super) run_context: &'a TaskAgentRunContext,
     pub(super) toolset: DatadogMcpToolset,
+    pub(super) owner_id: String,
 }
 
 pub(super) struct BuildGithubAgentInput<'a> {
     pub(super) run_context: &'a TaskAgentRunContext,
     pub(super) toolset: GitHubMcpToolset,
     pub(super) github_scope_org: String,
+    pub(super) owner_id: String,
 }
 
 pub(super) struct BuildEsaAgentInput<'a> {
     pub(super) run_context: &'a TaskAgentRunContext,
     pub(super) esa_post_search_port: Arc<dyn EsaPostSearchPort>,
     pub(super) esa_team_name: String,
+    pub(super) owner_id: String,
 }
 
 struct SpecialistAgentCommonInput<C>
@@ -92,7 +108,7 @@ where
     C::CompletionModel: 'static,
 {
     pub(super) fn build_datadog(&self, input: BuildDatadogAgentInput<'_>) -> SpecialistAgent<C> {
-        let common = self.common_input(input.run_context, DATADOG_PROGRESS_OWNER_ID);
+        let common = self.common_input(input.run_context, input.owner_id);
         let SpecialistAgentCommonInput {
             client,
             config,
@@ -115,12 +131,8 @@ where
 
         let builder = client
             .agent(settings.specialist_model.clone())
-            .name("investigate_datadog")
-            .description(
-                "Delegates Datadog observability and security investigation tasks.
-This tool is designed to be split into scopes and used in parallel.
-When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.",
-            )
+            .name(DATADOG_AGENT_NAME)
+            .description(DATADOG_AGENT_DESCRIPTION)
             .preamble(&build_datadog_instructions(BuildDatadogInstructionsInput {
                 language,
                 additional_system_prompt,
@@ -149,7 +161,7 @@ When instructing this specialist, include the relevant background, context, and 
     }
 
     pub(super) fn build_github(&self, input: BuildGithubAgentInput<'_>) -> SpecialistAgent<C> {
-        let common = self.common_input(input.run_context, GITHUB_PROGRESS_OWNER_ID);
+        let common = self.common_input(input.run_context, input.owner_id);
         let SpecialistAgentCommonInput {
             client,
             config,
@@ -172,12 +184,8 @@ When instructing this specialist, include the relevant background, context, and 
 
         let builder = client
             .agent(settings.specialist_model.clone())
-            .name("investigate_github")
-            .description(
-                "Delegates GitHub repository, code, pull request, Actions, and Dependabot investigation tasks.
-This tool is designed to be split into scopes and used in parallel.
-When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.",
-            )
+            .name(GITHUB_AGENT_NAME)
+            .description(GITHUB_AGENT_DESCRIPTION)
             .preamble(&build_github_instructions(BuildGithubInstructionsInput {
                 language,
                 github_scope_org: input.github_scope_org,
@@ -206,7 +214,7 @@ When instructing this specialist, include the relevant background, context, and 
     }
 
     pub(super) fn build_esa(&self, input: BuildEsaAgentInput<'_>) -> SpecialistAgent<C> {
-        let common = self.common_input(input.run_context, ESA_PROGRESS_OWNER_ID);
+        let common = self.common_input(input.run_context, input.owner_id);
         let SpecialistAgentCommonInput {
             client,
             config,
@@ -229,11 +237,8 @@ When instructing this specialist, include the relevant background, context, and 
 
         let builder = client
             .agent(settings.specialist_model.clone())
-            .name("investigate_esa")
-            .description(
-                "Delegates esa internal documentation, runbook, design note, team knowledge, and broader knowledge base search tasks.
-When instructing this specialist, include the relevant background, context, and why the documentation search matters, not just the immediate keywords.",
-            )
+            .name(ESA_AGENT_NAME)
+            .description(ESA_AGENT_DESCRIPTION)
             .preamble(&build_esa_instructions(BuildEsaInstructionsInput {
                 language,
                 team_name: input.esa_team_name,
@@ -264,14 +269,14 @@ When instructing this specialist, include the relevant background, context, and 
     fn common_input(
         &self,
         run_context: &TaskAgentRunContext,
-        owner_id: &'static str,
+        owner_id: String,
     ) -> SpecialistAgentCommonInput<C> {
         SpecialistAgentCommonInput {
             client: self.client.clone(),
             config: self.config.clone(),
             resources: Arc::clone(&run_context.resources),
             execution: run_context.execution.clone(),
-            owner_id: owner_id.to_string(),
+            owner_id,
         }
     }
 }
