@@ -1,6 +1,6 @@
 <div align="center">
   <h1>Reili</h1>
-  <img src="./reili.png" alt="Reili logo" width="240" />
+  <img src="./assets/reili.png" alt="Reili logo" width="240" />
   <p><strong>An AI team member for SRE and DevOps, currently focused on investigations</strong></p>
   <p>
     Investigate alerts quickly from Slack with Datadog telemetry and GitHub context.

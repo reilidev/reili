@@ -41,7 +41,7 @@ pub async fn run_task<C>(
     input: RunLlmTaskRunnerInput<C>,
 ) -> Result<TaskRunOutcome, AgentRunFailedError>
 where
-    C: CompletionClient + Clone,
+    C: CompletionClient + Clone + Send + Sync + 'static,
     C::CompletionModel: 'static,
 {
     if input.run.context.cancellation.is_cancelled() {

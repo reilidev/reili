@@ -31,7 +31,9 @@ use crate::outbound::esa::EsaPostSearchPort;
 use instructions::{BuildTaskInstructionsInput, build_task_instructions};
 use specialists::{
     BuildDatadogAgentInput, BuildEsaAgentInput, BuildGithubAgentInput,
-    CreateSpecialistAgentFactoryInput, SpecialistAgentConfig, SpecialistAgentFactory,
+    CreateSpecialistAgentFactoryInput, DATADOG_AGENT_DESCRIPTION, DATADOG_AGENT_NAME,
+    ESA_AGENT_DESCRIPTION, ESA_AGENT_NAME, GITHUB_AGENT_DESCRIPTION, GITHUB_AGENT_NAME,
+    SpecialistAgentConfig, SpecialistAgentFactory,
 };
 
 pub(super) const DATADOG_PROGRESS_OWNER_ID: &str = "investigate_datadog";
@@ -76,7 +78,7 @@ where
 
 impl<C> TaskAgentFactory<C>
 where
-    C: CompletionClient + Clone,
+    C: CompletionClient + Clone + Send + Sync + 'static,
     C::CompletionModel: 'static,
 {
     #[must_use]
@@ -85,28 +87,62 @@ where
             client: self.client.clone(),
             config: self.specialist_config(),
         });
-        let datadog_agent = specialist_factory.build_datadog(BuildDatadogAgentInput {
-            run_context: &input.run_context,
-            toolset: input.toolsets.datadog.clone(),
-        });
-        let github_agent = specialist_factory.build_github(BuildGithubAgentInput {
-            run_context: &input.run_context,
-            toolset: input.toolsets.github.clone(),
-            github_scope_org: self.config.instructions.github_scope_org.clone(),
-        });
-        let esa_agent = input.connectors.esa.as_ref().map(|connector| {
-            specialist_factory.build_esa(BuildEsaAgentInput {
-                run_context: &input.run_context,
-                esa_post_search_port: Arc::clone(&connector.post_search_port),
-                esa_team_name: connector.team_name.clone(),
-            })
-        });
         let esa_team_name = input
             .connectors
             .esa
             .as_ref()
             .map(|connector| connector.team_name.clone());
         let memory_context_section = build_memory_context_section(&input.run_context.memory_items);
+        let datadog_agent_factory = {
+            let specialist_factory = specialist_factory.clone();
+            let run_context = input.run_context.clone();
+            let toolset = input.toolsets.datadog.clone();
+            Arc::new(move |owner_id| {
+                specialist_factory.build_datadog(BuildDatadogAgentInput {
+                    run_context: &run_context,
+                    toolset: toolset.clone(),
+                    owner_id,
+                })
+            })
+        };
+        let github_agent_factory = {
+            let specialist_factory = specialist_factory.clone();
+            let run_context = input.run_context.clone();
+            let toolset = input.toolsets.github.clone();
+            let github_scope_org = self.config.instructions.github_scope_org.clone();
+            Arc::new(move |owner_id| {
+                specialist_factory.build_github(BuildGithubAgentInput {
+                    run_context: &run_context,
+                    toolset: toolset.clone(),
+                    github_scope_org: github_scope_org.clone(),
+                    owner_id,
+                })
+            })
+        };
+        let esa_agent_tool = input.connectors.esa.as_ref().map(|connector| {
+            let specialist_factory = specialist_factory.clone();
+            let run_context = input.run_context.clone();
+            let post_search_port = Arc::clone(&connector.post_search_port);
+            let team_name = connector.team_name.clone();
+            let agent_factory = Arc::new(move |owner_id| {
+                specialist_factory.build_esa(BuildEsaAgentInput {
+                    run_context: &run_context,
+                    esa_post_search_port: Arc::clone(&post_search_port),
+                    esa_team_name: team_name.clone(),
+                    owner_id,
+                })
+            });
+
+            ProgressReportingSubAgentTool::new(ProgressReportingSubAgentToolInput {
+                agent_factory,
+                agent_name: ESA_AGENT_NAME.to_string(),
+                agent_description: Some(ESA_AGENT_DESCRIPTION.to_string()),
+                owner_id: ESA_PROGRESS_OWNER_ID.to_string(),
+                on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
+                tool_concurrency: self.config.settings.tool_concurrency,
+                shared_prompt_context: memory_context_section.clone(),
+            })
+        });
 
         let builder = self
             .client
@@ -133,7 +169,9 @@ where
             }))
             .tool(ProgressReportingSubAgentTool::new(
                 ProgressReportingSubAgentToolInput {
-                    agent: datadog_agent,
+                    agent_factory: datadog_agent_factory,
+                    agent_name: DATADOG_AGENT_NAME.to_string(),
+                    agent_description: Some(DATADOG_AGENT_DESCRIPTION.to_string()),
                     owner_id: DATADOG_PROGRESS_OWNER_ID.to_string(),
                     on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
                     tool_concurrency: self.config.settings.tool_concurrency,
@@ -147,23 +185,17 @@ where
             .tool(SearchWebTool::new(Arc::clone(&input.run_context.resources)))
             .tool(ProgressReportingSubAgentTool::new(
                 ProgressReportingSubAgentToolInput {
-                    agent: github_agent,
+                    agent_factory: github_agent_factory,
+                    agent_name: GITHUB_AGENT_NAME.to_string(),
+                    agent_description: Some(GITHUB_AGENT_DESCRIPTION.to_string()),
                     owner_id: GITHUB_PROGRESS_OWNER_ID.to_string(),
                     on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
                     tool_concurrency: self.config.settings.tool_concurrency,
                     shared_prompt_context: memory_context_section.clone(),
                 },
             ));
-        let builder = match esa_agent {
-            Some(esa_agent) => builder.tool(ProgressReportingSubAgentTool::new(
-                ProgressReportingSubAgentToolInput {
-                    agent: esa_agent,
-                    owner_id: ESA_PROGRESS_OWNER_ID.to_string(),
-                    on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
-                    tool_concurrency: self.config.settings.tool_concurrency,
-                    shared_prompt_context: memory_context_section,
-                },
-            )),
+        let builder = match esa_agent_tool {
+            Some(tool) => builder.tool(tool),
             None => builder,
         };
 
