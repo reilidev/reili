@@ -14,7 +14,7 @@ use super::model::{
 };
 use crate::config::SecretString;
 
-const DEFAULT_WORKER_CONCURRENCY: u32 = 2;
+const DEFAULT_WORKER_CONCURRENCY: u32 = 8;
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
 const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
 const SUPPORTED_CONFIG_VERSION: u32 = 1;

@@ -161,7 +161,7 @@ mod tests {
             },
             slack_authorization: None,
             port: 3000,
-            worker_concurrency: 2,
+            worker_concurrency: 8,
             job_max_retry: 2,
             job_backoff_ms: 1_000,
             datadog_api_key: SecretString::new("dd-api".to_string()),
