@@ -15,7 +15,9 @@ use super::{
     SlackAnyChunk, SlackProgressStreamApiPort, SlackProgressStreamLifecycle, build_progress_chunks,
 };
 use crate::outbound::slack::SlackProgressStreamAdapter;
-use crate::outbound::slack::progress_stream::{SlackTaskUpdateChunk, SlackTaskUpdateStatus};
+use crate::outbound::slack::progress_stream::{
+    SlackPlanUpdateChunk, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
+};
 use crate::outbound::slack::slack_web_api_client::SlackWebApiClient;
 
 pub struct SlackProgressReporterInput {
@@ -185,7 +187,13 @@ impl SlackProgressReporterSession {
         &self,
         status: TaskProgressSessionCompletionStatus,
     ) -> Option<Vec<SlackAnyChunk>> {
-        if status != TaskProgressSessionCompletionStatus::Cancelled {
+        if status == TaskProgressSessionCompletionStatus::Succeeded {
+            return Some(vec![SlackAnyChunk::PlanUpdate(SlackPlanUpdateChunk {
+                title: "Complete".to_string(),
+            })]);
+        }
+
+        if status == TaskProgressSessionCompletionStatus::Failed {
             return None;
         }
 
@@ -283,8 +291,8 @@ mod tests {
     };
     use crate::outbound::slack::progress_stream::stream_lifecycle::SlackProgressStreamClock;
     use crate::outbound::slack::progress_stream::{
-        SlackAnyChunk, SlackAppendStreamInput, SlackStartStreamInput, SlackStartStreamOutput,
-        SlackStopStreamInput, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
+        SlackAnyChunk, SlackAppendStreamInput, SlackPlanUpdateChunk, SlackStartStreamInput,
+        SlackStartStreamOutput, SlackStopStreamInput, SlackTaskUpdateChunk, SlackTaskUpdateStatus,
     };
 
     struct MockApi {
@@ -459,6 +467,12 @@ mod tests {
         })
     }
 
+    fn plan_update_chunk(title: &str) -> SlackAnyChunk {
+        SlackAnyChunk::PlanUpdate(SlackPlanUpdateChunk {
+            title: title.to_string(),
+        })
+    }
+
     fn scope_started(step_id: &str, detail: &str) -> TaskProgressUpdate {
         TaskProgressUpdate::ScopeStarted {
             step_id: step_id.to_string(),
@@ -520,7 +534,12 @@ mod tests {
 
         assert_eq!(api.start_calls.lock().expect("lock start").len(), 1);
         assert!(api.append_calls.lock().expect("lock append").is_empty());
-        assert_eq!(api.stop_calls.lock().expect("lock stop").len(), 1);
+        let stop_calls = api.stop_calls.lock().expect("lock stop");
+        assert_eq!(stop_calls.len(), 1);
+        assert_eq!(
+            stop_calls[0].chunks,
+            Some(vec![plan_update_chunk("Complete")])
+        );
     }
 
     #[tokio::test]
