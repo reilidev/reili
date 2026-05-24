@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::de::{Error as DeError, Unexpected};
+use serde::{Deserialize, Deserializer};
 
 use super::ConfigError;
 
@@ -19,18 +20,25 @@ pub(crate) struct FileConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub(crate) struct ServerFileConfig {
-    pub port: u32,
+    #[serde(default = "default_server_port", deserialize_with = "require_port")]
+    pub port: u16,
 }
 
 impl Default for ServerFileConfig {
     fn default() -> Self {
-        Self { port: 3000 }
+        Self {
+            port: default_server_port(),
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub(crate) struct ConversationFileConfig {
+    #[serde(
+        default = "default_conversation_language",
+        deserialize_with = "require_non_empty_string"
+    )]
     pub language: String,
     #[serde(
         alias = "additional_system_prompt_instructions",
@@ -42,7 +50,7 @@ pub(crate) struct ConversationFileConfig {
 impl Default for ConversationFileConfig {
     fn default() -> Self {
         Self {
-            language: "English".to_string(),
+            language: default_conversation_language(),
             additional_system_prompt: None,
         }
     }
@@ -55,6 +63,30 @@ pub(crate) struct ChannelFileConfig {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_server_port() -> u16 {
+    3000
+}
+
+fn default_conversation_language() -> String {
+    "English".to_string()
+}
+
+fn default_slack_bot_token_env() -> String {
+    "SLACK_BOT_TOKEN".to_string()
+}
+
+fn default_datadog_site() -> String {
+    "datadoghq.com".to_string()
+}
+
+fn default_datadog_api_key_env() -> String {
+    "DATADOG_API_KEY".to_string()
+}
+
+fn default_datadog_app_key_env() -> String {
+    "DATADOG_APP_KEY".to_string()
 }
 
 fn default_github_mcp_url() -> String {
@@ -83,24 +115,30 @@ pub(crate) struct SlackFileConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub(crate) struct SlackAuthFileConfig {
+    #[serde(
+        default = "default_slack_bot_token_env",
+        deserialize_with = "require_non_empty_string"
+    )]
     pub bot_token_env: String,
 }
 
 impl Default for SlackAuthFileConfig {
     fn default() -> Self {
         Self {
-            bot_token_env: "SLACK_BOT_TOKEN".to_string(),
+            bot_token_env: default_slack_bot_token_env(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct SlackSocketFileConfig {
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
     pub app_token_env: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct SlackHttpFileConfig {
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
     pub signing_secret_env: Option<String>,
 }
 
@@ -143,20 +181,28 @@ impl Default for SlackHttpFileConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct AiFileConfig {
+    #[serde(deserialize_with = "require_non_empty_string")]
     pub default_backend: String,
     pub backends: BTreeMap<String, AiBackendFileConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct AiBackendFileConfig {
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
     pub provider: Option<String>,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
     pub api_key_env: Option<String>,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
     pub model: Option<String>,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
     pub model_id: Option<String>,
     pub aws_profile: Option<String>,
     pub aws_region: Option<String>,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
     pub project_id: Option<String>,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
     pub location: Option<String>,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
     pub reasoning_effort: Option<String>,
 }
 
@@ -171,41 +217,66 @@ pub(crate) struct ConnectorFileConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub(crate) struct DatadogConnectorFileConfig {
+    #[serde(
+        default = "default_datadog_site",
+        deserialize_with = "require_non_empty_string"
+    )]
     pub site: String,
+    #[serde(
+        default = "default_datadog_api_key_env",
+        deserialize_with = "require_non_empty_string"
+    )]
     pub api_key_env: String,
+    #[serde(
+        default = "default_datadog_app_key_env",
+        deserialize_with = "require_non_empty_string"
+    )]
     pub app_key_env: String,
 }
 
 impl Default for DatadogConnectorFileConfig {
     fn default() -> Self {
         Self {
-            site: "datadoghq.com".to_string(),
-            api_key_env: "DATADOG_API_KEY".to_string(),
-            app_key_env: "DATADOG_APP_KEY".to_string(),
+            site: default_datadog_site(),
+            api_key_env: default_datadog_api_key_env(),
+            app_key_env: default_datadog_app_key_env(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct GitHubConnectorFileConfig {
-    #[serde(default = "default_github_mcp_url")]
+    #[serde(
+        default = "default_github_mcp_url",
+        deserialize_with = "require_non_empty_string"
+    )]
     pub mcp_url: String,
+    #[serde(deserialize_with = "require_non_empty_string")]
     pub search_scope_org: String,
     pub app: GitHubAppFileConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct GitHubAppFileConfig {
+    #[serde(deserialize_with = "require_positive_u64_string")]
     pub app_id: String,
-    pub installation_id: String,
-    #[serde(default = "default_github_app_private_key_env")]
+    #[serde(deserialize_with = "require_positive_u32")]
+    pub installation_id: u32,
+    #[serde(
+        default = "default_github_app_private_key_env",
+        deserialize_with = "require_non_empty_string"
+    )]
     pub private_key_env: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct EsaConnectorFileConfig {
+    #[serde(deserialize_with = "require_non_empty_string")]
     pub team_name: String,
-    #[serde(default = "default_esa_access_token_env")]
+    #[serde(
+        default = "default_esa_access_token_env",
+        deserialize_with = "require_non_empty_string"
+    )]
     pub access_token_env: String,
 }
 
@@ -214,4 +285,182 @@ pub(crate) fn parse_file_config(path: &Path, contents: &str) -> Result<FileConfi
         path: path.to_path_buf(),
         message: error.to_string(),
     })
+}
+
+fn require_non_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    non_empty_string(String::deserialize(deserializer)?)
+}
+
+fn optional_non_empty_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)?
+        .map(non_empty_string)
+        .transpose()
+}
+
+fn non_empty_string<E>(value: String) -> Result<String, E>
+where
+    E: DeError,
+{
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(E::invalid_value(
+            Unexpected::Str(&value),
+            &"a non-empty string",
+        ));
+    }
+
+    Ok(trimmed.to_string())
+}
+
+fn require_port<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u32::deserialize(deserializer)?;
+    if value == 0 || value > 65_535 {
+        return Err(D::Error::invalid_value(
+            Unexpected::Unsigned(u64::from(value)),
+            &"a positive integer between 1 and 65535",
+        ));
+    }
+
+    Ok(value as u16)
+}
+
+fn require_positive_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let trimmed = value.trim();
+    match trimmed.parse::<u32>() {
+        Ok(number) if number > 0 => Ok(number),
+        _ => Err(D::Error::invalid_value(
+            Unexpected::Str(&value),
+            &"a string containing a positive integer",
+        )),
+    }
+}
+
+fn require_positive_u64_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let trimmed = value.trim();
+    match trimmed.parse::<u64>() {
+        Ok(number) if number > 0 => Ok(trimmed.to_string()),
+        _ => Err(D::Error::invalid_value(
+            Unexpected::Str(&value),
+            &"a string containing a positive integer",
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use crate::config::ConfigError;
+
+    use super::parse_file_config;
+
+    const TEST_PATH: &str = "/test/reili.toml";
+
+    #[test]
+    fn rejects_empty_required_string_at_parse_time() {
+        let toml = valid_config().replace("language = \"English\"", "language = \"   \"");
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("non-empty string"), "{message}");
+    }
+
+    #[test]
+    fn rejects_empty_optional_string_at_parse_time_when_present() {
+        let toml = valid_config().replace(
+            "model = \"gpt-5.4\"",
+            "model = \"gpt-5.4\"\napi_key_env = \"\"",
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("non-empty string"), "{message}");
+    }
+
+    #[test]
+    fn rejects_invalid_server_port_at_parse_time() {
+        for invalid_port in ["0", "65536"] {
+            let toml = valid_config().replace("port = 3000", &format!("port = {invalid_port}"));
+
+            let message = parse_error_message(&toml);
+
+            assert!(
+                message.contains("positive integer between 1 and 65535"),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_github_id_at_parse_time() {
+        for (field, replacement) in [
+            ("app_id = \"12345\"", "app_id = \"0\""),
+            (
+                "installation_id = \"67890\"",
+                "installation_id = \"not-a-number\"",
+            ),
+        ] {
+            let toml = valid_config().replace(field, replacement);
+
+            let message = parse_error_message(&toml);
+
+            assert!(message.contains("positive integer"), "{message}");
+        }
+    }
+
+    fn parse_error_message(toml: &str) -> String {
+        match parse_file_config(Path::new(TEST_PATH), toml).expect_err("parse should fail") {
+            ConfigError::ParseToml { path, message } => {
+                assert_eq!(path, PathBuf::from(TEST_PATH));
+                message
+            }
+            other => panic!("expected parse error, got {other}"),
+        }
+    }
+
+    fn valid_config() -> String {
+        r#"
+version = 1
+
+[server]
+port = 3000
+
+[conversation]
+language = "English"
+
+[channel.slack]
+
+[ai]
+default_backend = "primary"
+
+[ai.backends.primary]
+provider = "openai"
+model = "gpt-5.4"
+
+[connector.github]
+search_scope_org = "example-org"
+
+[connector.github.app]
+app_id = "12345"
+installation_id = "67890"
+"#
+        .to_string()
+    }
 }

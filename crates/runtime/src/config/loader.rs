@@ -123,7 +123,7 @@ fn resolve_app_config(
         slack_signing_secret: slack_resolution.signing_secret,
         slack_connection_mode: slack_resolution.connection_mode,
         slack_authorization,
-        port: validate_port(file_config.server.port, "server.port")?,
+        port: file_config.server.port,
         worker_concurrency: DEFAULT_WORKER_CONCURRENCY,
         job_max_retry: DEFAULT_JOB_MAX_RETRY,
         job_backoff_ms: DEFAULT_JOB_BACKOFF_MS,
@@ -137,16 +137,13 @@ fn resolve_app_config(
             &file_config.connector.datadog.app_key_env,
             "connector.datadog.app_key_env",
         )?,
-        datadog_site: require_non_empty(
-            &file_config.connector.datadog.site,
-            "connector.datadog.site",
-        )?,
+        datadog_site: file_config.connector.datadog.site,
         llm: LlmConfig {
             provider: llm_provider,
         },
         github,
         esa,
-        language: require_non_empty(&file_config.conversation.language, "conversation.language")?,
+        language: file_config.conversation.language,
         additional_system_prompt: optional_trimmed(
             file_config.conversation.additional_system_prompt.as_deref(),
         ),
@@ -266,10 +263,10 @@ fn resolve_llm_provider(
     ai: &AiFileConfig,
     env: &dyn EnvironmentReader,
 ) -> Result<LlmProviderConfig, ConfigError> {
-    let backend_id = require_non_empty(&ai.default_backend, "ai.default_backend")?;
+    let backend_id = ai.default_backend.as_str();
     let backend = ai
         .backends
-        .get(&backend_id)
+        .get(backend_id)
         .ok_or_else(|| ConfigError::InvalidValue {
             field: "ai.default_backend".to_string(),
             message: format!(
@@ -395,36 +392,16 @@ fn resolve_github_config(
     file_config: &FileConfig,
     env: &dyn EnvironmentReader,
 ) -> Result<GitHubConfig, ConfigError> {
-    let app_id = require_non_empty(
-        &file_config.connector.github.app.app_id,
-        "connector.github.app.app_id",
-    )?;
-    validate_positive_u64(&app_id, "connector.github.app.app_id")?;
-
-    let installation_id_raw = require_non_empty(
-        &file_config.connector.github.app.installation_id,
-        "connector.github.app.installation_id",
-    )?;
-
     Ok(GitHubConfig {
-        url: require_non_empty(
-            &file_config.connector.github.mcp_url,
-            "connector.github.mcp_url",
-        )?,
-        app_id,
+        url: file_config.connector.github.mcp_url.clone(),
+        app_id: file_config.connector.github.app.app_id.clone(),
         private_key: normalize_multiline_secret(read_required_secret(
             env,
             &file_config.connector.github.app.private_key_env,
             "connector.github.app.private_key_env",
         )?),
-        installation_id: validate_positive_u32(
-            &installation_id_raw,
-            "connector.github.app.installation_id",
-        )?,
-        scope_org: require_non_empty(
-            &file_config.connector.github.search_scope_org,
-            "connector.github.search_scope_org",
-        )?,
+        installation_id: file_config.connector.github.app.installation_id,
+        scope_org: file_config.connector.github.search_scope_org.clone(),
     })
 }
 
@@ -437,7 +414,7 @@ fn resolve_esa_config(
     };
 
     Ok(Some(EsaConfig {
-        team_name: require_non_empty(&esa.team_name, "connector.esa.team_name")?,
+        team_name: esa.team_name.clone(),
         access_token: read_required_secret(
             env,
             &esa.access_token_env,
@@ -450,21 +427,9 @@ fn normalize_multiline_secret(secret: SecretString) -> SecretString {
     SecretString::new(secret.expose().replace("\\n", "\n"))
 }
 
-fn require_non_empty(value: &str, field: &str) -> Result<String, ConfigError> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(ConfigError::InvalidValue {
-            field: field.to_string(),
-            message: "must not be empty".to_string(),
-        });
-    }
-
-    Ok(trimmed.to_string())
-}
-
 fn require_backend_field(value: Option<&str>, field: &str) -> Result<String, ConfigError> {
     match value {
-        Some(value) => require_non_empty(value, field),
+        Some(value) => Ok(value.to_string()),
         None => Err(ConfigError::InvalidValue {
             field: field.to_string(),
             message: "is required".to_string(),
@@ -477,40 +442,6 @@ fn optional_trimmed(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-}
-
-fn validate_port(value: u32, field: &str) -> Result<u16, ConfigError> {
-    if value == 0 || value > 65_535 {
-        return Err(ConfigError::InvalidValue {
-            field: field.to_string(),
-            message: format!("must be a positive integer between 1 and 65535, got `{value}`"),
-        });
-    }
-
-    u16::try_from(value).map_err(|_| ConfigError::InvalidValue {
-        field: field.to_string(),
-        message: format!("must be a positive integer between 1 and 65535, got `{value}`"),
-    })
-}
-
-fn validate_positive_u32(value: &str, field: &str) -> Result<u32, ConfigError> {
-    match value.parse::<u32>() {
-        Ok(number) if number > 0 => Ok(number),
-        _ => Err(ConfigError::InvalidValue {
-            field: field.to_string(),
-            message: format!("must be a positive integer, got `{value}`"),
-        }),
-    }
-}
-
-fn validate_positive_u64(value: &str, field: &str) -> Result<u64, ConfigError> {
-    match value.parse::<u64>() {
-        Ok(number) if number > 0 => Ok(number),
-        _ => Err(ConfigError::InvalidValue {
-            field: field.to_string(),
-            message: format!("must be a positive integer, got `{value}`"),
-        }),
-    }
 }
 
 #[cfg(test)]
