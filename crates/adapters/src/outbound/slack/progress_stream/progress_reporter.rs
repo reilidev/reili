@@ -136,16 +136,14 @@ impl SlackProgressReporterSession {
         rendered_update_chunks: Vec<SlackAnyChunk>,
         reason: SlackStreamRotationReason,
     ) -> SlackProgressStreamRotationInput {
-        let stop_chunks = active_scopes_before_update
-            .iter()
-            .flat_map(|active_scope| {
-                build_progress_chunks(TaskProgressUpdate::ScopeCompleted {
-                    step_id: active_scope.step_id.clone(),
-                    owner_id: active_scope.owner_id.clone(),
-                    title: active_scope.title.clone(),
-                })
+        let mut stop_chunks = vec![Self::complete_plan_chunk()];
+        stop_chunks.extend(active_scopes_before_update.iter().flat_map(|active_scope| {
+            build_progress_chunks(TaskProgressUpdate::ScopeCompleted {
+                step_id: active_scope.step_id.clone(),
+                owner_id: active_scope.owner_id.clone(),
+                title: active_scope.title.clone(),
             })
-            .collect::<Vec<_>>();
+        }));
         let resume_chunks = active_scopes_before_update
             .iter()
             .filter(|active_scope| self.is_scope_active(active_scope))
@@ -188,9 +186,7 @@ impl SlackProgressReporterSession {
         status: TaskProgressSessionCompletionStatus,
     ) -> Option<Vec<SlackAnyChunk>> {
         if status == TaskProgressSessionCompletionStatus::Succeeded {
-            return Some(vec![SlackAnyChunk::PlanUpdate(SlackPlanUpdateChunk {
-                title: "Complete".to_string(),
-            })]);
+            return Some(vec![Self::complete_plan_chunk()]);
         }
 
         if status == TaskProgressSessionCompletionStatus::Failed {
@@ -213,6 +209,12 @@ impl SlackProgressReporterSession {
             .collect::<Vec<_>>();
 
         (!chunks.is_empty()).then_some(chunks)
+    }
+
+    fn complete_plan_chunk() -> SlackAnyChunk {
+        SlackAnyChunk::PlanUpdate(SlackPlanUpdateChunk {
+            title: "Complete".to_string(),
+        })
     }
 }
 
@@ -569,13 +571,16 @@ mod tests {
         assert_eq!(stop_calls.len(), 2);
         assert_eq!(
             stop_calls[0].chunks,
-            Some(vec![task_update_chunk(
-                "progress-step-1",
-                "Collect evidence",
-                SlackTaskUpdateStatus::Complete,
-                None,
-                Some("done"),
-            )])
+            Some(vec![
+                plan_update_chunk("Complete"),
+                task_update_chunk(
+                    "progress-step-1",
+                    "Collect evidence",
+                    SlackTaskUpdateStatus::Complete,
+                    None,
+                    Some("done"),
+                ),
+            ])
         );
 
         let start_calls = api.start_calls.lock().expect("lock start calls");
@@ -635,13 +640,16 @@ mod tests {
         assert_eq!(stop_calls.len(), 2);
         assert_eq!(
             stop_calls[0].chunks,
-            Some(vec![task_update_chunk(
-                "progress-step-1",
-                "Collect evidence",
-                SlackTaskUpdateStatus::Complete,
-                None,
-                Some("done"),
-            )])
+            Some(vec![
+                plan_update_chunk("Complete"),
+                task_update_chunk(
+                    "progress-step-1",
+                    "Collect evidence",
+                    SlackTaskUpdateStatus::Complete,
+                    None,
+                    Some("done"),
+                ),
+            ])
         );
 
         let start_calls = api.start_calls.lock().expect("lock start calls");
@@ -700,13 +708,16 @@ mod tests {
         assert_eq!(stop_calls.len(), 2);
         assert_eq!(
             stop_calls[0].chunks,
-            Some(vec![task_update_chunk(
-                "progress-step-1",
-                "Collect evidence",
-                SlackTaskUpdateStatus::Complete,
-                None,
-                Some("done"),
-            )])
+            Some(vec![
+                plan_update_chunk("Complete"),
+                task_update_chunk(
+                    "progress-step-1",
+                    "Collect evidence",
+                    SlackTaskUpdateStatus::Complete,
+                    None,
+                    Some("done"),
+                ),
+            ])
         );
 
         let start_calls = api.start_calls.lock().expect("lock start calls");
