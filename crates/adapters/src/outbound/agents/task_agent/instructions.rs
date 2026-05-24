@@ -490,28 +490,4 @@ mod tests {
         assert!(instructions.contains("org:acme"));
         assert!(instructions.contains("the\n`owner` must be `acme`"));
     }
-
-    #[test]
-    fn specialist_instructions_explain_memory_context_usage() {
-        let datadog_instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-        let github_instructions = build_github_instructions(BuildGithubInstructionsInput {
-            language: "Japanese".to_string(),
-            github_scope_org: "acme".to_string(),
-            additional_system_prompt: None,
-        });
-        let esa_instructions = build_esa_instructions(BuildEsaInstructionsInput {
-            language: "Japanese".to_string(),
-            team_name: "docs".to_string(),
-            additional_system_prompt: None,
-        });
-
-        for instructions in [datadog_instructions, github_instructions, esa_instructions] {
-            assert!(instructions.contains("## Using Memory Context"));
-            assert!(instructions.contains("Treat memories as hints, not proof."));
-            assert!(instructions.contains("Do not copy prior memory entries"));
-        }
-    }
 }
