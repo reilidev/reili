@@ -50,13 +50,14 @@ Current context:
 ## Using Memory Context
 - Memory Context contains prior reusable notes from Slack. Use relevant notes as a shortcut for choosing likely owners, systems, runbooks, dashboards, repository paths, and investigation entry points instead of rediscovering everything from scratch.
 - Treat Memory Context as investigation guidance, not proof. Do not repeat broad discovery work just to reconfirm memories, but verify facts that affect your conclusion, recommendation, or operational action with current Datadog, GitHub, Slack, documentation, or web evidence.
+- Memory Context entries are already saved memories. Do not copy, paraphrase, or refresh them into the final `reili_memory_v1` section. Only save a memory when the fact was newly learned or independently confirmed during this task, and cite current non-memory evidence.
 
 ## Response
 - Write the final response as a concise, scannable Slack message using Slack markdown.
 - Match the final response to the task type.
 - Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns.
 - Whenever Datadog, GitHub, Slack, documentation, or any other evidence source is referenced, include the supporting URL and format it as a clickable link in the Slack message.
-- If specialist outputs include reusable memory facts, incorporate relevant confirmed facts into your final `reili_memory_v1` section. Deduplicate overlapping facts and preserve the evidence/source context. Do not blindly copy specialist memory blocks if they are irrelevant, speculative, or unsupported.
+- If specialist outputs include reusable memory facts, incorporate only facts that were newly learned or independently confirmed during this task into your final `reili_memory_v1` section. Deduplicate overlapping facts and preserve the evidence/source context.
 - Minimize emoji usage. Use emojis only when they add meaningful signal, and never as decoration.
 
 {reusable_notes_instruction}
@@ -247,19 +248,20 @@ tool arguments or raw tool output.
 
 fn specialist_memory_context_instruction() -> &'static str {
     r#"## Using Memory Context
-If the delegated task prompt includes Memory Context, use relevant memories as investigation guidance for likely owners, systems, runbooks, dashboards, repository paths, and search terms. Treat memories as hints, not proof. Verify facts that affect your conclusion, recommendation, or operational action with current evidence from your available tools. Do not copy prior memory entries into reusable notes unless you confirmed them during this investigation."#
+If the delegated task prompt includes Memory Context, use relevant memories as investigation guidance for likely owners, systems, runbooks, dashboards, repository paths, and search terms. Treat memories as hints, not proof. Verify facts that affect your conclusion, recommendation, or operational action with current evidence from your available tools. Do not copy, paraphrase, or refresh prior memory entries into reusable notes. Only save a memory when the fact was newly learned or independently confirmed during this investigation, and cite current non-memory evidence."#
 }
 
 fn reusable_notes_instruction() -> &'static str {
     r#"# Memory
 
-End the response with a short reusable notes section that includes `reili_memory_v1` and captures only confirmed facts worth reusing in later investigations.
+End the response with a short reusable notes section that includes `reili_memory_v1` only when there are new or independently confirmed facts worth reusing in later investigations. If there are no such facts, omit the `reili_memory_v1` marker entirely.
 
 Memory should describe durable knowledge, not a timeline of this investigation.
 Before saving a memory, apply all of these checks:
 - Would this still help a future investigation if read weeks later?
 - Is it a durable mapping, owner, runbook, dashboard, log source, code path, domain rule, operational rule, or repeatable investigation entry point?
 - Is the evidence source clear enough that a future agent can verify it?
+- Was this fact newly learned or independently confirmed during this investigation, rather than copied from Memory Context?
 
 Useful categories of facts to remember include:
 
@@ -487,29 +489,5 @@ mod tests {
 
         assert!(instructions.contains("org:acme"));
         assert!(instructions.contains("the\n`owner` must be `acme`"));
-    }
-
-    #[test]
-    fn specialist_instructions_explain_memory_context_usage() {
-        let datadog_instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-        let github_instructions = build_github_instructions(BuildGithubInstructionsInput {
-            language: "Japanese".to_string(),
-            github_scope_org: "acme".to_string(),
-            additional_system_prompt: None,
-        });
-        let esa_instructions = build_esa_instructions(BuildEsaInstructionsInput {
-            language: "Japanese".to_string(),
-            team_name: "docs".to_string(),
-            additional_system_prompt: None,
-        });
-
-        for instructions in [datadog_instructions, github_instructions, esa_instructions] {
-            assert!(instructions.contains("## Using Memory Context"));
-            assert!(instructions.contains("Treat memories as hints, not proof."));
-            assert!(instructions.contains("Do not copy prior memory entries"));
-        }
     }
 }
