@@ -13,9 +13,9 @@ pub use progress_reporter::{SlackProgressReporter, SlackProgressReporterInput};
 
 pub(crate) use block_builder::build_progress_chunks;
 pub(crate) use progress_models::{
-    SlackAnyChunk, SlackAppendStreamInput, SlackChunkSourceType, SlackStartStreamInput,
-    SlackStartStreamOutput, SlackStopStreamInput, SlackStreamBlock, SlackTaskUpdateChunk,
-    SlackTaskUpdateStatus,
+    SlackAnyChunk, SlackAppendStreamInput, SlackChunkSourceType, SlackPlanUpdateChunk,
+    SlackStartStreamInput, SlackStartStreamOutput, SlackStopStreamInput, SlackStreamBlock,
+    SlackTaskUpdateChunk, SlackTaskUpdateStatus,
 };
 pub(crate) use stream_lifecycle::SlackProgressStreamLifecycle;
 
