@@ -14,27 +14,22 @@ When you assign a task to Reili, it will gather information from sources such as
 As a general rule, Reili does not make changes to the production environment or perform recovery operations; instead,
 it uses the gathered information to investigate issues and generate reports.
 
+<img src="./docs/assets/usecase.png" alt="Usecase" />
+
 ## Why Reili
 
-SRE, DevOps, and on-call engineers spend much of their time on alert
-response — checking dashboards, reading diffs, and deciding whether
+SRE, DevOps, and on-call engineers spend much of their time on alert response — checking dashboards, reading diffs, and deciding whether
 action is needed. Reili takes that work off your plate.
 
-Give Reili a Slack message or a task, and it will:
-
-- Investigate in Slack public channels like a teammate, working from the
-  ongoing conversation where your team is already collaborating
-- Connect Datadog telemetry, GitHub repositories and changes, optional esa knowledge base docs, and
-  relevant Slack public-channel history to build investigation context
-- Reuse prior Reili Slack notes as lightweight memory when they are available in the current
-  Slack search context
-- Report back with what it found so your team can decide what to do next
+- Let you decide exactly what permissions each connector can request and what authority you delegate to Reili, instead of accepting a fixed permission set chosen by a hosted app provider
+- Investigate in Slack public channels like a teammate, working from the ongoing conversation where your team is already collaborating
+- Connect Datadog telemetry, GitHub repositories and changes, optional knowledge base docs, and relevant Slack public-channel history to build investigation context
 - Expand over time to cover additional external services beyond Datadog, GitHub, and Slack
 
-## Core Features
+Core:
 
-- **Investigation-focused**: Reili reads and reports — it never changes your infrastructure
-- **Cross-service**: works across Datadog, GitHub, Slack, and optional esa knowledge base search today, with additional services planned over time
+- **Read-focused**: Reili reads and reports — it never changes your infrastructure
+- **Cross-service**: works across Datadog, GitHub, Slack, and optional knowledge base search today, with additional services planned over time
 - **Chat-based**: currently works in Slack
 
 ## Quick Start
