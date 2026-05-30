@@ -18,8 +18,6 @@ const DEFAULT_WORKER_CONCURRENCY: u32 = 8;
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
 const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
 const SUPPORTED_CONFIG_VERSION: u32 = 1;
-const DEFAULT_SLACK_APP_TOKEN_ENV: &str = "SLACK_APP_TOKEN";
-const DEFAULT_SLACK_SIGNING_SECRET_ENV: &str = "SLACK_SIGNING_SECRET";
 const DEFAULT_OPENAI_API_KEY_ENV: &str = "LLM_OPENAI_API_KEY";
 const DEFAULT_ANTHROPIC_API_KEY_ENV: &str = "LLM_ANTHROPIC_API_KEY";
 const SUPPORTED_ANTHROPIC_MODELS: &[&str] =
@@ -113,7 +111,7 @@ fn resolve_app_config(
     )?;
     let slack_resolution = resolve_slack_connection_mode(&file_config.channel.slack, env)?;
     let slack_authorization =
-        resolve_slack_authorization(file_config.channel.slack.authorization.as_ref())?;
+        resolve_slack_authorization(file_config.channel.slack.authorization.as_ref());
     let llm_provider = resolve_llm_provider(&file_config.ai, env)?;
     let github = resolve_github_config(&file_config, env)?;
     let esa = resolve_esa_config(&file_config, env)?;
@@ -171,11 +169,7 @@ fn resolve_slack_connection_mode(
         true => {
             let app_token = read_required_secret(
                 env,
-                slack
-                    .socket
-                    .as_ref()
-                    .and_then(|socket| socket.app_token_env.as_deref())
-                    .unwrap_or(DEFAULT_SLACK_APP_TOKEN_ENV),
+                &slack.socket.app_token_env,
                 "channel.slack.socket.app_token_env",
             )?;
             if !app_token.expose().starts_with("xapp-") {
@@ -194,11 +188,7 @@ fn resolve_slack_connection_mode(
         false => {
             let signing_secret = read_required_secret(
                 env,
-                slack
-                    .http
-                    .as_ref()
-                    .and_then(|http| http.signing_secret_env.as_deref())
-                    .unwrap_or(DEFAULT_SLACK_SIGNING_SECRET_ENV),
+                &slack.http.signing_secret_env,
                 "channel.slack.http.signing_secret_env",
             )?;
 
@@ -212,19 +202,12 @@ fn resolve_slack_connection_mode(
 
 fn resolve_slack_authorization(
     authorization: Option<&SlackAuthorizationFileConfig>,
-) -> Result<Option<SlackAuthorizationConfig>, ConfigError> {
-    let Some(authorization) = authorization else {
-        return Ok(None);
-    };
+) -> Option<SlackAuthorizationConfig> {
+    let authorization = authorization?;
 
     let channel_names = authorization
         .channels
-        .as_ref()
-        .and_then(|channels| channels.names.as_ref())
-        .ok_or_else(|| ConfigError::InvalidValue {
-            field: "channel.slack.authorization.channels.names".to_string(),
-            message: "must be set when channel.slack.authorization is configured".to_string(),
-        })?
+        .names
         .iter()
         .cloned()
         .map(SlackChannelNamePattern::new)
@@ -243,7 +226,7 @@ fn resolve_slack_authorization(
         .and_then(|actors| actors.allow_bot)
         .unwrap_or(false);
 
-    Ok(Some(SlackAuthorizationConfig {
+    Some(SlackAuthorizationConfig {
         channels: SlackAuthorizationChannels {
             names: channel_names,
         },
@@ -256,7 +239,7 @@ fn resolve_slack_authorization(
         } else {
             None
         },
-    }))
+    })
 }
 
 fn resolve_llm_provider(
@@ -1246,53 +1229,6 @@ user_group_ids = ["U001"]
         assert_eq!(actors.user_ids, Some(vec!["S001".to_string()]));
         assert_eq!(actors.user_group_ids, Some(vec!["U001".to_string()]));
         assert!(!actors.allow_bot);
-    }
-
-    #[test]
-    fn rejects_slack_authorization_when_channel_names_are_missing() {
-        let env = FixedEnvironment::with_overrides(&[]);
-        let file_config = parse_runtime_config(&valid_openai_config().replace(
-            "[ai]\n",
-            r#"[channel.slack.authorization]
-
-[ai]
-"#,
-        ));
-
-        let error = resolve_app_config(file_config, &env)
-            .expect_err("empty authorization config should fail");
-
-        match error {
-            ConfigError::InvalidValue { field, message } => {
-                assert_eq!(field, "channel.slack.authorization.channels.names");
-                assert!(message.contains("must be set"));
-            }
-            other => panic!("expected invalid-value error, got {other}"),
-        }
-    }
-
-    #[test]
-    fn rejects_slack_authorization_actors_without_channel_names() {
-        let env = FixedEnvironment::with_overrides(&[]);
-        let file_config = parse_runtime_config(&valid_openai_config().replace(
-            "[ai]\n",
-            r#"[channel.slack.authorization.actors]
-user_ids = ["U001"]
-
-[ai]
-"#,
-        ));
-
-        let error = resolve_app_config(file_config, &env)
-            .expect_err("actor-only authorization config should fail");
-
-        match error {
-            ConfigError::InvalidValue { field, message } => {
-                assert_eq!(field, "channel.slack.authorization.channels.names");
-                assert!(message.contains("must be set"));
-            }
-            other => panic!("expected invalid-value error, got {other}"),
-        }
     }
 
     #[test]
