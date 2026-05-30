@@ -77,6 +77,14 @@ fn default_slack_bot_token_env() -> String {
     "SLACK_BOT_TOKEN".to_string()
 }
 
+fn default_slack_app_token_env() -> String {
+    "SLACK_APP_TOKEN".to_string()
+}
+
+fn default_slack_signing_secret_env() -> String {
+    "SLACK_SIGNING_SECRET".to_string()
+}
+
 fn default_datadog_site() -> String {
     "datadoghq.com".to_string()
 }
@@ -108,8 +116,10 @@ pub(crate) struct SlackFileConfig {
     #[serde(default)]
     pub auth: SlackAuthFileConfig,
     pub authorization: Option<SlackAuthorizationFileConfig>,
-    pub socket: Option<SlackSocketFileConfig>,
-    pub http: Option<SlackHttpFileConfig>,
+    #[serde(default)]
+    pub socket: SlackSocketFileConfig,
+    #[serde(default)]
+    pub http: SlackHttpFileConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -131,28 +141,34 @@ impl Default for SlackAuthFileConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
 pub(crate) struct SlackSocketFileConfig {
-    #[serde(default, deserialize_with = "optional_non_empty_string")]
-    pub app_token_env: Option<String>,
+    #[serde(
+        default = "default_slack_app_token_env",
+        deserialize_with = "require_non_empty_string"
+    )]
+    pub app_token_env: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
 pub(crate) struct SlackHttpFileConfig {
-    #[serde(default, deserialize_with = "optional_non_empty_string")]
-    pub signing_secret_env: Option<String>,
+    #[serde(
+        default = "default_slack_signing_secret_env",
+        deserialize_with = "require_non_empty_string"
+    )]
+    pub signing_secret_env: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct SlackAuthorizationFileConfig {
-    pub channels: Option<SlackAuthorizationChannelsFileConfig>,
+    pub channels: SlackAuthorizationChannelsFileConfig,
     pub actors: Option<SlackAuthorizationActorsFileConfig>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct SlackAuthorizationChannelsFileConfig {
-    pub names: Option<Vec<String>>,
+    pub names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -166,7 +182,7 @@ pub(crate) struct SlackAuthorizationActorsFileConfig {
 impl Default for SlackSocketFileConfig {
     fn default() -> Self {
         Self {
-            app_token_env: Some("SLACK_APP_TOKEN".to_string()),
+            app_token_env: default_slack_app_token_env(),
         }
     }
 }
@@ -174,7 +190,7 @@ impl Default for SlackSocketFileConfig {
 impl Default for SlackHttpFileConfig {
     fn default() -> Self {
         Self {
-            signing_secret_env: Some("SLACK_SIGNING_SECRET".to_string()),
+            signing_secret_env: default_slack_signing_secret_env(),
         }
     }
 }
@@ -395,6 +411,38 @@ mod tests {
     }
 
     #[test]
+    fn defaults_slack_connection_env_references_at_parse_time() {
+        let config =
+            parse_file_config(Path::new(TEST_PATH), &valid_config()).expect("parse should succeed");
+
+        assert_eq!(config.channel.slack.socket.app_token_env, "SLACK_APP_TOKEN");
+        assert_eq!(
+            config.channel.slack.http.signing_secret_env,
+            "SLACK_SIGNING_SECRET"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_slack_connection_env_references_at_parse_time() {
+        for connection_config in [
+            r#"[channel.slack.socket]
+app_token_env = " "
+
+"#,
+            r#"[channel.slack.http]
+signing_secret_env = ""
+
+"#,
+        ] {
+            let toml = valid_config().replace("[ai]\n", &format!("{connection_config}[ai]\n"));
+
+            let message = parse_error_message(&toml);
+
+            assert!(message.contains("non-empty string"), "{message}");
+        }
+    }
+
+    #[test]
     fn rejects_invalid_server_port_at_parse_time() {
         for invalid_port in ["0", "65536"] {
             let toml = valid_config().replace("port = 3000", &format!("port = {invalid_port}"));
@@ -422,6 +470,40 @@ mod tests {
             let message = parse_error_message(&toml);
 
             assert!(message.contains("positive integer"), "{message}");
+        }
+    }
+
+    #[test]
+    fn rejects_slack_authorization_without_channel_names_at_parse_time() {
+        for (authorization_config, missing_field) in [
+            (
+                r#"[channel.slack.authorization]
+
+"#,
+                "channels",
+            ),
+            (
+                r#"[channel.slack.authorization.actors]
+user_ids = ["U001"]
+
+"#,
+                "channels",
+            ),
+            (
+                r#"[channel.slack.authorization.channels]
+
+"#,
+                "names",
+            ),
+        ] {
+            let toml = valid_config().replace("[ai]\n", &format!("{authorization_config}[ai]\n"));
+
+            let message = parse_error_message(&toml);
+
+            assert!(
+                message.contains(&format!("missing field `{missing_field}`")),
+                "{message}"
+            );
         }
     }
 
