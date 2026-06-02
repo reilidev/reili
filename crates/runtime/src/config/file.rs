@@ -61,7 +61,7 @@ pub(crate) struct ChannelFileConfig {
     pub slack: SlackFileConfig,
 }
 
-fn default_true() -> bool {
+fn default_socket_mode() -> bool {
     true
 }
 
@@ -111,7 +111,7 @@ fn default_esa_access_token_env() -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct SlackFileConfig {
-    #[serde(default = "default_true")]
+    #[serde(default = "default_socket_mode")]
     pub socket_mode: bool,
     #[serde(default)]
     pub auth: SlackAuthFileConfig,
@@ -150,6 +150,14 @@ pub(crate) struct SlackSocketFileConfig {
     pub app_token_env: String,
 }
 
+impl Default for SlackSocketFileConfig {
+    fn default() -> Self {
+        Self {
+            app_token_env: default_slack_app_token_env(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub(crate) struct SlackHttpFileConfig {
@@ -158,6 +166,14 @@ pub(crate) struct SlackHttpFileConfig {
         deserialize_with = "require_non_empty_string"
     )]
     pub signing_secret_env: String,
+}
+
+impl Default for SlackHttpFileConfig {
+    fn default() -> Self {
+        Self {
+            signing_secret_env: default_slack_signing_secret_env(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -176,23 +192,8 @@ pub(crate) struct SlackAuthorizationChannelsFileConfig {
 pub(crate) struct SlackAuthorizationActorsFileConfig {
     pub user_ids: Option<Vec<String>>,
     pub user_group_ids: Option<Vec<String>>,
-    pub allow_bot: Option<bool>,
-}
-
-impl Default for SlackSocketFileConfig {
-    fn default() -> Self {
-        Self {
-            app_token_env: default_slack_app_token_env(),
-        }
-    }
-}
-
-impl Default for SlackHttpFileConfig {
-    fn default() -> Self {
-        Self {
-            signing_secret_env: default_slack_signing_secret_env(),
-        }
-    }
+    #[serde(default)]
+    pub allow_bot: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -203,23 +204,40 @@ pub(crate) struct AiFileConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub(crate) struct AiBackendFileConfig {
-    #[serde(default, deserialize_with = "optional_non_empty_string")]
-    pub provider: Option<String>,
-    #[serde(default, deserialize_with = "optional_non_empty_string")]
-    pub api_key_env: Option<String>,
-    #[serde(default, deserialize_with = "optional_non_empty_string")]
-    pub model: Option<String>,
-    #[serde(default, deserialize_with = "optional_non_empty_string")]
-    pub model_id: Option<String>,
-    pub aws_profile: Option<String>,
-    pub aws_region: Option<String>,
-    #[serde(default, deserialize_with = "optional_non_empty_string")]
-    pub project_id: Option<String>,
-    #[serde(default, deserialize_with = "optional_non_empty_string")]
-    pub location: Option<String>,
-    #[serde(default, deserialize_with = "optional_non_empty_string")]
-    pub reasoning_effort: Option<String>,
+#[serde(tag = "provider", deny_unknown_fields)]
+pub(crate) enum AiBackendFileConfig {
+    #[serde(rename = "openai")]
+    OpenAi {
+        #[serde(deserialize_with = "require_non_empty_string")]
+        model: String,
+        #[serde(default, deserialize_with = "optional_non_empty_string")]
+        api_key_env: Option<String>,
+        #[serde(default, deserialize_with = "optional_non_empty_string")]
+        reasoning_effort: Option<String>,
+    },
+    #[serde(rename = "anthropic")]
+    Anthropic {
+        #[serde(deserialize_with = "require_non_empty_string")]
+        model: String,
+        #[serde(default, deserialize_with = "optional_non_empty_string")]
+        api_key_env: Option<String>,
+    },
+    #[serde(rename = "bedrock")]
+    Bedrock {
+        #[serde(deserialize_with = "require_non_empty_string")]
+        model_id: String,
+        aws_profile: Option<String>,
+        aws_region: Option<String>,
+    },
+    #[serde(rename = "vertexai", alias = "vertex_ai")]
+    VertexAi {
+        #[serde(deserialize_with = "require_non_empty_string")]
+        project_id: String,
+        #[serde(deserialize_with = "require_non_empty_string")]
+        location: String,
+        #[serde(deserialize_with = "require_non_empty_string")]
+        model_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -349,19 +367,24 @@ where
     Ok(value as u16)
 }
 
+fn parse_positive_integer<T>(value: &str) -> Option<T>
+where
+    T: std::str::FromStr + PartialOrd + Default,
+{
+    value.trim().parse::<T>().ok().filter(|n| *n > T::default())
+}
+
 fn require_positive_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
 where
     D: Deserializer<'de>,
 {
     let value = String::deserialize(deserializer)?;
-    let trimmed = value.trim();
-    match trimmed.parse::<u32>() {
-        Ok(number) if number > 0 => Ok(number),
-        _ => Err(D::Error::invalid_value(
+    parse_positive_integer::<u32>(&value).ok_or_else(|| {
+        D::Error::invalid_value(
             Unexpected::Str(&value),
             &"a string containing a positive integer",
-        )),
-    }
+        )
+    })
 }
 
 fn require_positive_u64_string<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -370,13 +393,14 @@ where
 {
     let value = String::deserialize(deserializer)?;
     let trimmed = value.trim();
-    match trimmed.parse::<u64>() {
-        Ok(number) if number > 0 => Ok(trimmed.to_string()),
-        _ => Err(D::Error::invalid_value(
-            Unexpected::Str(&value),
-            &"a string containing a positive integer",
-        )),
-    }
+    parse_positive_integer::<u64>(trimmed)
+        .map(|_| trimmed.to_string())
+        .ok_or_else(|| {
+            D::Error::invalid_value(
+                Unexpected::Str(&value),
+                &"a string containing a positive integer",
+            )
+        })
 }
 
 #[cfg(test)]
@@ -385,7 +409,7 @@ mod tests {
 
     use crate::config::ConfigError;
 
-    use super::parse_file_config;
+    use super::{AiBackendFileConfig, parse_file_config};
 
     const TEST_PATH: &str = "/test/reili.toml";
 
@@ -408,6 +432,77 @@ mod tests {
         let message = parse_error_message(&toml);
 
         assert!(message.contains("non-empty string"), "{message}");
+    }
+
+    #[test]
+    fn parses_ai_backend_as_provider_specific_variant() {
+        let config =
+            parse_file_config(Path::new(TEST_PATH), &valid_config()).expect("parse should succeed");
+
+        match config.ai.backends.get("primary").expect("primary backend") {
+            AiBackendFileConfig::OpenAi {
+                model,
+                api_key_env,
+                reasoning_effort,
+            } => {
+                assert_eq!(model, "gpt-5.4");
+                assert_eq!(api_key_env, &None);
+                assert_eq!(reasoning_effort, &None);
+            }
+            other => panic!("expected OpenAI backend, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_ai_backend_missing_required_field_at_parse_time() {
+        let toml = valid_config().replace("model = \"gpt-5.4\"\n", "");
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("missing field `model`"), "{message}");
+    }
+
+    #[test]
+    fn rejects_provider_specific_unknown_field_at_parse_time() {
+        let toml = valid_config().replace(
+            "model = \"gpt-5.4\"\n",
+            "model = \"gpt-5.4\"\nmodel_id = \"gemini-2.5-flash\"\n",
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("unknown field `model_id`"), "{message}");
+    }
+
+    #[test]
+    fn accepts_vertex_ai_provider_alias_at_parse_time() {
+        let toml = valid_config().replace(
+            r#"[ai.backends.primary]
+provider = "openai"
+model = "gpt-5.4"
+"#,
+            r#"[ai.backends.primary]
+provider = "vertex_ai"
+project_id = "example-project"
+location = "global"
+model_id = "gemini-2.5-flash"
+"#,
+        );
+
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+
+        match config.ai.backends.get("primary").expect("primary backend") {
+            AiBackendFileConfig::VertexAi {
+                project_id,
+                location,
+                model_id,
+            } => {
+                assert_eq!(project_id, "example-project");
+                assert_eq!(location, "global");
+                assert_eq!(model_id, "gemini-2.5-flash");
+            }
+            other => panic!("expected Vertex AI backend, got {other:?}"),
+        }
     }
 
     #[test]

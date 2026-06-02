@@ -20,10 +20,7 @@ const DEFAULT_JOB_BACKOFF_MS: u64 = 1_000;
 const SUPPORTED_CONFIG_VERSION: u32 = 1;
 const DEFAULT_OPENAI_API_KEY_ENV: &str = "LLM_OPENAI_API_KEY";
 const DEFAULT_ANTHROPIC_API_KEY_ENV: &str = "LLM_ANTHROPIC_API_KEY";
-const SUPPORTED_ANTHROPIC_MODELS: &[&str] =
-    &["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"];
 const DEFAULT_OPENAI_REASONING_EFFORT: &str = "medium";
-const SUPPORTED_REASONING_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh"];
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConfigLoadOptions {
@@ -165,38 +162,35 @@ fn resolve_slack_connection_mode(
     slack: &SlackFileConfig,
     env: &dyn EnvironmentReader,
 ) -> Result<ResolvedSlackConfig, ConfigError> {
-    match slack.socket_mode {
-        true => {
-            let app_token = read_required_secret(
-                env,
-                &slack.socket.app_token_env,
-                "channel.slack.socket.app_token_env",
-            )?;
-            if !app_token.expose().starts_with("xapp-") {
-                return Err(ConfigError::InvalidValue {
-                    field: "channel.slack.socket.app_token_env".to_string(),
-                    message: "must resolve to a Slack App-Level Token starting with `xapp-`"
-                        .to_string(),
-                });
-            }
-
-            Ok(ResolvedSlackConfig {
-                connection_mode: SlackConnectionMode::SocketMode { app_token },
-                signing_secret: None,
-            })
+    if slack.socket_mode {
+        let app_token = read_required_secret(
+            env,
+            &slack.socket.app_token_env,
+            "channel.slack.socket.app_token_env",
+        )?;
+        if !app_token.expose().starts_with("xapp-") {
+            return Err(ConfigError::InvalidValue {
+                field: "channel.slack.socket.app_token_env".to_string(),
+                message: "must resolve to a Slack App-Level Token starting with `xapp-`"
+                    .to_string(),
+            });
         }
-        false => {
-            let signing_secret = read_required_secret(
-                env,
-                &slack.http.signing_secret_env,
-                "channel.slack.http.signing_secret_env",
-            )?;
 
-            Ok(ResolvedSlackConfig {
-                connection_mode: SlackConnectionMode::Http,
-                signing_secret: Some(signing_secret),
-            })
-        }
+        Ok(ResolvedSlackConfig {
+            connection_mode: SlackConnectionMode::SocketMode { app_token },
+            signing_secret: None,
+        })
+    } else {
+        let signing_secret = read_required_secret(
+            env,
+            &slack.http.signing_secret_env,
+            "channel.slack.http.signing_secret_env",
+        )?;
+
+        Ok(ResolvedSlackConfig {
+            connection_mode: SlackConnectionMode::Http,
+            signing_secret: Some(signing_secret),
+        })
     }
 }
 
@@ -212,19 +206,10 @@ fn resolve_slack_authorization(
         .cloned()
         .map(SlackChannelNamePattern::new)
         .collect::<Vec<_>>();
-    let user_ids = authorization
-        .actors
-        .as_ref()
-        .and_then(|actors| actors.user_ids.clone());
-    let user_group_ids = authorization
-        .actors
-        .as_ref()
-        .and_then(|actors| actors.user_group_ids.clone());
-    let allow_bot = authorization
-        .actors
-        .as_ref()
-        .and_then(|actors| actors.allow_bot)
-        .unwrap_or(false);
+    let actors = authorization.actors.as_ref();
+    let user_ids = actors.and_then(|a| a.user_ids.clone());
+    let user_group_ids = actors.and_then(|a| a.user_group_ids.clone());
+    let allow_bot = actors.is_some_and(|a| a.allow_bot);
 
     Some(SlackAuthorizationConfig {
         channels: SlackAuthorizationChannels {
@@ -258,116 +243,69 @@ fn resolve_llm_provider(
             ),
         })?;
     let backend_field_prefix = format!("ai.backends.{backend_id}");
-    let provider = require_backend_field(
-        backend.provider.as_deref(),
-        &format!("{backend_field_prefix}.provider"),
-    )?;
 
-    match provider.as_str() {
-        "openai" => resolve_openai_backend(backend, env, &backend_field_prefix),
-        "anthropic" => resolve_anthropic_backend(backend, env, &backend_field_prefix),
-        "bedrock" => resolve_bedrock_backend(backend, &backend_field_prefix),
-        "vertexai" | "vertex_ai" => resolve_vertex_ai_backend(backend, &backend_field_prefix),
-        _ => Err(ConfigError::InvalidValue {
-            field: format!("{backend_field_prefix}.provider"),
-            message: format!("unsupported provider `{provider}`"),
-        }),
+    match backend {
+        AiBackendFileConfig::OpenAi {
+            model,
+            api_key_env,
+            reasoning_effort,
+        } => resolve_openai_backend(
+            model,
+            api_key_env.as_deref(),
+            reasoning_effort.as_deref(),
+            env,
+            &backend_field_prefix,
+        ),
+        AiBackendFileConfig::Anthropic { model, api_key_env } => {
+            Ok(LlmProviderConfig::Anthropic(AnthropicLlmConfig {
+                api_key: read_required_secret(
+                    env,
+                    api_key_env
+                        .as_deref()
+                        .unwrap_or(DEFAULT_ANTHROPIC_API_KEY_ENV),
+                    &format!("{backend_field_prefix}.api_key_env"),
+                )?,
+                model: model.to_string(),
+            }))
+        }
+        AiBackendFileConfig::Bedrock {
+            model_id,
+            aws_profile,
+            aws_region,
+        } => Ok(LlmProviderConfig::Bedrock(BedrockLlmConfig {
+            model_id: model_id.to_string(),
+            aws_profile: optional_trimmed(aws_profile.as_deref()),
+            aws_region: optional_trimmed(aws_region.as_deref()),
+        })),
+        AiBackendFileConfig::VertexAi {
+            project_id,
+            location,
+            model_id,
+        } => Ok(LlmProviderConfig::VertexAi(VertexAiLlmConfig {
+            project_id: project_id.to_string(),
+            location: location.to_string(),
+            model_id: model_id.to_string(),
+        })),
     }
 }
 
 fn resolve_openai_backend(
-    backend: &AiBackendFileConfig,
+    model: &str,
+    api_key_env: Option<&str>,
+    reasoning_effort: Option<&str>,
     env: &dyn EnvironmentReader,
     prefix: &str,
 ) -> Result<LlmProviderConfig, ConfigError> {
-    let reasoning_effort = backend
-        .reasoning_effort
-        .as_deref()
-        .unwrap_or(DEFAULT_OPENAI_REASONING_EFFORT);
-    if !SUPPORTED_REASONING_EFFORTS.contains(&reasoning_effort) {
-        return Err(ConfigError::InvalidValue {
-            field: format!("{prefix}.reasoning_effort"),
-            message: format!(
-                "unsupported reasoning effort `{reasoning_effort}`; expected one of [{}]",
-                SUPPORTED_REASONING_EFFORTS.join(", ")
-            ),
-        });
-    }
+    let reasoning_effort = reasoning_effort.unwrap_or(DEFAULT_OPENAI_REASONING_EFFORT);
 
     Ok(LlmProviderConfig::OpenAi(OpenAiLlmConfig {
         api_key: read_required_secret(
             env,
-            backend
-                .api_key_env
-                .as_deref()
-                .unwrap_or(DEFAULT_OPENAI_API_KEY_ENV),
+            api_key_env.unwrap_or(DEFAULT_OPENAI_API_KEY_ENV),
             &format!("{prefix}.api_key_env"),
         )?,
-        model: require_backend_field(backend.model.as_deref(), &format!("{prefix}.model"))?,
+        model: model.to_string(),
         reasoning_effort: reasoning_effort.to_string(),
-    }))
-}
-
-fn resolve_anthropic_backend(
-    backend: &AiBackendFileConfig,
-    env: &dyn EnvironmentReader,
-    prefix: &str,
-) -> Result<LlmProviderConfig, ConfigError> {
-    let model = require_backend_field(backend.model.as_deref(), &format!("{prefix}.model"))?;
-    if !SUPPORTED_ANTHROPIC_MODELS.contains(&model.as_str()) {
-        return Err(ConfigError::InvalidValue {
-            field: format!("{prefix}.model"),
-            message: format!(
-                "unsupported Anthropic model `{model}`; expected one of [{}]",
-                SUPPORTED_ANTHROPIC_MODELS.join(", ")
-            ),
-        });
-    }
-
-    Ok(LlmProviderConfig::Anthropic(AnthropicLlmConfig {
-        api_key: read_required_secret(
-            env,
-            backend
-                .api_key_env
-                .as_deref()
-                .unwrap_or(DEFAULT_ANTHROPIC_API_KEY_ENV),
-            &format!("{prefix}.api_key_env"),
-        )?,
-        model,
-    }))
-}
-
-fn resolve_bedrock_backend(
-    backend: &AiBackendFileConfig,
-    prefix: &str,
-) -> Result<LlmProviderConfig, ConfigError> {
-    Ok(LlmProviderConfig::Bedrock(BedrockLlmConfig {
-        model_id: require_backend_field(
-            backend.model_id.as_deref(),
-            &format!("{prefix}.model_id"),
-        )?,
-        aws_profile: optional_trimmed(backend.aws_profile.as_deref()),
-        aws_region: optional_trimmed(backend.aws_region.as_deref()),
-    }))
-}
-
-fn resolve_vertex_ai_backend(
-    backend: &AiBackendFileConfig,
-    prefix: &str,
-) -> Result<LlmProviderConfig, ConfigError> {
-    Ok(LlmProviderConfig::VertexAi(VertexAiLlmConfig {
-        project_id: require_backend_field(
-            backend.project_id.as_deref(),
-            &format!("{prefix}.project_id"),
-        )?,
-        location: require_backend_field(
-            backend.location.as_deref(),
-            &format!("{prefix}.location"),
-        )?,
-        model_id: require_backend_field(
-            backend.model_id.as_deref(),
-            &format!("{prefix}.model_id"),
-        )?,
     }))
 }
 
@@ -408,16 +346,6 @@ fn resolve_esa_config(
 
 fn normalize_multiline_secret(secret: SecretString) -> SecretString {
     SecretString::new(secret.expose().replace("\\n", "\n"))
-}
-
-fn require_backend_field(value: Option<&str>, field: &str) -> Result<String, ConfigError> {
-    match value {
-        Some(value) => Ok(value.to_string()),
-        None => Err(ConfigError::InvalidValue {
-            field: field.to_string(),
-            message: "is required".to_string(),
-        }),
-    }
 }
 
 fn optional_trimmed(value: Option<&str>) -> Option<String> {
@@ -636,21 +564,20 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_openai_reasoning_effort() {
+    fn passes_openai_reasoning_effort_through_without_validation() {
         let env = FixedEnvironment::with_overrides(&[]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "model = \"gpt-5.3-codex\"\n",
             "model = \"gpt-5.3-codex\"\nreasoning_effort = \"max\"\n",
         ));
 
-        let error = resolve_app_config(file_config, &env).expect_err("invalid effort should fail");
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
 
-        match error {
-            ConfigError::InvalidValue { field, message } => {
-                assert!(field.contains("reasoning_effort"));
-                assert!(message.contains("max"));
+        match config.llm.provider {
+            LlmProviderConfig::OpenAi(provider) => {
+                assert_eq!(provider.reasoning_effort, "max");
             }
-            other => panic!("expected invalid-value error, got {other}"),
+            _ => panic!("expected openai provider"),
         }
     }
 
@@ -716,57 +643,25 @@ mod tests {
     }
 
     #[test]
-    fn ignores_invalid_inactive_backend_blocks() {
-        let env = FixedEnvironment::with_overrides(&[]);
-        let file_config = parse_runtime_config(
-            r#"
-version = 1
-
-[server]
-port = 3000
-
-[conversation]
-language = "English"
-
-[channel.slack]
-socket_mode = true
-
-[channel.slack.auth]
-bot_token_env = "SLACK_BOT_TOKEN"
-
-[channel.slack.socket]
-app_token_env = "SLACK_APP_TOKEN"
-
-[ai]
-default_backend = "primary"
-
-[ai.backends.primary]
-provider = "openai"
-model = "gpt-5.3-codex"
-api_key_env = "LLM_OPENAI_API_KEY"
-
-[ai.backends.unused]
+    fn rejects_unsupported_inactive_backend_provider_at_parse_time() {
+        let toml = valid_openai_config().replace(
+            "[connector.datadog]\n",
+            r#"[ai.backends.unused]
 provider = "unsupported-provider"
 
 [connector.datadog]
-site = "datadoghq.com"
-api_key_env = "DATADOG_API_KEY"
-app_key_env = "DATADOG_APP_KEY"
-
-[connector.github]
-mcp_url = "https://api.githubcopilot.com/mcp/"
-search_scope_org = "example-org"
-
-[connector.github.app]
-app_id = "12345"
-installation_id = "67890"
-private_key_env = "GITHUB_APP_PRIVATE_KEY"
 "#,
         );
 
-        let config = resolve_app_config(file_config, &env).expect("resolve config");
+        let error = parse_file_config(Path::new(TEST_PATH), &toml)
+            .expect_err("unsupported provider should fail at parse time");
 
-        assert_eq!(config.llm.provider.provider_name(), "openai");
+        match error {
+            ConfigError::ParseToml { message, .. } => {
+                assert!(message.contains("unsupported-provider"), "{message}");
+            }
+            other => panic!("expected parse error, got {other}"),
+        }
     }
 
     #[test]
@@ -780,6 +675,24 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
             LlmProviderConfig::Anthropic(provider) => {
                 assert_eq!(provider.api_key.expose(), "anthropic-api-key");
                 assert_eq!(provider.model, "claude-sonnet-4-6");
+            }
+            _ => panic!("expected anthropic provider"),
+        }
+    }
+
+    #[test]
+    fn resolves_unlisted_anthropic_model_from_toml() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_anthropic_config().replace(
+            "model = \"claude-sonnet-4-6\"",
+            "model = \"claude-future-model\"",
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.llm.provider {
+            LlmProviderConfig::Anthropic(provider) => {
+                assert_eq!(provider.model, "claude-future-model");
             }
             _ => panic!("expected anthropic provider"),
         }
@@ -1353,8 +1266,9 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
             )
     }
 
-    fn valid_bedrock_config() -> String {
-        r#"
+    fn base_config_with_ai_block(ai_block: &str) -> String {
+        format!(
+            r#"
 version = 1
 
 [server]
@@ -1372,7 +1286,27 @@ bot_token_env = "SLACK_BOT_TOKEN"
 [channel.slack.socket]
 app_token_env = "SLACK_APP_TOKEN"
 
-[ai]
+{ai_block}
+[connector.datadog]
+site = "datadoghq.com"
+api_key_env = "DATADOG_API_KEY"
+app_key_env = "DATADOG_APP_KEY"
+
+[connector.github]
+mcp_url = "https://api.githubcopilot.com/mcp/"
+search_scope_org = "example-org"
+
+[connector.github.app]
+app_id = "12345"
+installation_id = "67890"
+private_key_env = "GITHUB_APP_PRIVATE_KEY"
+"#
+        )
+    }
+
+    fn valid_bedrock_config() -> String {
+        base_config_with_ai_block(
+            r#"[ai]
 default_backend = "bedrock"
 
 [ai.backends.bedrock]
@@ -1381,43 +1315,13 @@ model_id = "anthropic.claude-3-7-sonnet-20250219-v1:0"
 aws_profile = "prod-sso"
 aws_region = "ap-northeast-1"
 
-[connector.datadog]
-site = "datadoghq.com"
-api_key_env = "DATADOG_API_KEY"
-app_key_env = "DATADOG_APP_KEY"
-
-[connector.github]
-mcp_url = "https://api.githubcopilot.com/mcp/"
-search_scope_org = "example-org"
-
-[connector.github.app]
-app_id = "12345"
-installation_id = "67890"
-private_key_env = "GITHUB_APP_PRIVATE_KEY"
-"#
-        .to_string()
+"#,
+        )
     }
 
     fn valid_vertex_ai_config() -> String {
-        r#"
-version = 1
-
-[server]
-port = 3000
-
-[conversation]
-language = "English"
-
-[channel.slack]
-socket_mode = true
-
-[channel.slack.auth]
-bot_token_env = "SLACK_BOT_TOKEN"
-
-[channel.slack.socket]
-app_token_env = "SLACK_APP_TOKEN"
-
-[ai]
+        base_config_with_ai_block(
+            r#"[ai]
 default_backend = "vertex"
 
 [ai.backends.vertex]
@@ -1426,20 +1330,7 @@ project_id = "example-project"
 location = "global"
 model_id = "gemini-2.5-pro"
 
-[connector.datadog]
-site = "datadoghq.com"
-api_key_env = "DATADOG_API_KEY"
-app_key_env = "DATADOG_APP_KEY"
-
-[connector.github]
-mcp_url = "https://api.githubcopilot.com/mcp/"
-search_scope_org = "example-org"
-
-[connector.github.app]
-app_id = "12345"
-installation_id = "67890"
-private_key_env = "GITHUB_APP_PRIVATE_KEY"
-"#
-        .to_string()
+"#,
+        )
     }
 }
