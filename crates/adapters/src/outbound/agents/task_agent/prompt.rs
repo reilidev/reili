@@ -6,7 +6,7 @@ pub fn build_task_prompt(request: &TaskRequest) -> String {
     let memory_context = build_memory_context(&request.memory_items);
 
     format!(
-        "# User\n{trigger_message_text}\n\n# Thread Context\n{thread_transcript}\n\n# Memory Context\n{memory_context}"
+        "# User message\n{trigger_message_text}\n\n# Thread Context\n{thread_transcript}\n\n# Memory Context\n{memory_context}"
     )
 }
 
