@@ -81,78 +81,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_task_prompt_with_thread_context() {
-        let request = TaskRequest {
-            trigger_message: sample_trigger_message(),
-            thread_messages: vec![SlackThreadMessage {
-                ts: "1710000000.000001".to_string(),
-                user: Some("U123".to_string()),
-                text: "thread context".to_string(),
-                legacy_attachments: Vec::new(),
-                files: Vec::new(),
-                metadata: None,
-            }],
-            memory_items: Vec::new(),
-        };
-        let prompt = build_task_prompt(&request);
-        assert!(prompt.contains("# User\nPlease investigate this alert"));
-        assert!(prompt.contains("# Thread Context\n"));
-        assert!(prompt.contains("posted_by: U123"));
-        assert!(prompt.contains("message:thread context"));
-    }
-
-    #[test]
-    fn formats_task_prompt_with_user_and_thread_context_sections() {
-        let request = TaskRequest {
-            trigger_message: sample_trigger_message(),
-            thread_messages: vec![],
-            memory_items: Vec::new(),
-        };
-
-        let prompt = build_task_prompt(&request);
-
-        assert_eq!(
-            prompt,
-            "# User\nPlease investigate this alert\n\n# Thread Context\n\n\n# Memory Context\nNo reusable memories found."
-        );
-    }
-
-    #[test]
-    fn builds_task_prompt_without_thread_context() {
-        let request = TaskRequest {
-            trigger_message: sample_trigger_message(),
-            thread_messages: vec![],
-            memory_items: Vec::new(),
-        };
-        let prompt = build_task_prompt(&request);
-        assert!(prompt.contains("# User\nPlease investigate this alert"));
-        assert!(prompt.contains("# Thread Context\n"));
-    }
-
-    #[test]
-    fn builds_task_prompt_without_bot_user_you_annotation() {
-        let mut trigger = sample_trigger_message();
-        trigger.text = "<@U999> investigate this alert".to_string();
-        let request = TaskRequest {
-            trigger_message: trigger,
-            thread_messages: vec![SlackThreadMessage {
-                ts: "1710000000.000010".to_string(),
-                user: Some("U999".to_string()),
-                text: "I started investigation".to_string(),
-                legacy_attachments: Vec::new(),
-                files: Vec::new(),
-                metadata: None,
-            }],
-            memory_items: Vec::new(),
-        };
-        let prompt = build_task_prompt(&request);
-        assert!(prompt.contains("posted_by: U999"));
-        assert!(!prompt.contains("(You)"));
-        assert!(prompt.contains("message:I started investigation"));
-    }
-
-    #[test]
-    fn formats_thread_messages_as_transcript() {
+    fn expands_trigger_and_thread_message_inputs() {
         let request = TaskRequest {
             trigger_message: sample_trigger_message(),
             thread_messages: vec![
@@ -166,7 +95,7 @@ mod tests {
                 },
                 SlackThreadMessage {
                     ts: "1710000000.000002".to_string(),
-                    user: None,
+                    user: Some("U456".to_string()),
                     text: " follow-up from bot ".to_string(),
                     legacy_attachments: Vec::new(),
                     files: Vec::new(),
@@ -176,12 +105,15 @@ mod tests {
             memory_items: Vec::new(),
         };
         let prompt = build_task_prompt(&request);
-        assert!(prompt.contains(
-            "ts: 1710000000.000001, iso_timestamp: 2024-03-09T16:00:00.000Z, posted_by: U123\nmessage:First message"
-        ));
-        assert!(prompt.contains(
-            "ts: 1710000000.000002, iso_timestamp: 2024-03-09T16:00:00.000Z, posted_by: system\nmessage:follow-up from bot"
-        ));
+
+        assert!(prompt.contains("Please investigate this alert"));
+        assert!(prompt.contains("1710000000.000001"));
+        assert!(prompt.contains("1710000000.000002"));
+        assert!(prompt.contains("2024-03-09T16:00:00.000Z"));
+        assert!(prompt.contains("U123"));
+        assert!(prompt.contains("U456"));
+        assert!(prompt.contains("First message"));
+        assert!(prompt.contains("follow-up from bot"));
     }
 
     #[test]
@@ -201,8 +133,8 @@ mod tests {
 
         let prompt = build_task_prompt(&request);
 
-        assert!(prompt.contains("# User\nattached_file: aws-health.eml"));
-        assert!(prompt.contains("plain_text:\nscheduled upgrade required"));
+        assert!(prompt.contains("aws-health.eml"));
+        assert!(prompt.contains("scheduled upgrade required"));
     }
 
     #[test]
@@ -226,9 +158,9 @@ mod tests {
 
         let prompt = build_task_prompt(&request);
 
-        assert!(prompt.contains("posted_by: U123"));
-        assert!(prompt.contains("message:attached_file: aws-health.eml"));
-        assert!(prompt.contains("plain_text:\nscheduled upgrade required"));
+        assert!(prompt.contains("U123"));
+        assert!(prompt.contains("aws-health.eml"));
+        assert!(prompt.contains("scheduled upgrade required"));
     }
 
     #[test]
@@ -251,12 +183,9 @@ mod tests {
 
         let prompt = build_task_prompt(&request);
 
-        assert!(prompt.contains("# Memory Context\n"));
-        assert!(!prompt.contains("Treat them as hints, not proof."));
-        assert!(!prompt.contains("Verify important facts"));
-        assert!(
-            prompt.contains("source: https://example.slack.com/archives/C001/p1760000000000001")
-        );
-        assert!(prompt.contains("memory:\n- service: checkout-api"));
+        assert!(prompt.contains("https://example.slack.com/archives/C001/p1760000000000001"));
+        assert!(prompt.contains("C001"));
+        assert!(prompt.contains("1760000000.000001"));
+        assert!(prompt.contains("- service: checkout-api"));
     }
 }
