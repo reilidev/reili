@@ -1,7 +1,8 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use reili_core::task::TaskRuntime;
 
 pub(super) struct BuildTaskInstructionsInput {
+    pub(super) now: DateTime<Utc>,
     pub(super) datadog_site: String,
     pub(super) github_scope_org: String,
     pub(super) esa_team_name: Option<String>,
@@ -63,7 +64,7 @@ Current context:
 {reusable_notes_instruction}
 ",
         language = input.language,
-        now = Utc::now().to_rfc3339(),
+        now = input.now.to_rfc3339(),
         channel = input.runtime.channel,
         thread_ts = input.runtime.thread_ts,
         github_scope_org = input.github_scope_org,
@@ -361,6 +362,7 @@ fn format_esa_team_context_line(team_name: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{DateTime, Utc};
     use reili_core::task::TaskRuntime;
 
     use super::{
@@ -373,6 +375,7 @@ mod tests {
     fn appends_configured_additional_system_prompt_to_all_agents() {
         let configured_instructions = "Prefer runbook links first.\nState uncertainty explicitly.";
         let task_instructions = build_task_instructions(BuildTaskInstructionsInput {
+            now: fixed_now(),
             datadog_site: "datadoghq.com".to_string(),
             github_scope_org: "acme".to_string(),
             esa_team_name: Some("docs".to_string()),
@@ -420,6 +423,7 @@ mod tests {
     #[test]
     fn task_instructions_omit_started_at_and_retry_count_from_run_context() {
         let instructions = build_task_instructions(BuildTaskInstructionsInput {
+            now: fixed_now(),
             datadog_site: "datadoghq.com".to_string(),
             github_scope_org: "acme".to_string(),
             esa_team_name: None,
@@ -439,6 +443,26 @@ mod tests {
     }
 
     #[test]
+    fn task_instructions_include_supplied_now() {
+        let instructions = build_task_instructions(BuildTaskInstructionsInput {
+            now: fixed_now(),
+            datadog_site: "datadoghq.com".to_string(),
+            github_scope_org: "acme".to_string(),
+            esa_team_name: None,
+            runtime: TaskRuntime {
+                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
+                channel: "C123".to_string(),
+                thread_ts: "123.456".to_string(),
+                retry_count: 0,
+            },
+            language: "Japanese".to_string(),
+            additional_system_prompt: None,
+        });
+
+        assert!(instructions.contains("- Now: 2026-01-01T00:00:00+00:00"));
+    }
+
+    #[test]
     fn task_instructions_include_only_esa_team_when_configured() {
         let runtime = TaskRuntime {
             started_at_iso: "2026-01-01T00:00:00Z".to_string(),
@@ -447,6 +471,7 @@ mod tests {
             retry_count: 0,
         };
         let with_esa = build_task_instructions(BuildTaskInstructionsInput {
+            now: fixed_now(),
             datadog_site: "datadoghq.com".to_string(),
             github_scope_org: "acme".to_string(),
             esa_team_name: Some("docs".to_string()),
@@ -455,6 +480,7 @@ mod tests {
             additional_system_prompt: None,
         });
         let without_esa = build_task_instructions(BuildTaskInstructionsInput {
+            now: fixed_now(),
             datadog_site: "datadoghq.com".to_string(),
             github_scope_org: "acme".to_string(),
             esa_team_name: None,
@@ -489,5 +515,11 @@ mod tests {
 
         assert!(instructions.contains("org:acme"));
         assert!(instructions.contains("the\n`owner` must be `acme`"));
+    }
+
+    fn fixed_now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
     }
 }
