@@ -1,23 +1,8 @@
-use chrono::{DateTime, Utc};
-use reili_core::task::TaskRuntime;
-
 pub(super) struct BuildTaskInstructionsInput {
-    pub(super) now: DateTime<Utc>,
-    pub(super) datadog_site: String,
-    pub(super) github_scope_org: String,
-    pub(super) esa_team_name: Option<String>,
-    pub(super) runtime: TaskRuntime,
-    pub(super) language: String,
     pub(super) additional_system_prompt: Option<String>,
 }
 
 pub(super) fn build_task_instructions(input: BuildTaskInstructionsInput) -> String {
-    let datadog_site = if input.datadog_site.is_empty() {
-        "datadoghq.com".to_string()
-    } else {
-        input.datadog_site
-    };
-    let esa_team_line = format_esa_team_context_line(input.esa_team_name.as_deref());
     let reusable_notes_instruction = reusable_notes_instruction();
 
     append_configured_additional_system_prompt(
@@ -25,16 +10,7 @@ pub(super) fn build_task_instructions(input: BuildTaskInstructionsInput) -> Stri
         "You are a software engineer, working as a member of the team alongside the people in the Slack.
 Your default personality is honest, straightforward, and efficient. Communicate efficiently, avoid unnecessary detail, and be precise. When interacting with the user, prioritize well-grounded information obtained from the user or surrounding systems over general knowledge.
 
-Output language: {language}
-- Use {language} for all responses and reasoning.
-
-Current context:
-- Now: {now}
-- Slack Channel: {channel}
-- Slack Thread: {thread_ts}
-- GitHub Organization Scope: {github_scope_org}
-- Datadog Site: {datadog_site}
-{esa_team_line}
+Use the output language and current task context provided in the user prompt.
 
 # Working style
 ## Sharing progress updates
@@ -63,13 +39,6 @@ Current context:
 
 {reusable_notes_instruction}
 ",
-        language = input.language,
-        now = input.now.to_rfc3339(),
-        channel = input.runtime.channel,
-        thread_ts = input.runtime.thread_ts,
-        github_scope_org = input.github_scope_org,
-        datadog_site = datadog_site,
-        esa_team_line = esa_team_line,
         reusable_notes_instruction = reusable_notes_instruction,
         ),
         input.additional_system_prompt.as_deref(),
@@ -352,19 +321,8 @@ fn append_configured_additional_system_prompt(
     }
 }
 
-fn format_esa_team_context_line(team_name: Option<&str>) -> String {
-    team_name
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!("- esa Team: {value}\n"))
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, Utc};
-    use reili_core::task::TaskRuntime;
-
     use super::{
         BuildDatadogInstructionsInput, BuildEsaInstructionsInput, BuildGithubInstructionsInput,
         BuildTaskInstructionsInput, build_datadog_instructions, build_esa_instructions,
@@ -375,17 +333,6 @@ mod tests {
     fn appends_configured_additional_system_prompt_to_all_agents() {
         let configured_instructions = "Prefer runbook links first.\nState uncertainty explicitly.";
         let task_instructions = build_task_instructions(BuildTaskInstructionsInput {
-            now: fixed_now(),
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            esa_team_name: Some("docs".to_string()),
-            runtime: TaskRuntime {
-                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                retry_count: 0,
-            },
-            language: "Japanese".to_string(),
             additional_system_prompt: Some(configured_instructions.to_string()),
         });
         let datadog_instructions = build_datadog_instructions(BuildDatadogInstructionsInput {
@@ -421,77 +368,22 @@ mod tests {
     }
 
     #[test]
-    fn task_instructions_omit_started_at_and_retry_count_from_run_context() {
+    fn task_instructions_omit_runtime_context_values() {
         let instructions = build_task_instructions(BuildTaskInstructionsInput {
-            now: fixed_now(),
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            esa_team_name: None,
-            runtime: TaskRuntime {
-                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                retry_count: 7,
-            },
-            language: "Japanese".to_string(),
             additional_system_prompt: None,
         });
 
+        assert!(!instructions.contains("Output language:"));
+        assert!(!instructions.contains("Current context:"));
+        assert!(!instructions.contains("Now:"));
+        assert!(!instructions.contains("Slack Channel:"));
+        assert!(!instructions.contains("Slack Thread:"));
+        assert!(!instructions.contains("GitHub Organization Scope:"));
+        assert!(!instructions.contains("Datadog Site:"));
+        assert!(!instructions.contains("esa Team:"));
         assert!(!instructions.contains("StartedAt"));
         assert!(!instructions.contains("2026-01-01T00:00:00Z"));
         assert!(!instructions.contains("Retry Count"));
-    }
-
-    #[test]
-    fn task_instructions_include_supplied_now() {
-        let instructions = build_task_instructions(BuildTaskInstructionsInput {
-            now: fixed_now(),
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            esa_team_name: None,
-            runtime: TaskRuntime {
-                started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-                channel: "C123".to_string(),
-                thread_ts: "123.456".to_string(),
-                retry_count: 0,
-            },
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-
-        assert!(instructions.contains("- Now: 2026-01-01T00:00:00+00:00"));
-    }
-
-    #[test]
-    fn task_instructions_include_only_esa_team_when_configured() {
-        let runtime = TaskRuntime {
-            started_at_iso: "2026-01-01T00:00:00Z".to_string(),
-            channel: "C123".to_string(),
-            thread_ts: "123.456".to_string(),
-            retry_count: 0,
-        };
-        let with_esa = build_task_instructions(BuildTaskInstructionsInput {
-            now: fixed_now(),
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            esa_team_name: Some("docs".to_string()),
-            runtime: runtime.clone(),
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-        let without_esa = build_task_instructions(BuildTaskInstructionsInput {
-            now: fixed_now(),
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            esa_team_name: None,
-            runtime,
-            language: "Japanese".to_string(),
-            additional_system_prompt: None,
-        });
-
-        assert!(with_esa.contains("- esa Team: docs"));
-        assert!(!with_esa.contains("Use search_posts"));
-        assert!(!without_esa.contains("esa Team"));
     }
 
     #[test]
@@ -515,11 +407,5 @@ mod tests {
 
         assert!(instructions.contains("org:acme"));
         assert!(instructions.contains("the\n`owner` must be `acme`"));
-    }
-
-    fn fixed_now() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc)
     }
 }
