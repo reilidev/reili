@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::Utc;
 use reili_core::logger::Logger;
 use reili_core::secret::SecretString;
 use reili_core::task::{
@@ -150,6 +151,7 @@ where
             .agent(self.config.settings.task_runner_model.clone())
             .name("TaskRunner")
             .preamble(&build_task_instructions(BuildTaskInstructionsInput {
+                now: Utc::now(),
                 datadog_site: self.config.instructions.datadog_site.clone(),
                 github_scope_org: self.config.instructions.github_scope_org.clone(),
                 esa_team_name,
