@@ -247,16 +247,33 @@ fn validate_scope(
     Ok(())
 }
 
+// About ~5 000 tokens at 4 chars/token; covers file content and large directory listings.
+const FILE_CONTENT_CHAR_LIMIT: usize = 20_000;
+
 fn format_github_mcp_tool_success(result: &CallToolResult) -> String {
     let content = render_contents(&result.content);
-    if !content.is_empty() {
+    let raw = if !content.is_empty() {
+        content
+    } else {
+        result
+            .structured_content
+            .as_ref()
+            .map_or_else(String::new, serde_json::Value::to_string)
+    };
+    truncate_if_oversized(raw)
+}
+
+fn truncate_if_oversized(content: String) -> String {
+    if content.len() <= FILE_CONTENT_CHAR_LIMIT {
         return content;
     }
-
-    result
-        .structured_content
-        .as_ref()
-        .map_or_else(String::new, serde_json::Value::to_string)
+    let truncated = &content[..FILE_CONTENT_CHAR_LIMIT];
+    let returned_lines = truncated.lines().count();
+    let total_lines = content.lines().count();
+    format!(
+        "{truncated}\n[truncated: {returned_lines} of {total_lines} lines shown; \
+        request a specific line range to read more]"
+    )
 }
 
 fn format_github_mcp_tool_error(tool_name: &str, result: &CallToolResult) -> String {
@@ -313,9 +330,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS, REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS,
-        filter_tools, format_github_mcp_tool_error, format_github_mcp_tool_success,
-        validate_required_tools, validate_scope,
+        FILE_CONTENT_CHAR_LIMIT, OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS,
+        REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS, filter_tools, format_github_mcp_tool_error,
+        format_github_mcp_tool_success, truncate_if_oversized, validate_required_tools,
+        validate_scope,
     };
     use reili_core::source_code::github::GithubScopePolicy;
 
@@ -402,6 +420,24 @@ mod tests {
         .expect_err("out of scope owner should fail");
 
         assert_eq!(error.message, "owner is out of scope. allowed owner: acme");
+    }
+
+    #[test]
+    fn does_not_truncate_content_within_limit() {
+        let content = "a".repeat(FILE_CONTENT_CHAR_LIMIT);
+        assert_eq!(truncate_if_oversized(content.clone()), content);
+    }
+
+    #[test]
+    fn truncates_content_exceeding_limit_and_appends_marker() {
+        let line = "x".repeat(100) + "\n";
+        let content = line.repeat(FILE_CONTENT_CHAR_LIMIT / line.len() + 1);
+        let result = truncate_if_oversized(content.clone());
+        assert!(result.len() > FILE_CONTENT_CHAR_LIMIT);
+        assert!(result.contains("[truncated:"));
+        assert!(result.contains("of"));
+        assert!(result.contains("lines shown"));
+        assert!(result.len() < content.len());
     }
 
     #[test]
