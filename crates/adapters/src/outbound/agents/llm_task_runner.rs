@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::Utc;
 use reili_core::error::AgentRunFailedError;
 use reili_core::logger::Logger;
 use reili_core::task::{
@@ -16,9 +17,9 @@ use super::github_mcp_tools::connect_github_mcp_toolset;
 use super::llm_provider_settings::LlmProviderSettings;
 use super::llm_usage_collector::LlmUsageCollector;
 use super::task_agent::{
-    AgentInstructionsConfig, BuildTaskAgentInput, CreateTaskAgentFactoryInput, TaskAgentConfig,
-    TaskAgentConnectors, TaskAgentExecutionContext, TaskAgentFactory, TaskAgentRunContext,
-    TaskAgentToolsets, build_task_prompt,
+    AgentInstructionsConfig, BuildTaskAgentInput, BuildTaskPromptInput,
+    CreateTaskAgentFactoryInput, TaskAgentConfig, TaskAgentConnectors, TaskAgentExecutionContext,
+    TaskAgentFactory, TaskAgentRunContext, TaskAgentToolsets, build_task_prompt,
 };
 use crate::outbound::github::GitHubMcpConfig;
 
@@ -84,14 +85,27 @@ where
                     cause_message: error.message,
                 })
             })?;
-    let task_prompt = build_task_prompt(&input.run.request);
+    let esa_team_name = input
+        .connectors
+        .esa
+        .as_ref()
+        .map(|connector| connector.team_name.clone());
     let memory_items = input.run.request.memory_items.clone();
+    let slack_action_token = input.run.request.trigger_message.action_token.clone();
+    let task_prompt = build_task_prompt(BuildTaskPromptInput {
+        request: input.run.request,
+        now: Utc::now(),
+        runtime: runtime.clone(),
+        language: input.language.clone(),
+        datadog_site: input.datadog_mcp.site.clone(),
+        github_scope_org: input.github_scope_org.clone(),
+        esa_team_name,
+    });
     let task_agent_factory = TaskAgentFactory::new(CreateTaskAgentFactoryInput {
         client: input.client,
         config: TaskAgentConfig {
             settings: input.settings.clone(),
             instructions: AgentInstructionsConfig {
-                datadog_site: input.datadog_mcp.site.clone(),
                 github_scope_org: input.github_scope_org,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
@@ -108,7 +122,7 @@ where
                 on_progress_event: Arc::clone(&input.run.on_progress_event),
                 usage_collector: usage_collector.clone(),
             },
-            slack_action_token: input.run.request.trigger_message.action_token.clone(),
+            slack_action_token,
             memory_items,
         },
         toolsets: TaskAgentToolsets {

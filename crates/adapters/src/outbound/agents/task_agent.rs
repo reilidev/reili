@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use chrono::Utc;
 use reili_core::logger::Logger;
 use reili_core::secret::SecretString;
 use reili_core::task::{
@@ -14,7 +13,7 @@ mod instructions;
 mod prompt;
 mod specialists;
 
-pub use prompt::build_task_prompt;
+pub use prompt::{BuildTaskPromptInput, build_task_prompt};
 
 use super::datadog_mcp_tools::DatadogMcpToolset;
 use super::github_mcp_tools::GitHubMcpToolset;
@@ -88,11 +87,6 @@ where
             client: self.client.clone(),
             config: self.specialist_config(),
         });
-        let esa_team_name = input
-            .connectors
-            .esa
-            .as_ref()
-            .map(|connector| connector.team_name.clone());
         let memory_context_section = build_memory_context_section(&input.run_context.memory_items);
         let datadog_agent_factory = {
             let specialist_factory = specialist_factory.clone();
@@ -151,12 +145,6 @@ where
             .agent(self.config.settings.task_runner_model.clone())
             .name("TaskRunner")
             .preamble(&build_task_instructions(BuildTaskInstructionsInput {
-                now: Utc::now(),
-                datadog_site: self.config.instructions.datadog_site.clone(),
-                github_scope_org: self.config.instructions.github_scope_org.clone(),
-                esa_team_name,
-                runtime: input.run_context.execution.runtime.clone(),
-                language: self.config.instructions.language.clone(),
                 additional_system_prompt: self.config.instructions.additional_system_prompt.clone(),
             }))
             .default_max_turns(self.config.settings.task_runner_max_turns)
@@ -221,7 +209,6 @@ pub struct TaskAgentConfig {
 
 #[derive(Clone)]
 pub struct AgentInstructionsConfig {
-    pub datadog_site: String,
     pub github_scope_org: String,
     pub language: String,
     pub additional_system_prompt: Option<String>,
