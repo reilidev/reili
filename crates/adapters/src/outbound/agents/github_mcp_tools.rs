@@ -10,6 +10,7 @@ use rmcp::model::{CallToolResult, Content, Tool};
 use serde_json::{Map, Value};
 use tracing::error;
 
+use super::github_read_file_tool::GitHubReadFileToolAdapter;
 use crate::outbound::github::github_mcp_client::{GitHubMcpConfig, GitHubMcpHttpClient};
 
 const REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
@@ -30,12 +31,14 @@ const OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
     "list_dependabot_alerts",
 ];
 
+// `get_file_contents` is intentionally absent: file reads are exposed to the agent through the
+// `read_file` wrapper (see `GitHubReadFileToolAdapter`), which forwards to the server-side
+// `get_file_contents` tool but returns a bounded, line-numbered window.
 const GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
     "search_code",
     "search_repositories",
     "search_issues",
     "search_pull_requests",
-    "get_file_contents",
     "pull_request_read",
     "actions_get",
     "actions_list",
@@ -43,6 +46,12 @@ const GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
     "get_dependabot_alert",
     "list_dependabot_alerts",
 ];
+
+/// Agent-facing name of the windowed file read wrapper.
+pub(super) const READ_FILE_TOOL_NAME: &str = "read_file";
+
+/// Server-side tool the `read_file` wrapper forwards to.
+pub(super) const GET_FILE_CONTENTS_TOOL_NAME: &str = "get_file_contents";
 
 const SEARCH_QUERY_TOOL_NAMES: &[&str] = &[
     "search_code",
@@ -52,6 +61,7 @@ const SEARCH_QUERY_TOOL_NAMES: &[&str] = &[
 ];
 const OWNER_SCOPED_TOOL_NAMES: &[&str] = &[
     "get_file_contents",
+    READ_FILE_TOOL_NAME,
     "pull_request_read",
     "actions_get",
     "actions_list",
@@ -70,12 +80,17 @@ pub struct GitHubMcpToolset {
 impl GitHubMcpToolset {
     #[must_use]
     pub fn specialist_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        build_tool_adapters(
+        let mut adapters = build_tool_adapters(
             &self.tools,
             GITHUB_SPECIALIST_AGENT_TOOLS,
             self.client.clone(),
             self.scope_policy.clone(),
-        )
+        );
+        adapters.push(Box::new(GitHubReadFileToolAdapter::new(
+            self.client.clone(),
+            self.scope_policy.clone(),
+        )) as Box<dyn ToolDyn>);
+        adapters
     }
 }
 
@@ -180,50 +195,63 @@ impl ToolDyn for GitHubMcpToolAdapter {
         let scope_policy = self.scope_policy.clone();
 
         Box::pin(async move {
-            let arguments = serde_json::from_str::<Value>(&args)?
-                .as_object()
-                .cloned()
-                .ok_or_else(|| {
-                    ToolError::ToolCallError(Box::new(io::Error::other(
-                        "GitHub MCP tool arguments must be a JSON object",
-                    )))
-                })?;
+            let arguments = parse_tool_arguments(&args)?;
             validate_scope(&name, &arguments, &scope_policy).map_err(|error| {
                 ToolError::ToolCallError(Box::new(io::Error::other(error.message)))
             })?;
 
-            let result = client
-                .call_tool(name.to_string(), Some(arguments))
-                .await
-                .map_err(|transport_error| {
-                    let error_message = format!(
-                        "GitHub MCP tool {} failed before returning a result: {transport_error}",
-                        name
-                    );
-                    error!(tool_name = %name, error = %transport_error, "{error_message}");
-                    ToolError::ToolCallError(Box::new(io::Error::other(error_message)))
-                })?;
-
-            if matches!(result.is_error, Some(true)) {
-                let error_message = format_github_mcp_tool_error(name.as_ref(), &result);
-                error!(
-                    tool_name = %name,
-                    error_message = %error_message,
-                    structured_content = ?result.structured_content,
-                    content = ?result.content,
-                    "GitHub MCP tool returned an error"
-                );
-                return Err(ToolError::ToolCallError(Box::new(io::Error::other(
-                    error_message,
-                ))));
-            }
+            let result = call_github_mcp_tool(&client, name.as_ref(), arguments).await?;
 
             Ok(format_github_mcp_tool_success(&result))
         })
     }
 }
 
-fn validate_scope(
+fn parse_tool_arguments(args: &str) -> Result<Map<String, Value>, ToolError> {
+    serde_json::from_str::<Value>(args)?
+        .as_object()
+        .cloned()
+        .ok_or_else(|| {
+            ToolError::ToolCallError(Box::new(io::Error::other(
+                "GitHub MCP tool arguments must be a JSON object",
+            )))
+        })
+}
+
+pub(super) async fn call_github_mcp_tool(
+    client: &GitHubMcpHttpClient,
+    name: &str,
+    arguments: Map<String, Value>,
+) -> Result<CallToolResult, ToolError> {
+    let result = client
+        .call_tool(name.to_string(), Some(arguments))
+        .await
+        .map_err(|transport_error| {
+            let error_message = format!(
+                "GitHub MCP tool {name} failed before returning a result: {transport_error}"
+            );
+            error!(tool_name = %name, error = %transport_error, "{error_message}");
+            ToolError::ToolCallError(Box::new(io::Error::other(error_message)))
+        })?;
+
+    if matches!(result.is_error, Some(true)) {
+        let error_message = format_github_mcp_tool_error(name, &result);
+        error!(
+            tool_name = %name,
+            error_message = %error_message,
+            structured_content = ?result.structured_content,
+            content = ?result.content,
+            "GitHub MCP tool returned an error"
+        );
+        return Err(ToolError::ToolCallError(Box::new(io::Error::other(
+            error_message,
+        ))));
+    }
+
+    Ok(result)
+}
+
+pub(super) fn validate_scope(
     tool_name: &str,
     arguments: &Map<String, Value>,
     scope_policy: &GithubScopePolicy,
@@ -250,20 +278,19 @@ fn validate_scope(
 // About ~5 000 tokens at 4 chars/token; covers file content and large directory listings.
 const FILE_CONTENT_CHAR_LIMIT: usize = 20_000;
 
-fn format_github_mcp_tool_success(result: &CallToolResult) -> String {
+pub(super) fn format_github_mcp_tool_success(result: &CallToolResult) -> String {
     let content = render_contents(&result.content);
-    let raw = if !content.is_empty() {
-        content
-    } else {
-        result
-            .structured_content
-            .as_ref()
-            .map_or_else(String::new, serde_json::Value::to_string)
-    };
-    truncate_if_oversized(raw)
+    if !content.is_empty() {
+        return content;
+    }
+
+    result
+        .structured_content
+        .as_ref()
+        .map_or_else(String::new, serde_json::Value::to_string)
 }
 
-fn truncate_if_oversized(content: String) -> String {
+pub(super) fn truncate_if_oversized(content: String) -> String {
     if content.len() <= FILE_CONTENT_CHAR_LIMIT {
         return content;
     }
@@ -330,12 +357,13 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        FILE_CONTENT_CHAR_LIMIT, OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS,
-        REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS, filter_tools, format_github_mcp_tool_error,
-        format_github_mcp_tool_success, truncate_if_oversized, validate_required_tools,
-        validate_scope,
+        FILE_CONTENT_CHAR_LIMIT, GITHUB_SPECIALIST_AGENT_TOOLS,
+        OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS, REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS,
+        filter_tools, format_github_mcp_tool_error, format_github_mcp_tool_success,
+        truncate_if_oversized, validate_required_tools, validate_scope,
     };
     use reili_core::source_code::github::GithubScopePolicy;
+    use rmcp::model::{CallToolResult, Content};
 
     fn tool(name: &str) -> Tool {
         Tool::new(name.to_string(), "test tool", serde_json::Map::new())
@@ -441,11 +469,24 @@ mod tests {
     }
 
     #[test]
+    fn get_file_contents_is_not_exposed_to_agent() {
+        assert!(!GITHUB_SPECIALIST_AGENT_TOOLS.contains(&"get_file_contents"));
+    }
+
+    #[test]
     fn formats_success_from_structured_content_when_text_content_is_empty() {
         let mut result = rmcp::model::CallToolResult::success(vec![]);
         result.structured_content = Some(json!({ "items": [] }));
 
         assert_eq!(format_github_mcp_tool_success(&result), "{\"items\":[]}");
+    }
+
+    #[test]
+    fn formats_success_does_not_truncate_oversized_passthrough_content() {
+        let oversized = "x".repeat(FILE_CONTENT_CHAR_LIMIT + 1);
+        let result = CallToolResult::success(vec![Content::text(oversized.clone())]);
+
+        assert_eq!(format_github_mcp_tool_success(&result), oversized);
     }
 
     #[test]

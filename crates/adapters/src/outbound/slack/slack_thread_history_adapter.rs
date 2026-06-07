@@ -329,7 +329,7 @@ mod tests {
             vec![SlackThreadMessage {
                 ts: "1710000000.000001".to_string(),
                 user: Some("U1".to_string()),
-                text: "<None|Alert|> Disk usage above threshold".to_string(),
+                text: "<|Alert|> Disk usage above threshold".to_string(),
                 legacy_attachments: vec![SlackLegacyAttachment {
                     title: Some("Alert".to_string()),
                     text: Some("Disk usage above threshold".to_string()),
