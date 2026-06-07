@@ -104,8 +104,10 @@ Required secrets depend on your selected Slack mode and backend:
 - `LLM_ANTHROPIC_API_KEY` when the selected backend uses `provider = "anthropic"`
 
 The GitHub integration talks to a streamable HTTP MCP server and exposes a small allowlisted set
-of raw GitHub MCP read tools to the GitHub specialist agent. Reili mints short-lived GitHub App
-installation tokens at runtime and uses them as the MCP bearer token. 
+of raw GitHub MCP read tools to the GitHub agent. File reads are exposed through a
+`read_file` wrapper that returns a bounded, line-numbered window (`offset`/`limit`) over the
+server-side `get_file_contents` tool, so large files are read incrementally instead of loading the
+whole file into context.
 GitHub App ID, installation ID, scope org, and MCP URL are configured in `reili.toml`.
 
 The Datadog integration talks to the Datadog-hosted MCP server and internally requests the

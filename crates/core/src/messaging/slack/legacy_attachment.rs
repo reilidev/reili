@@ -55,8 +55,10 @@ impl SlackLegacyAttachment {
             return None;
         }
 
+        let title_link = self.title_link.as_deref().unwrap_or_default();
+
         Some(
-            format!("<{:?}|{}|{}> {}", self.title_link, title, author_name, body)
+            format!("<{}|{}|{}> {}", title_link, title, author_name, body)
                 .trim()
                 .to_string(),
         )
@@ -98,7 +100,7 @@ mod tests {
 
         assert_eq!(
             attachment.rendered_text(),
-            Some(r#"<Some("https://example.com")|pretext|author> body"#.to_string())
+            Some("<https://example.com|pretext|author> body".to_string())
         );
     }
 
@@ -112,7 +114,7 @@ mod tests {
 
         assert_eq!(
             attachment.rendered_text(),
-            Some("<None|Alert|> fallback".to_string())
+            Some("<|Alert|> fallback".to_string())
         );
     }
 
@@ -131,7 +133,7 @@ mod tests {
 
         assert_eq!(
             render_slack_legacy_attachments_text(&attachments),
-            Some("<None||> first\n\n<None||> second".to_string())
+            Some("<||> first\n\n<||> second".to_string())
         );
     }
 

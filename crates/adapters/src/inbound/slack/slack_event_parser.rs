@@ -364,7 +364,7 @@ mod tests {
                 channel: "C001".to_string(),
                 user: "U004".to_string(),
                 actor_is_bot: false,
-                text: "<None|Alert|> CPU usage is high".to_string(),
+                text: "<|Alert|> CPU usage is high".to_string(),
                 legacy_attachments: vec![SlackLegacyAttachment {
                     pretext: Some("Alert".to_string()),
                     text: Some("CPU usage is high".to_string()),

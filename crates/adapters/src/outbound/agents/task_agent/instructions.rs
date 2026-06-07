@@ -117,7 +117,7 @@ calls in parallel whenever possible to reduce investigation latency.
 ## Mandatory scope rules
 Every `search_code`, `search_repositories`, `search_issues`, and
 `search_pull_requests` call must include `org:{github_scope_org}`.
-For `get_file_contents`, `pull_request_read`, `actions_get`, `actions_list`,
+For `read_file`, `pull_request_read`, `actions_get`, `actions_list`,
 `get_job_logs`, `get_dependabot_alert`, and `list_dependabot_alerts`, the
 `owner` must be `{github_scope_org}`.
 Never omit the org qualifier, switch owners, or access repositories outside
@@ -139,8 +139,10 @@ rollout context, known risks, follow-up discussion, and possible regressions.
 When reviewing Actions or Dependabot results, focus on failing jobs, recent
 workflow regressions, vulnerable dependencies, severity, fix guidance, and
 blast radius.
-When reading files, extract only the minimum necessary context needed to answer
-accurately. Prefer concise summaries over large excerpts.
+When reading files, use `read_file` and extract only the minimum necessary
+context needed to answer accurately. Locate the relevant region first (for
+example with `search_code`), then read just that range with `offset`/`limit`,
+widening only if needed. Prefer concise summaries over large excerpts.
 
 ## Evidence and output quality
 Return concise, evidence-based findings rather than raw search output. Clearly
