@@ -12,10 +12,10 @@ use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::slack_tool_soft_error::{
+use super::support::json::to_json_string;
+use super::support::slack_soft_error::{
     build_capability_unavailable_soft_error, to_slack_tool_soft_error,
 };
-use super::tool_json::to_json_string;
 
 #[derive(Clone)]
 pub struct SearchSlackMessagesTool {

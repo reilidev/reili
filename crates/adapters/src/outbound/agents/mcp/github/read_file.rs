@@ -8,7 +8,7 @@ use rmcp::model::CallToolResult;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use super::github_mcp_tools::{
+use super::tools::{
     GET_FILE_CONTENTS_TOOL_NAME, READ_FILE_TOOL_NAME, call_github_mcp_tool,
     format_github_mcp_tool_success, truncate_if_oversized, validate_scope,
 };
@@ -254,7 +254,7 @@ mod tests {
         DEFAULT_READ_FILE_LINE_LIMIT, LineWindow, READ_FILE_TOOL_NAME, ReadFileArguments,
         extract_file_text, read_file_tool_definition,
     };
-    use crate::outbound::agents::github_mcp_tools::validate_scope;
+    use crate::outbound::agents::mcp::github::tools::validate_scope;
     use reili_core::source_code::github::GithubScopePolicy;
 
     fn scope_policy() -> GithubScopePolicy {

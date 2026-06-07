@@ -4,12 +4,12 @@ use reili_core::error::AgentRunFailedError;
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig_bedrock::client::Client;
 
-use super::datadog_mcp_tools::DatadogMcpToolConfig;
-use super::llm_provider_settings::{
+use super::super::provider_settings::{
     CreateBedrockProviderSettingsInput, LlmProviderSettings, create_bedrock_provider_settings,
 };
-use super::llm_task_runner::{RunLlmTaskRunnerInput, run_task};
-use super::task_agent::TaskAgentConnectors;
+use super::super::task_runner::{RunLlmTaskRunnerInput, run_task};
+use crate::outbound::agents::task_agent::TaskAgentConnectors;
+use crate::outbound::datadog::DatadogMcpToolConfig;
 use crate::outbound::github::GitHubMcpConfig;
 
 pub struct BedrockTaskRunnerInput {

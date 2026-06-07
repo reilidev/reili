@@ -9,7 +9,7 @@ use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
 use rig::completion::CompletionModel;
 use rig::message::Message;
 
-use super::llm_usage_collector::LlmUsageCollector;
+use super::usage_collector::LlmUsageCollector;
 
 const REPORT_PROGRESS_TOOL_NAME: &str = "report_progress";
 const TOOL_RESULT_ERROR_PREFIXES: [&str; 2] = ["ToolCallError:", "JsonError:"];
@@ -300,7 +300,7 @@ mod tests {
     use rig::providers::openai;
 
     use super::AgentExecutionHook;
-    use crate::outbound::agents::llm_usage_collector::LlmUsageCollector;
+    use crate::outbound::agents::runner::usage_collector::LlmUsageCollector;
 
     struct LoggerHarness {
         inner: MockLogger,

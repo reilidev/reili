@@ -7,7 +7,7 @@ use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::tool_json::to_json_string;
+use super::support::json::to_json_string;
 
 pub struct ReportProgressToolInput {
     pub on_progress_event: Arc<dyn TaskProgressEventPort>,

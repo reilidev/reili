@@ -8,7 +8,7 @@ use rig::tool::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::tool_json::to_json_string;
+use super::support::json::to_json_string;
 
 #[derive(Clone)]
 pub struct SearchWebTool {
@@ -116,7 +116,7 @@ mod tests {
     use rig::tool::Tool;
 
     use super::*;
-    use crate::outbound::agents::tools::search_web_tool::SearchWebArgs;
+    use crate::outbound::agents::tools::search_web::SearchWebArgs;
 
     struct MockWebSearchPort {
         calls: Arc<Mutex<Vec<WebSearchInput>>>,

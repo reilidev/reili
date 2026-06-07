@@ -10,7 +10,7 @@ use rmcp::model::{CallToolResult, Content, Tool};
 use serde_json::{Map, Value};
 use tracing::error;
 
-use super::github_read_file_tool::GitHubReadFileToolAdapter;
+use super::read_file::GitHubReadFileToolAdapter;
 use crate::outbound::github::github_mcp_client::{GitHubMcpConfig, GitHubMcpHttpClient};
 
 const REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[

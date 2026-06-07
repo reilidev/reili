@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::io;
 
-use super::datadog_mcp_client::DatadogMcpHttpClient;
-pub use super::datadog_mcp_client::DatadogMcpToolConfig;
+pub use crate::outbound::datadog::DatadogMcpToolConfig;
+use crate::outbound::datadog::mcp_client::DatadogMcpHttpClient;
 use reili_core::error::PortError;
 use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};

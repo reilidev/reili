@@ -4,12 +4,12 @@ use reili_core::secret::SecretString;
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig::{client::ProviderClient, providers::openai};
 
-use super::datadog_mcp_tools::DatadogMcpToolConfig;
-use super::llm_provider_settings::{
+use super::super::provider_settings::{
     CreateOpenAiProviderSettingsInput, LlmProviderSettings, create_openai_provider_settings,
 };
-use super::llm_task_runner::{RunLlmTaskRunnerInput, run_task};
-use super::task_agent::TaskAgentConnectors;
+use super::super::task_runner::{RunLlmTaskRunnerInput, run_task};
+use crate::outbound::agents::task_agent::TaskAgentConnectors;
+use crate::outbound::datadog::DatadogMcpToolConfig;
 use crate::outbound::github::GitHubMcpConfig;
 
 pub struct OpenAiTaskRunnerInput {

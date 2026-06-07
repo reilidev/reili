@@ -11,12 +11,14 @@ use reili_core::task::{
 use rig::completion::{Prompt, PromptError};
 use rig::prelude::CompletionClient;
 
-use super::agent_execution_hook::AgentExecutionHook;
-use super::datadog_mcp_tools::{DatadogMcpToolConfig, connect_datadog_mcp_toolset};
-use super::github_mcp_tools::connect_github_mcp_toolset;
-use super::llm_provider_settings::LlmProviderSettings;
-use super::llm_usage_collector::LlmUsageCollector;
-use super::task_agent::{
+use super::execution_hook::AgentExecutionHook;
+use super::provider_settings::LlmProviderSettings;
+use super::usage_collector::LlmUsageCollector;
+use crate::outbound::agents::mcp::datadog::tools::{
+    DatadogMcpToolConfig, connect_datadog_mcp_toolset,
+};
+use crate::outbound::agents::mcp::github::tools::connect_github_mcp_toolset;
+use crate::outbound::agents::task_agent::{
     AgentInstructionsConfig, BuildTaskAgentInput, BuildTaskPromptInput,
     CreateTaskAgentFactoryInput, TaskAgentConfig, TaskAgentConnectors, TaskAgentExecutionContext,
     TaskAgentFactory, TaskAgentRunContext, TaskAgentToolsets, build_task_prompt,
@@ -237,7 +239,7 @@ mod tests {
     use rig::providers::openai;
 
     use super::{CreateTaskRunnerPromptHookInput, create_task_runner_prompt_hook};
-    use crate::outbound::agents::llm_usage_collector::LlmUsageCollector;
+    use crate::outbound::agents::runner::usage_collector::LlmUsageCollector;
 
     struct LoggerHarness {
         inner: MockLogger,
