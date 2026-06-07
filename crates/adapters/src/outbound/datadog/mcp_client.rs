@@ -31,7 +31,7 @@ pub struct DatadogMcpToolConfig {
 }
 
 #[derive(Clone)]
-pub(super) struct DatadogMcpHttpClient {
+pub(crate) struct DatadogMcpHttpClient {
     http_client: reqwest::Client,
     uri: Arc<str>,
     client_info: ClientInfo,
@@ -39,7 +39,7 @@ pub(super) struct DatadogMcpHttpClient {
 }
 
 impl DatadogMcpHttpClient {
-    pub(super) async fn connect(
+    pub(crate) async fn connect(
         config: &DatadogMcpToolConfig,
     ) -> Result<(Self, Vec<Tool>), PortError> {
         let client = Self {
@@ -59,7 +59,7 @@ impl DatadogMcpHttpClient {
         Ok((client, tools))
     }
 
-    pub(super) async fn call_tool(
+    pub(crate) async fn call_tool(
         &self,
         name: String,
         arguments: Option<serde_json::Map<String, serde_json::Value>>,

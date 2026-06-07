@@ -1,20 +1,19 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
-use reili_core::secret::SecretString;
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
-use rig::{client::ProviderClient, providers::anthropic};
+use rig_vertexai::Client;
 
-use super::datadog_mcp_tools::DatadogMcpToolConfig;
-use super::llm_provider_settings::{
-    CreateAnthropicProviderSettingsInput, LlmProviderSettings, create_anthropic_provider_settings,
+use super::super::provider_settings::{
+    CreateVertexAiProviderSettingsInput, LlmProviderSettings, create_vertex_ai_provider_settings,
 };
-use super::llm_task_runner::{RunLlmTaskRunnerInput, run_task};
-use super::task_agent::TaskAgentConnectors;
+use super::super::task_runner::{RunLlmTaskRunnerInput, run_task};
+use crate::outbound::agents::task_agent::TaskAgentConnectors;
+use crate::outbound::datadog::DatadogMcpToolConfig;
 use crate::outbound::github::GitHubMcpConfig;
 
-pub struct AnthropicTaskRunnerInput {
-    pub api_key: SecretString,
-    pub model: String,
+pub struct VertexAiTaskRunnerInput {
+    pub client: Client,
+    pub model_id: String,
     pub datadog_mcp: DatadogMcpToolConfig,
     pub github_mcp: GitHubMcpConfig,
     pub github_scope_org: String,
@@ -23,8 +22,8 @@ pub struct AnthropicTaskRunnerInput {
     pub additional_system_prompt: Option<String>,
 }
 
-pub struct AnthropicTaskRunner {
-    api_key: SecretString,
+pub struct VertexAiTaskRunner {
+    client: Client,
     provider_settings: LlmProviderSettings,
     datadog_mcp: DatadogMcpToolConfig,
     github_mcp: GitHubMcpConfig,
@@ -34,12 +33,14 @@ pub struct AnthropicTaskRunner {
     additional_system_prompt: Option<String>,
 }
 
-impl AnthropicTaskRunner {
-    pub fn new(input: AnthropicTaskRunnerInput) -> Self {
+impl VertexAiTaskRunner {
+    pub fn new(input: VertexAiTaskRunnerInput) -> Self {
         Self {
-            api_key: input.api_key,
-            provider_settings: create_anthropic_provider_settings(
-                CreateAnthropicProviderSettingsInput { model: input.model },
+            client: input.client,
+            provider_settings: create_vertex_ai_provider_settings(
+                CreateVertexAiProviderSettingsInput {
+                    model_id: input.model_id,
+                },
             ),
             datadog_mcp: input.datadog_mcp,
             github_mcp: input.github_mcp,
@@ -52,10 +53,10 @@ impl AnthropicTaskRunner {
 }
 
 #[async_trait]
-impl TaskRunnerPort for AnthropicTaskRunner {
+impl TaskRunnerPort for VertexAiTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
         run_task(RunLlmTaskRunnerInput {
-            client: anthropic::Client::from_val(self.api_key.expose().to_string()),
+            client: self.client.clone(),
             settings: self.provider_settings.clone(),
             datadog_mcp: self.datadog_mcp.clone(),
             github_mcp: self.github_mcp.clone(),

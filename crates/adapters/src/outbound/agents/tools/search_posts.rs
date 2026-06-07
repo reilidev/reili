@@ -10,7 +10,7 @@ use crate::outbound::esa::{
     EsaPostSearchInput, EsaPostSearchOrder, EsaPostSearchPort, EsaPostSearchSort,
 };
 
-use super::tool_json::to_json_string;
+use super::support::json::to_json_string;
 
 #[derive(Clone)]
 pub struct SearchPostsTool {

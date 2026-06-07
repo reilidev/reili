@@ -9,10 +9,10 @@ use super::instructions::{
     build_datadog_instructions, build_esa_instructions, build_github_instructions,
 };
 use super::{TaskAgentExecutionContext, TaskAgentRunContext, with_max_tokens};
-use crate::outbound::agents::agent_execution_hook::AgentExecutionHook;
-use crate::outbound::agents::datadog_mcp_tools::DatadogMcpToolset;
-use crate::outbound::agents::github_mcp_tools::GitHubMcpToolset;
-use crate::outbound::agents::llm_provider_settings::LlmProviderSettings;
+use crate::outbound::agents::mcp::datadog::tools::DatadogMcpToolset;
+use crate::outbound::agents::mcp::github::tools::GitHubMcpToolset;
+use crate::outbound::agents::runner::execution_hook::AgentExecutionHook;
+use crate::outbound::agents::runner::provider_settings::LlmProviderSettings;
 use crate::outbound::agents::tools::{
     ReportProgressTool, ReportProgressToolInput, SearchPostsTool, SearchWebTool,
 };
