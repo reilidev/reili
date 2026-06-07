@@ -60,7 +60,6 @@ const SEARCH_QUERY_TOOL_NAMES: &[&str] = &[
     "search_pull_requests",
 ];
 const OWNER_SCOPED_TOOL_NAMES: &[&str] = &[
-    "get_file_contents",
     READ_FILE_TOOL_NAME,
     "pull_request_read",
     "actions_get",
@@ -425,7 +424,7 @@ mod tests {
     #[test]
     fn validates_owner_scope_for_owner_tools() {
         let error = validate_scope(
-            "get_file_contents",
+            "pull_request_read",
             json!({ "owner": "other", "repo": "svc" })
                 .as_object()
                 .expect("object"),
