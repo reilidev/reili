@@ -1,26 +1,21 @@
 use chrono::{DateTime, Utc};
 use reili_core::task::{TaskRequest, TaskRuntime};
 
+use crate::outbound::agents::connector::ConnectorPromptFact;
+
 pub struct BuildTaskPromptInput {
     pub request: TaskRequest,
     pub now: DateTime<Utc>,
     pub runtime: TaskRuntime,
     pub language: String,
-    pub datadog_site: String,
-    pub github_scope_org: String,
-    pub esa_team_name: Option<String>,
+    pub prompt_facts: Vec<ConnectorPromptFact>,
 }
 
 pub fn build_task_prompt(input: BuildTaskPromptInput) -> String {
     let trigger_message_text = input.request.trigger_message.rendered_text();
     let thread_transcript = build_thread_transcript(&input.request.thread_messages);
     let memory_context = build_memory_context(&input.request.memory_items);
-    let datadog_site = if input.datadog_site.is_empty() {
-        "datadoghq.com"
-    } else {
-        input.datadog_site.as_str()
-    };
-    let esa_team_line = format_esa_team_context_line(input.esa_team_name.as_deref());
+    let current_context = build_current_context(&input);
 
     format!(
         "# Task Context
@@ -28,12 +23,7 @@ Output language: {language}
 - Use {language} for all responses and reasoning.
 
 Current context:
-- Now: {now}
-- Slack Channel: {channel}
-- Slack Thread: {thread_ts}
-- GitHub Organization Scope: {github_scope_org}
-- Datadog Site: {datadog_site}
-{esa_team_line}
+{current_context}
 
 # Thread Context
 {thread_transcript}
@@ -44,13 +34,24 @@ Current context:
 # User message
 {trigger_message_text}",
         language = input.language,
-        now = input.now.to_rfc3339(),
-        channel = input.runtime.channel,
-        thread_ts = input.runtime.thread_ts,
-        github_scope_org = input.github_scope_org,
-        datadog_site = datadog_site,
-        esa_team_line = esa_team_line,
+        current_context = current_context,
     )
+}
+
+fn build_current_context(input: &BuildTaskPromptInput) -> String {
+    let mut lines = vec![
+        format!("- Now: {}", input.now.to_rfc3339()),
+        format!("- Slack Channel: {}", input.runtime.channel),
+        format!("- Slack Thread: {}", input.runtime.thread_ts),
+    ];
+    lines.extend(
+        input
+            .prompt_facts
+            .iter()
+            .map(|fact| format!("- {}: {}", fact.label, fact.value)),
+    );
+
+    lines.join("\n")
 }
 
 fn build_thread_transcript(
@@ -97,14 +98,6 @@ pub(super) fn build_memory_context(memory_items: &[reili_core::task::TaskMemoryI
         .join("\n---\n")
 }
 
-fn format_esa_team_context_line(team_name: Option<&str>) -> String {
-    team_name
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| format!("- esa Team: {value}"))
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use chrono::{DateTime, Utc};
@@ -114,6 +107,7 @@ mod tests {
     use reili_core::task::{TaskMemoryItem, TaskMemorySource, TaskRequest, TaskRuntime};
 
     use super::{BuildTaskPromptInput, build_task_prompt};
+    use crate::outbound::agents::connector::ConnectorPromptFact;
 
     fn sample_trigger_message() -> SlackMessage {
         SlackMessage {
@@ -141,15 +135,26 @@ mod tests {
         }
     }
 
+    fn sample_prompt_facts() -> Vec<ConnectorPromptFact> {
+        vec![
+            ConnectorPromptFact {
+                label: "GitHub Organization Scope".to_string(),
+                value: "acme".to_string(),
+            },
+            ConnectorPromptFact {
+                label: "Datadog Site".to_string(),
+                value: "datadoghq.com".to_string(),
+            },
+        ]
+    }
+
     fn build_sample_task_prompt(request: &TaskRequest) -> String {
         build_task_prompt(BuildTaskPromptInput {
             request: request.clone(),
             now: fixed_now(),
             runtime: sample_runtime(),
             language: "Japanese".to_string(),
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            esa_team_name: None,
+            prompt_facts: sample_prompt_facts(),
         })
     }
 
@@ -275,9 +280,20 @@ mod tests {
             now: fixed_now(),
             runtime: sample_runtime(),
             language: "Japanese".to_string(),
-            datadog_site: "datadoghq.com".to_string(),
-            github_scope_org: "acme".to_string(),
-            esa_team_name: Some("docs".to_string()),
+            prompt_facts: vec![
+                ConnectorPromptFact {
+                    label: "GitHub Organization Scope".to_string(),
+                    value: "acme".to_string(),
+                },
+                ConnectorPromptFact {
+                    label: "Datadog Site".to_string(),
+                    value: "datadoghq.com".to_string(),
+                },
+                ConnectorPromptFact {
+                    label: "esa Team".to_string(),
+                    value: "docs".to_string(),
+                },
+            ],
         });
 
         assert!(prompt.contains("Output language: Japanese"));

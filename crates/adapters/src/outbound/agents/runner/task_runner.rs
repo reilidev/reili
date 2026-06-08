@@ -14,16 +14,14 @@ use rig::prelude::CompletionClient;
 use super::execution_hook::AgentExecutionHook;
 use super::provider_settings::LlmProviderSettings;
 use super::usage_collector::LlmUsageCollector;
-use crate::outbound::agents::mcp::datadog::tools::{
-    DatadogMcpToolConfig, connect_datadog_mcp_toolset,
+use crate::outbound::agents::connector::{
+    ConnectorPrepareError, ConnectorPromptFact, ConnectorSet,
 };
-use crate::outbound::agents::mcp::github::tools::connect_github_mcp_toolset;
 use crate::outbound::agents::task_agent::{
     AgentInstructionsConfig, BuildTaskAgentInput, BuildTaskPromptInput,
-    CreateTaskAgentFactoryInput, TaskAgentConfig, TaskAgentConnectors, TaskAgentExecutionContext,
-    TaskAgentFactory, TaskAgentRunContext, TaskAgentToolsets, build_task_prompt,
+    CreateTaskAgentFactoryInput, TaskAgentConfig, TaskAgentExecutionContext, TaskAgentFactory,
+    TaskAgentRunContext, build_task_prompt,
 };
-use crate::outbound::github::GitHubMcpConfig;
 
 pub struct RunLlmTaskRunnerInput<C>
 where
@@ -31,10 +29,7 @@ where
 {
     pub client: C,
     pub settings: LlmProviderSettings,
-    pub datadog_mcp: DatadogMcpToolConfig,
-    pub github_mcp: GitHubMcpConfig,
-    pub github_scope_org: String,
-    pub connectors: TaskAgentConnectors,
+    pub connectors: ConnectorSet,
     pub language: String,
     pub additional_system_prompt: Option<String>,
     pub run: RunTaskInput,
@@ -60,38 +55,24 @@ where
         runtime: runtime.clone(),
         usage_collector: usage_collector.clone(),
     });
-    let datadog_mcp_toolset = connect_datadog_mcp_toolset(&input.datadog_mcp)
-        .await
-        .map_err(|error| {
-            let usage = usage_collector.snapshot();
-            if error.is_connection_failed() {
-                return AgentRunFailedError::new_permanent(usage, error.message);
+    let prepared_connectors = input.connectors.prepare_all().await.map_err(|error| {
+        let usage = usage_collector.snapshot();
+        match error {
+            ConnectorPrepareError::ConnectionFailed { message } => {
+                AgentRunFailedError::new_permanent(usage, message)
             }
-
-            create_failed_error(CreateTaskRunnerFailedErrorInput {
-                usage,
-                cause_message: error.message,
-            })
-        })?;
-    let github_mcp_toolset =
-        connect_github_mcp_toolset(&input.github_mcp, input.github_scope_org.clone())
-            .await
-            .map_err(|error| {
-                let usage = usage_collector.snapshot();
-                if error.is_connection_failed() {
-                    return AgentRunFailedError::new_permanent(usage, error.message);
-                }
-
+            ConnectorPrepareError::Other(port_error) => {
                 create_failed_error(CreateTaskRunnerFailedErrorInput {
                     usage,
-                    cause_message: error.message,
+                    cause_message: port_error.message,
                 })
-            })?;
-    let esa_team_name = input
-        .connectors
-        .esa
-        .as_ref()
-        .map(|connector| connector.team_name.clone());
+            }
+        }
+    })?;
+    let prompt_facts: Vec<ConnectorPromptFact> = prepared_connectors
+        .iter()
+        .flat_map(|connector| connector.prompt_facts())
+        .collect();
     let memory_items = input.run.request.memory_items.clone();
     let slack_action_token = input.run.request.trigger_message.action_token.clone();
     let task_prompt = build_task_prompt(BuildTaskPromptInput {
@@ -99,16 +80,13 @@ where
         now: Utc::now(),
         runtime: runtime.clone(),
         language: input.language.clone(),
-        datadog_site: input.datadog_mcp.site.clone(),
-        github_scope_org: input.github_scope_org.clone(),
-        esa_team_name,
+        prompt_facts,
     });
     let task_agent_factory = TaskAgentFactory::new(CreateTaskAgentFactoryInput {
         client: input.client,
         config: TaskAgentConfig {
             settings: input.settings.clone(),
             instructions: AgentInstructionsConfig {
-                github_scope_org: input.github_scope_org,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
             },
@@ -127,11 +105,7 @@ where
             slack_action_token,
             memory_items,
         },
-        toolsets: TaskAgentToolsets {
-            datadog: datadog_mcp_toolset,
-            github: github_mcp_toolset,
-        },
-        connectors: input.connectors,
+        prepared_connectors,
     });
 
     let prompt_response_result = task_agent
