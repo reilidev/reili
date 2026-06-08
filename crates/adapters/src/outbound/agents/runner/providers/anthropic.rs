@@ -8,17 +8,12 @@ use super::super::provider_settings::{
     CreateAnthropicProviderSettingsInput, LlmProviderSettings, create_anthropic_provider_settings,
 };
 use super::super::task_runner::{RunLlmTaskRunnerInput, run_task};
-use crate::outbound::agents::task_agent::TaskAgentConnectors;
-use crate::outbound::datadog::DatadogMcpToolConfig;
-use crate::outbound::github::GitHubMcpConfig;
+use crate::outbound::agents::connector::ConnectorSet;
 
 pub struct AnthropicTaskRunnerInput {
     pub api_key: SecretString,
     pub model: String,
-    pub datadog_mcp: DatadogMcpToolConfig,
-    pub github_mcp: GitHubMcpConfig,
-    pub github_scope_org: String,
-    pub connectors: TaskAgentConnectors,
+    pub connectors: ConnectorSet,
     pub language: String,
     pub additional_system_prompt: Option<String>,
 }
@@ -26,10 +21,7 @@ pub struct AnthropicTaskRunnerInput {
 pub struct AnthropicTaskRunner {
     api_key: SecretString,
     provider_settings: LlmProviderSettings,
-    datadog_mcp: DatadogMcpToolConfig,
-    github_mcp: GitHubMcpConfig,
-    github_scope_org: String,
-    connectors: TaskAgentConnectors,
+    connectors: ConnectorSet,
     language: String,
     additional_system_prompt: Option<String>,
 }
@@ -41,9 +33,6 @@ impl AnthropicTaskRunner {
             provider_settings: create_anthropic_provider_settings(
                 CreateAnthropicProviderSettingsInput { model: input.model },
             ),
-            datadog_mcp: input.datadog_mcp,
-            github_mcp: input.github_mcp,
-            github_scope_org: input.github_scope_org,
             connectors: input.connectors,
             language: input.language,
             additional_system_prompt: input.additional_system_prompt,
@@ -57,9 +46,6 @@ impl TaskRunnerPort for AnthropicTaskRunner {
         run_task(RunLlmTaskRunnerInput {
             client: anthropic::Client::from_val(self.api_key.expose().to_string()),
             settings: self.provider_settings.clone(),
-            datadog_mcp: self.datadog_mcp.clone(),
-            github_mcp: self.github_mcp.clone(),
-            github_scope_org: self.github_scope_org.clone(),
             connectors: self.connectors.clone(),
             language: self.language.clone(),
             additional_system_prompt: self.additional_system_prompt.clone(),

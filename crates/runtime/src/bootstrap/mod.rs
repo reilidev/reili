@@ -4,8 +4,9 @@ use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::logger::TracingLogger;
 use reili_adapters::outbound::agents::{
     AnthropicTaskRunner, AnthropicTaskRunnerInput, BedrockTaskRunner, BedrockTaskRunnerInput,
-    DatadogMcpToolConfig, OpenAiTaskRunner, OpenAiTaskRunnerInput, TaskAgentConnectors,
-    TaskAgentEsaConnector, VertexAiGeminiClient, VertexAiTaskRunner, VertexAiTaskRunnerInput,
+    ConnectorSet, DatadogConnector, DatadogMcpToolConfig, EsaConnector, GitHubConnector,
+    OpenAiTaskRunner, OpenAiTaskRunnerInput, VertexAiGeminiClient, VertexAiTaskRunner,
+    VertexAiTaskRunnerInput,
 };
 use reili_adapters::outbound::anthropic::{
     AnthropicWebSearchAdapter, AnthropicWebSearchAdapterConfig,
@@ -77,14 +78,16 @@ struct ProviderPorts {
 
 struct CreateProviderPortsInput<'a> {
     llm_provider: &'a LlmProviderConfig,
-    datadog_api_key: SecretString,
-    datadog_app_key: SecretString,
-    datadog_site: String,
-    github_mcp: GitHubMcpConfig,
-    github_scope_org: String,
-    connectors: TaskAgentConnectors,
+    connectors: ConnectorSet,
     language: String,
     additional_system_prompt: Option<String>,
+}
+
+struct BuildConnectorSetInput {
+    datadog: DatadogMcpToolConfig,
+    github_mcp: GitHubMcpConfig,
+    github_scope_org: String,
+    esa: Option<EsaConfig>,
 }
 
 pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, RuntimeBootstrapError> {
@@ -113,14 +116,12 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let slack_message_search_port: Arc<dyn SlackMessageSearchPort> = Arc::new(
         SlackMessageSearchAdapter::new(Arc::clone(&slack_web_api_client)),
     );
-    let connectors = build_task_agent_connectors(config.esa.as_ref())?;
-    let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
-    let in_flight_job_registry = InFlightJobRegistry::new();
-    let provider_ports = create_provider_ports(CreateProviderPortsInput {
-        llm_provider: &config.llm.provider,
-        datadog_api_key: config.datadog_api_key.clone(),
-        datadog_app_key: config.datadog_app_key.clone(),
-        datadog_site: config.datadog_site.clone(),
+    let connectors = build_connector_set(BuildConnectorSetInput {
+        datadog: DatadogMcpToolConfig {
+            api_key: config.datadog_api_key.clone(),
+            app_key: config.datadog_app_key.clone(),
+            site: config.datadog_site.clone(),
+        },
         github_mcp: GitHubMcpConfig {
             url: config.github.url.clone(),
             app_id: config.github.app_id.clone(),
@@ -128,6 +129,12 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
             installation_id: config.github.installation_id,
         },
         github_scope_org: config.github.scope_org.clone(),
+        esa: config.esa.clone(),
+    })?;
+    let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
+    let in_flight_job_registry = InFlightJobRegistry::new();
+    let provider_ports = create_provider_ports(CreateProviderPortsInput {
+        llm_provider: &config.llm.provider,
         connectors,
         language: config.language.clone(),
         additional_system_prompt: config.additional_system_prompt.clone(),
@@ -271,21 +278,24 @@ fn build_slack_signature_verifier(
     }
 }
 
-fn build_task_agent_connectors(
-    config: Option<&EsaConfig>,
-) -> Result<TaskAgentConnectors, PortError> {
-    let esa = config.map(build_esa_connector).transpose()?;
+fn build_connector_set(input: BuildConnectorSetInput) -> Result<ConnectorSet, PortError> {
+    let mut connectors = ConnectorSet::default();
+    connectors.push(Arc::new(DatadogConnector::new(input.datadog)));
+    connectors.push(Arc::new(GitHubConnector::new(
+        input.github_mcp,
+        input.github_scope_org,
+    )));
+    if let Some(esa_config) = input.esa {
+        connectors.push(Arc::new(build_esa_connector(esa_config)?));
+    }
 
-    Ok(TaskAgentConnectors { esa })
+    Ok(connectors)
 }
 
-fn build_esa_connector(config: &EsaConfig) -> Result<TaskAgentEsaConnector, PortError> {
-    let post_search_port = build_esa_post_search_port(config)?;
+fn build_esa_connector(config: EsaConfig) -> Result<EsaConnector, PortError> {
+    let post_search_port = build_esa_post_search_port(&config)?;
 
-    Ok(TaskAgentEsaConnector {
-        team_name: config.team_name.clone(),
-        post_search_port,
-    })
+    Ok(EsaConnector::new(config.team_name, post_search_port))
 }
 
 fn build_esa_post_search_port(config: &EsaConfig) -> Result<Arc<dyn EsaPostSearchPort>, PortError> {
@@ -309,13 +319,6 @@ async fn create_provider_ports(
                 api_key: config.api_key.clone(),
                 model: config.model.clone(),
                 reasoning_effort: config.reasoning_effort.clone(),
-                datadog_mcp: DatadogMcpToolConfig {
-                    api_key: input.datadog_api_key.clone(),
-                    app_key: input.datadog_app_key.clone(),
-                    site: input.datadog_site,
-                },
-                github_mcp: input.github_mcp,
-                github_scope_org: input.github_scope_org,
                 connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
@@ -331,13 +334,6 @@ async fn create_provider_ports(
             task_runner: Arc::new(AnthropicTaskRunner::new(AnthropicTaskRunnerInput {
                 api_key: config.api_key.clone(),
                 model: config.model.clone(),
-                datadog_mcp: DatadogMcpToolConfig {
-                    api_key: input.datadog_api_key.clone(),
-                    app_key: input.datadog_app_key.clone(),
-                    site: input.datadog_site,
-                },
-                github_mcp: input.github_mcp,
-                github_scope_org: input.github_scope_org,
                 connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
@@ -353,13 +349,6 @@ async fn create_provider_ports(
                 model_id: config.model_id.clone(),
                 aws_profile: config.aws_profile.clone(),
                 aws_region: config.aws_region.clone(),
-                datadog_mcp: DatadogMcpToolConfig {
-                    api_key: input.datadog_api_key.clone(),
-                    app_key: input.datadog_app_key.clone(),
-                    site: input.datadog_site,
-                },
-                github_mcp: input.github_mcp,
-                github_scope_org: input.github_scope_org,
                 connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
@@ -378,13 +367,6 @@ async fn create_provider_ports(
                 task_runner: Arc::new(VertexAiTaskRunner::new(VertexAiTaskRunnerInput {
                     client,
                     model_id: config.model_id.clone(),
-                    datadog_mcp: DatadogMcpToolConfig {
-                        api_key: input.datadog_api_key,
-                        app_key: input.datadog_app_key,
-                        site: input.datadog_site,
-                    },
-                    github_mcp: input.github_mcp,
-                    github_scope_org: input.github_scope_org,
                     connectors: input.connectors,
                     language: input.language,
                     additional_system_prompt: input.additional_system_prompt,
@@ -429,8 +411,29 @@ async fn resolve_slack_bot_user_id(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_slack_signature_verifier, build_task_agent_connectors};
+    use reili_adapters::outbound::agents::DatadogMcpToolConfig;
+    use reili_adapters::outbound::github::GitHubMcpConfig;
+
+    use super::{BuildConnectorSetInput, build_connector_set, build_slack_signature_verifier};
     use crate::config::{EsaConfig, SecretString, SlackConnectionMode};
+
+    fn sample_connector_set_input(esa: Option<EsaConfig>) -> BuildConnectorSetInput {
+        BuildConnectorSetInput {
+            datadog: DatadogMcpToolConfig {
+                api_key: SecretString::from("api"),
+                app_key: SecretString::from("app"),
+                site: "datadoghq.com".to_string(),
+            },
+            github_mcp: GitHubMcpConfig {
+                url: "https://api.githubcopilot.com/mcp/".to_string(),
+                app_id: "12345".to_string(),
+                private_key: SecretString::from("private-key"),
+                installation_id: 99,
+            },
+            github_scope_org: "example-org".to_string(),
+            esa,
+        }
+    }
 
     #[test]
     fn socket_mode_does_not_build_signature_verifier_even_with_secret() {
@@ -463,21 +466,22 @@ mod tests {
     }
 
     #[test]
-    fn task_agent_connectors_omit_esa_when_not_configured() {
-        let connectors = build_task_agent_connectors(None).expect("build optional connectors");
+    fn connector_set_omits_esa_when_not_configured() {
+        let connectors =
+            build_connector_set(sample_connector_set_input(None)).expect("build connector set");
 
-        assert!(connectors.esa.is_none());
+        assert_eq!(connectors.len(), 2);
     }
 
     #[test]
-    fn task_agent_connectors_include_esa_when_configured() {
-        let connectors = build_task_agent_connectors(Some(&EsaConfig {
+    fn connector_set_includes_esa_when_configured() {
+        let esa = EsaConfig {
             team_name: "docs".to_string(),
             access_token: SecretString::from("esa-token"),
-        }))
-        .expect("build connectors");
+        };
+        let connectors = build_connector_set(sample_connector_set_input(Some(esa)))
+            .expect("build connector set");
 
-        let esa = connectors.esa.expect("esa connector");
-        assert_eq!(esa.team_name, "docs");
+        assert_eq!(connectors.len(), 3);
     }
 }

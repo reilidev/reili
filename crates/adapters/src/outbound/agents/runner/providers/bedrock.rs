@@ -8,18 +8,13 @@ use super::super::provider_settings::{
     CreateBedrockProviderSettingsInput, LlmProviderSettings, create_bedrock_provider_settings,
 };
 use super::super::task_runner::{RunLlmTaskRunnerInput, run_task};
-use crate::outbound::agents::task_agent::TaskAgentConnectors;
-use crate::outbound::datadog::DatadogMcpToolConfig;
-use crate::outbound::github::GitHubMcpConfig;
+use crate::outbound::agents::connector::ConnectorSet;
 
 pub struct BedrockTaskRunnerInput {
     pub model_id: String,
     pub aws_profile: Option<String>,
     pub aws_region: Option<String>,
-    pub datadog_mcp: DatadogMcpToolConfig,
-    pub github_mcp: GitHubMcpConfig,
-    pub github_scope_org: String,
-    pub connectors: TaskAgentConnectors,
+    pub connectors: ConnectorSet,
     pub language: String,
     pub additional_system_prompt: Option<String>,
 }
@@ -28,10 +23,7 @@ pub struct BedrockTaskRunner {
     provider_settings: LlmProviderSettings,
     aws_profile: Option<String>,
     aws_region: Option<String>,
-    datadog_mcp: DatadogMcpToolConfig,
-    github_mcp: GitHubMcpConfig,
-    github_scope_org: String,
-    connectors: TaskAgentConnectors,
+    connectors: ConnectorSet,
     language: String,
     additional_system_prompt: Option<String>,
 }
@@ -46,9 +38,6 @@ impl BedrockTaskRunner {
             ),
             aws_profile: input.aws_profile,
             aws_region: input.aws_region,
-            datadog_mcp: input.datadog_mcp,
-            github_mcp: input.github_mcp,
-            github_scope_org: input.github_scope_org,
             connectors: input.connectors,
             language: input.language,
             additional_system_prompt: input.additional_system_prompt,
@@ -65,9 +54,6 @@ impl TaskRunnerPort for BedrockTaskRunner {
         run_task(RunLlmTaskRunnerInput {
             client,
             settings: self.provider_settings.clone(),
-            datadog_mcp: self.datadog_mcp.clone(),
-            github_mcp: self.github_mcp.clone(),
-            github_scope_org: self.github_scope_org.clone(),
             connectors: self.connectors.clone(),
             language: self.language.clone(),
             additional_system_prompt: self.additional_system_prompt.clone(),
@@ -92,38 +78,45 @@ async fn create_bedrock_client(aws_profile: Option<&str>, aws_region: Option<&st
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use reili_core::secret::SecretString;
 
     use super::BedrockTaskRunnerInput;
-    use crate::outbound::agents::DatadogMcpToolConfig;
-    use crate::outbound::agents::TaskAgentConnectors;
+    use crate::outbound::agents::connector::ConnectorSet;
+    use crate::outbound::agents::{DatadogConnector, DatadogMcpToolConfig, GitHubConnector};
     use crate::outbound::github::GitHubMcpConfig;
 
     #[test]
     fn input_supports_explicit_aws_profile_and_region() {
+        let connectors = ConnectorSet::new(vec![
+            Arc::new(DatadogConnector::new(DatadogMcpToolConfig {
+                api_key: SecretString::from("api"),
+                app_key: SecretString::from("app"),
+                site: "datadoghq.com".to_string(),
+            })),
+            Arc::new(GitHubConnector::new(
+                GitHubMcpConfig {
+                    url: "https://api.githubcopilot.com/mcp/".to_string(),
+                    app_id: "12345".to_string(),
+                    private_key: SecretString::from("private-key"),
+                    installation_id: 99,
+                },
+                "example-org".to_string(),
+            )),
+        ]);
         let input = BedrockTaskRunnerInput {
             model_id: "anthropic.claude".to_string(),
             aws_profile: Some("prod-sso".to_string()),
             aws_region: Some("ap-northeast-1".to_string()),
-            datadog_mcp: DatadogMcpToolConfig {
-                api_key: SecretString::from("api"),
-                app_key: SecretString::from("app"),
-                site: "datadoghq.com".to_string(),
-            },
-            github_mcp: GitHubMcpConfig {
-                url: "https://api.githubcopilot.com/mcp/".to_string(),
-                app_id: "12345".to_string(),
-                private_key: SecretString::from("private-key"),
-                installation_id: 99,
-            },
-            github_scope_org: "example-org".to_string(),
-            connectors: TaskAgentConnectors { esa: None },
+            connectors,
             language: "English".to_string(),
             additional_system_prompt: Some("Prefer runbook links.".to_string()),
         };
 
         assert_eq!(input.aws_profile.as_deref(), Some("prod-sso"));
         assert_eq!(input.aws_region.as_deref(), Some("ap-northeast-1"));
+        assert_eq!(input.connectors.len(), 2);
         assert_eq!(
             input.additional_system_prompt.as_deref(),
             Some("Prefer runbook links.")

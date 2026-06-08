@@ -7,17 +7,12 @@ use super::super::provider_settings::{
     CreateVertexAiProviderSettingsInput, LlmProviderSettings, create_vertex_ai_provider_settings,
 };
 use super::super::task_runner::{RunLlmTaskRunnerInput, run_task};
-use crate::outbound::agents::task_agent::TaskAgentConnectors;
-use crate::outbound::datadog::DatadogMcpToolConfig;
-use crate::outbound::github::GitHubMcpConfig;
+use crate::outbound::agents::connector::ConnectorSet;
 
 pub struct VertexAiTaskRunnerInput {
     pub client: Client,
     pub model_id: String,
-    pub datadog_mcp: DatadogMcpToolConfig,
-    pub github_mcp: GitHubMcpConfig,
-    pub github_scope_org: String,
-    pub connectors: TaskAgentConnectors,
+    pub connectors: ConnectorSet,
     pub language: String,
     pub additional_system_prompt: Option<String>,
 }
@@ -25,10 +20,7 @@ pub struct VertexAiTaskRunnerInput {
 pub struct VertexAiTaskRunner {
     client: Client,
     provider_settings: LlmProviderSettings,
-    datadog_mcp: DatadogMcpToolConfig,
-    github_mcp: GitHubMcpConfig,
-    github_scope_org: String,
-    connectors: TaskAgentConnectors,
+    connectors: ConnectorSet,
     language: String,
     additional_system_prompt: Option<String>,
 }
@@ -42,9 +34,6 @@ impl VertexAiTaskRunner {
                     model_id: input.model_id,
                 },
             ),
-            datadog_mcp: input.datadog_mcp,
-            github_mcp: input.github_mcp,
-            github_scope_org: input.github_scope_org,
             connectors: input.connectors,
             language: input.language,
             additional_system_prompt: input.additional_system_prompt,
@@ -58,9 +47,6 @@ impl TaskRunnerPort for VertexAiTaskRunner {
         run_task(RunLlmTaskRunnerInput {
             client: self.client.clone(),
             settings: self.provider_settings.clone(),
-            datadog_mcp: self.datadog_mcp.clone(),
-            github_mcp: self.github_mcp.clone(),
-            github_scope_org: self.github_scope_org.clone(),
             connectors: self.connectors.clone(),
             language: self.language.clone(),
             additional_system_prompt: self.additional_system_prompt.clone(),
