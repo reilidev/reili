@@ -10,7 +10,7 @@ use rig::wasm_compat::WasmBoxedFuture;
 use rmcp::model::{CallToolResult, Content, Tool};
 use tracing::{error, warn};
 
-const DATADOG_SPECIALIST_AGENT_TOOLS: &[&str] = &[
+const DATADOG_SUB_AGENT_TOOLS: &[&str] = &[
     "search_datadog_logs",
     "analyze_datadog_logs",
     "search_datadog_metrics",
@@ -51,11 +51,11 @@ impl DatadogMcpToolset {
     }
 
     #[must_use]
-    pub fn specialist_tools(&self) -> Vec<Box<dyn ToolDyn>> {
+    pub fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
         build_tool_adapters(
             &self.tools,
-            DATADOG_SPECIALIST_AGENT_TOOLS,
-            "specialist",
+            DATADOG_SUB_AGENT_TOOLS,
+            "sub_agent",
             self.client.clone(),
         )
     }
@@ -245,7 +245,7 @@ mod tests {
     use rmcp::model::Tool;
 
     use super::{
-        DATADOG_LEAD_AGENT_TOOLS, DATADOG_SPECIALIST_AGENT_TOOLS, filter_tools,
+        DATADOG_LEAD_AGENT_TOOLS, DATADOG_SUB_AGENT_TOOLS, filter_tools,
         format_datadog_mcp_tool_error, format_datadog_mcp_tool_success,
     };
 
@@ -264,7 +264,7 @@ mod tests {
         let filtered = filter_tools(
             &tools,
             &["search_datadog_logs", "search_datadog_events"],
-            "specialist",
+            "sub_agent",
         );
 
         assert_eq!(filtered.len(), 2);
@@ -273,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn filters_specialist_tools_to_observability_and_security_union() {
+    fn filters_sub_agent_tools_to_observability_and_security_union() {
         let tools = vec![
             tool("search_datadog_services"),
             tool("search_datadog_logs"),
@@ -291,7 +291,7 @@ mod tests {
             tool("analyze_security_findings"),
         ];
 
-        let filtered = filter_tools(&tools, DATADOG_SPECIALIST_AGENT_TOOLS, "specialist");
+        let filtered = filter_tools(&tools, DATADOG_SUB_AGENT_TOOLS, "sub_agent");
         let names = filtered
             .iter()
             .map(|tool| tool.name.as_ref())
@@ -356,7 +356,7 @@ mod tests {
             tool("security_findings_schema"),
         ];
 
-        let filtered = filter_tools(&tools, DATADOG_SPECIALIST_AGENT_TOOLS, "specialist");
+        let filtered = filter_tools(&tools, DATADOG_SUB_AGENT_TOOLS, "sub_agent");
         let names = filtered
             .iter()
             .map(|tool| tool.name.as_ref())

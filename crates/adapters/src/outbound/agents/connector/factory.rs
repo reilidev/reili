@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use rig::tool::ToolDyn;
 
-use super::descriptor::{ConnectorDescriptor, SpecialistPromptContext};
+use super::descriptor::{ConnectorDescriptor, SubAgentPromptContext};
 use super::error::ConnectorPrepareError;
 use super::prompt_fact::ConnectorPromptFact;
 
@@ -20,16 +20,16 @@ pub trait ConnectorFactory: Send + Sync {
 pub trait PreparedConnector: Send + Sync {
     fn descriptor(&self) -> &ConnectorDescriptor;
 
-    /// Tools exposed to the specialist sub-agent.
-    fn specialist_tools(&self) -> Vec<Box<dyn ToolDyn>>;
+    /// Tools exposed to the sub-agent.
+    fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>>;
 
     /// Tools exposed directly to the lead (only Datadog is non-empty; default is empty).
     fn lead_tools(&self) -> Vec<Box<dyn ToolDyn>> {
         Vec::new()
     }
 
-    /// Specialist preamble for this connector.
-    fn specialist_preamble(&self, context: &SpecialistPromptContext) -> String;
+    /// SubAgent preamble for this connector.
+    fn sub_agent_preamble(&self, context: &SubAgentPromptContext) -> String;
 
     /// Source-specific facts contributed to the lead prompt's "Current context" block.
     fn prompt_facts(&self) -> Vec<ConnectorPromptFact> {

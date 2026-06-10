@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 const DEFAULT_TASK_RUNNER_MAX_TURNS: usize = 60;
-const DEFAULT_SPECIALIST_MAX_TURNS: usize = 80;
+const DEFAULT_SUB_AGENT_MAX_TURNS: usize = 80;
 const DEFAULT_TOOL_CONCURRENCY: usize = 8;
 const ANTHROPIC_OPUS_4_6_MODEL: &str = "claude-opus-4-6";
 const ANTHROPIC_SONNET_4_6_MODEL: &str = "claude-sonnet-4-6";
@@ -11,9 +11,9 @@ const ANTHROPIC_HAIKU_4_5_MODEL: &str = "claude-haiku-4-5";
 pub struct LlmProviderSettings {
     pub provider: String,
     pub task_runner_model: String,
-    pub specialist_model: String,
+    pub sub_agent_model: String,
     pub task_runner_max_turns: usize,
-    pub specialist_max_turns: usize,
+    pub sub_agent_max_turns: usize,
     pub tool_concurrency: usize,
     pub max_tokens: Option<u64>,
     pub additional_params: Value,
@@ -41,10 +41,10 @@ pub fn create_openai_provider_settings(
 ) -> LlmProviderSettings {
     LlmProviderSettings {
         provider: "openai".to_string(),
-        specialist_model: input.model.clone(),
+        sub_agent_model: input.model.clone(),
         task_runner_model: input.model,
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
-        specialist_max_turns: DEFAULT_SPECIALIST_MAX_TURNS,
+        sub_agent_max_turns: DEFAULT_SUB_AGENT_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
         max_tokens: None,
         additional_params: json!({
@@ -69,10 +69,10 @@ pub fn create_anthropic_provider_settings(
 
     LlmProviderSettings {
         provider: "anthropic".to_string(),
-        specialist_model: input.model.clone(),
+        sub_agent_model: input.model.clone(),
         task_runner_model: input.model,
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
-        specialist_max_turns: DEFAULT_SPECIALIST_MAX_TURNS,
+        sub_agent_max_turns: DEFAULT_SUB_AGENT_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
         max_tokens,
         additional_params: json!({}),
@@ -84,10 +84,10 @@ pub fn create_bedrock_provider_settings(
 ) -> LlmProviderSettings {
     LlmProviderSettings {
         provider: "bedrock".to_string(),
-        specialist_model: input.model_id.clone(),
+        sub_agent_model: input.model_id.clone(),
         task_runner_model: input.model_id,
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
-        specialist_max_turns: DEFAULT_SPECIALIST_MAX_TURNS,
+        sub_agent_max_turns: DEFAULT_SUB_AGENT_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
         max_tokens: None,
         additional_params: json!({}),
@@ -99,10 +99,10 @@ pub fn create_vertex_ai_provider_settings(
 ) -> LlmProviderSettings {
     LlmProviderSettings {
         provider: "vertexai".to_string(),
-        specialist_model: input.model_id.clone(),
+        sub_agent_model: input.model_id.clone(),
         task_runner_model: input.model_id,
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
-        specialist_max_turns: DEFAULT_SPECIALIST_MAX_TURNS,
+        sub_agent_max_turns: DEFAULT_SUB_AGENT_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
         max_tokens: None,
         additional_params: json!({}),
@@ -153,7 +153,7 @@ mod tests {
         });
 
         assert_eq!(settings.task_runner_max_turns, 60);
-        assert_eq!(settings.specialist_max_turns, 80);
+        assert_eq!(settings.sub_agent_max_turns, 80);
     }
 
     #[test]

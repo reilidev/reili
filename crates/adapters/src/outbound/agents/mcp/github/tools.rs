@@ -13,7 +13,7 @@ use tracing::error;
 use super::read_file::GitHubReadFileToolAdapter;
 use crate::outbound::github::github_mcp_client::{GitHubMcpConfig, GitHubMcpHttpClient};
 
-const REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
+const REQUIRED_GITHUB_SUB_AGENT_TOOLS: &[&str] = &[
     "search_code",
     "search_repositories",
     "search_issues",
@@ -23,7 +23,7 @@ const REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
 ];
 
 #[cfg(test)]
-const OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
+const OPTIONAL_GITHUB_SUB_AGENT_TOOLS: &[&str] = &[
     "actions_get",
     "actions_list",
     "get_job_logs",
@@ -34,7 +34,7 @@ const OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
 // `get_file_contents` is intentionally absent: file reads are exposed to the agent through the
 // `read_file` wrapper (see `GitHubReadFileToolAdapter`), which forwards to the server-side
 // `get_file_contents` tool but returns a bounded, line-numbered window.
-const GITHUB_SPECIALIST_AGENT_TOOLS: &[&str] = &[
+const GITHUB_SUB_AGENT_TOOLS: &[&str] = &[
     "search_code",
     "search_repositories",
     "search_issues",
@@ -78,10 +78,10 @@ pub struct GitHubMcpToolset {
 
 impl GitHubMcpToolset {
     #[must_use]
-    pub fn specialist_tools(&self) -> Vec<Box<dyn ToolDyn>> {
+    pub fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
         let mut adapters = build_tool_adapters(
             &self.tools,
-            GITHUB_SPECIALIST_AGENT_TOOLS,
+            GITHUB_SUB_AGENT_TOOLS,
             self.client.clone(),
             self.scope_policy.clone(),
         );
@@ -111,10 +111,7 @@ pub async fn connect_github_mcp_toolset(
 
 fn validate_required_tools(tools: &[Tool]) -> Result<(), PortError> {
     let available_names: HashSet<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
-    let required_names: HashSet<&str> = REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS
-        .iter()
-        .copied()
-        .collect();
+    let required_names: HashSet<&str> = REQUIRED_GITHUB_SUB_AGENT_TOOLS.iter().copied().collect();
 
     let mut missing_names = required_names
         .into_iter()
@@ -356,10 +353,10 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        FILE_CONTENT_CHAR_LIMIT, GITHUB_SPECIALIST_AGENT_TOOLS,
-        OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS, REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS,
-        filter_tools, format_github_mcp_tool_error, format_github_mcp_tool_success,
-        truncate_if_oversized, validate_required_tools, validate_scope,
+        FILE_CONTENT_CHAR_LIMIT, GITHUB_SUB_AGENT_TOOLS, OPTIONAL_GITHUB_SUB_AGENT_TOOLS,
+        REQUIRED_GITHUB_SUB_AGENT_TOOLS, filter_tools, format_github_mcp_tool_error,
+        format_github_mcp_tool_success, truncate_if_oversized, validate_required_tools,
+        validate_scope,
     };
     use reili_core::source_code::github::GithubScopePolicy;
     use rmcp::model::{CallToolResult, Content};
@@ -374,7 +371,7 @@ mod tests {
 
     #[test]
     fn validates_required_tool_names() {
-        let tools = REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS
+        let tools = REQUIRED_GITHUB_SUB_AGENT_TOOLS
             .iter()
             .map(|name| tool(name))
             .collect::<Vec<_>>();
@@ -384,13 +381,13 @@ mod tests {
 
     #[test]
     fn allows_missing_optional_tool_names() {
-        let tools = REQUIRED_GITHUB_SPECIALIST_AGENT_TOOLS
+        let tools = REQUIRED_GITHUB_SUB_AGENT_TOOLS
             .iter()
             .map(|name| tool(name))
             .collect::<Vec<_>>();
 
         assert!(validate_required_tools(&tools).is_ok());
-        assert!(!OPTIONAL_GITHUB_SPECIALIST_AGENT_TOOLS.is_empty());
+        assert!(!OPTIONAL_GITHUB_SUB_AGENT_TOOLS.is_empty());
     }
 
     #[test]
@@ -469,7 +466,7 @@ mod tests {
 
     #[test]
     fn get_file_contents_is_not_exposed_to_agent() {
-        assert!(!GITHUB_SPECIALIST_AGENT_TOOLS.contains(&"get_file_contents"));
+        assert!(!GITHUB_SUB_AGENT_TOOLS.contains(&"get_file_contents"));
     }
 
     #[test]

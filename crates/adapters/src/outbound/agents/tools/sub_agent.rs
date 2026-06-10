@@ -198,7 +198,7 @@ mod tests {
         let tool = ProgressReportingSubAgentTool::new(ProgressReportingSubAgentToolInput {
             agent_factory,
             agent_name: "investigate_datadog".to_string(),
-            agent_description: Some("Datadog specialist".to_string()),
+            agent_description: Some("Datadog sub-agent".to_string()),
             owner_id: "investigate_datadog".to_string(),
             on_progress_event: Arc::new(progress_event_port),
             tool_concurrency: 8,
@@ -265,7 +265,7 @@ mod tests {
         let tool = ProgressReportingSubAgentTool::new(ProgressReportingSubAgentToolInput {
             agent_factory,
             agent_name: "investigate_datadog".to_string(),
-            agent_description: Some("Datadog specialist".to_string()),
+            agent_description: Some("Datadog sub-agent".to_string()),
             owner_id: "investigate_datadog".to_string(),
             on_progress_event: Arc::new(progress_event_port),
             tool_concurrency: 2,
@@ -300,7 +300,7 @@ mod tests {
         let tool = ProgressReportingSubAgentTool::new(ProgressReportingSubAgentToolInput {
             agent_factory,
             agent_name: "investigate_datadog".to_string(),
-            agent_description: Some("Datadog specialist".to_string()),
+            agent_description: Some("Datadog sub-agent".to_string()),
             owner_id: "investigate_datadog".to_string(),
             on_progress_event: Arc::new(progress_event_port),
             tool_concurrency: 1,

@@ -116,9 +116,9 @@ subset of those tools, including dashboard detail retrieval and Synthetic test r
 returns them for your plan and application key permissions.
 
 The optional esa integration is enabled only when `[connector.esa]` is present in `reili.toml`.
-When configured, Reili registers the `investigate_esa` specialist agent. That specialist uses
+When configured, Reili registers the `investigate_esa` sub-agent. That sub-agent uses
 `search_posts`, which calls `GET /v1/teams/:team_name/posts` with the esa search query syntax in
-`q`. Omit `[connector.esa]` to avoid reading the esa token env var and to keep the specialist and
+`q`. Omit `[connector.esa]` to avoid reading the esa token env var and to keep the sub-agent and
 tool unregistered.
 
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`.

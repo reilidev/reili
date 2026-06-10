@@ -367,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn invocation_scoped_owners_do_not_reuse_previous_specialist_scope() {
+    fn invocation_scoped_owners_do_not_reuse_previous_sub_agent_scope() {
         let mut projector = ProgressUpdateProjector::new();
         projector.project_progress_summary(RecordProgressSummary {
             owner_id: "investigate_github:first".to_string(),

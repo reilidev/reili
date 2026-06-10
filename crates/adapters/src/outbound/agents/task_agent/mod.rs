@@ -12,7 +12,7 @@ use rig::tool::ToolDyn;
 
 mod instructions;
 mod prompt;
-mod specialists;
+mod sub_agent;
 
 pub use prompt::{BuildTaskPromptInput, build_task_prompt};
 
@@ -24,10 +24,7 @@ use super::tools::{
     ReportProgressToolInput, SearchSlackMessagesTool, SearchWebTool,
 };
 use instructions::{BuildTaskInstructionsInput, build_task_instructions};
-use specialists::{
-    BuildSpecialistAgentInput, CreateSpecialistAgentFactoryInput, SpecialistAgentConfig,
-    SpecialistAgentFactory,
-};
+use sub_agent::{BuildSubAgentInput, CreateSubAgentFactoryInput, SubAgentConfig, SubAgentFactory};
 
 type CompletionAgent<C> = Agent<<C as CompletionClient>::CompletionModel>;
 
@@ -71,9 +68,9 @@ where
 {
     #[must_use]
     pub fn build(&self, input: BuildTaskAgentInput) -> CompletionAgent<C> {
-        let specialist_factory = SpecialistAgentFactory::new(CreateSpecialistAgentFactoryInput {
+        let sub_agent_factory = SubAgentFactory::new(CreateSubAgentFactoryInput {
             client: self.client.clone(),
-            config: self.specialist_config(),
+            config: self.sub_agent_config(),
         });
         let memory_context_section = build_memory_context_section(&input.run_context.memory_items);
 
@@ -107,17 +104,17 @@ where
             ))
             .tool(SearchWebTool::new(Arc::clone(&input.run_context.resources)));
 
-        // One specialist sub-agent tool per connector, in registration order.
+        // One sub-agent tool per connector, in registration order.
         for prepared in &input.prepared_connectors {
             let descriptor = prepared.descriptor();
             let agent_name = descriptor.agent_name.clone();
             let agent_description = descriptor.agent_description.clone();
             let agent_factory = {
-                let specialist_factory = specialist_factory.clone();
+                let sub_agent_factory = sub_agent_factory.clone();
                 let run_context = input.run_context.clone();
                 let prepared = Arc::clone(prepared);
                 Arc::new(move |invocation_owner_id| {
-                    specialist_factory.build_specialist(BuildSpecialistAgentInput {
+                    sub_agent_factory.build_sub_agent(BuildSubAgentInput {
                         run_context: run_context.clone(),
                         prepared: Arc::clone(&prepared),
                         owner_id: invocation_owner_id,
@@ -141,8 +138,8 @@ where
         builder.build()
     }
 
-    fn specialist_config(&self) -> SpecialistAgentConfig {
-        SpecialistAgentConfig {
+    fn sub_agent_config(&self) -> SubAgentConfig {
+        SubAgentConfig {
             settings: self.config.settings.clone(),
             language: self.config.instructions.language.clone(),
             additional_system_prompt: self.config.instructions.additional_system_prompt.clone(),
