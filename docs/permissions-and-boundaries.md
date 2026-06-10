@@ -25,7 +25,7 @@ The runtime can expose only the following tool families:
 - GitHub MCP reads: `search_code`, `search_repositories`, `search_issues`,
   `search_pull_requests`, `get_file_contents`, `pull_request_read`, `actions_get`,
   `actions_list`, `get_job_logs`, `get_dependabot_alert`, `list_dependabot_alerts`
-- esa specialist delegation when `[connector.esa]` is configured: `investigate_esa`
+- esa sub-agent delegation when `[connector.esa]` is configured: `investigate_esa`
 - External web lookup: `search_web`
 
 In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog
@@ -258,7 +258,7 @@ GitHub capabilities currently used by the runtime:
 
 GitHub MCP boundary:
 
-- The GitHub specialist agent only receives this allowlisted subset of MCP tools:
+- The GitHub sub-agent only receives this allowlisted subset of MCP tools:
   `search_code`, `search_repositories`, `search_issues`, `search_pull_requests`,
   `get_file_contents`, `pull_request_read`, `actions_get`, `actions_list`, `get_job_logs`,
   `get_dependabot_alert`, and `list_dependabot_alerts`
@@ -296,8 +296,8 @@ esa API endpoint currently used by the runtime:
 
 esa capabilities currently used by the runtime:
 
-- Delegate documentation investigation to the `investigate_esa` specialist agent
-- Search posts through the specialist's `search_posts` tool using esa's `q` search syntax
+- Delegate documentation investigation to the `investigate_esa` sub-agent
+- Search posts through the sub-agent's `search_posts` tool using esa's `q` search syntax
 - Return post metadata, links, tags, authors, pagination metadata, and Markdown body content from
   the search response
 

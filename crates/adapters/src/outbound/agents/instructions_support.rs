@@ -1,8 +1,8 @@
 //! Shared preamble building blocks used by the lead task instructions and by each connector's
-//! specialist preamble. Keeping these here lets connector modules (`mcp/<svc>`, `connectors/<svc>`)
+//! sub-agent preamble. Keeping these here lets connector modules (`mcp/<svc>`, `connectors/<svc>`)
 //! and `task_agent` reuse the same memory/notes guidance without depending on each other.
 
-pub(crate) fn specialist_memory_context_instruction() -> &'static str {
+pub(crate) fn sub_agent_memory_context_instruction() -> &'static str {
     r#"## Using Memory Context
 If the delegated task prompt includes Memory Context, use relevant memories as investigation guidance for likely owners, systems, runbooks, dashboards, repository paths, and search terms. Treat memories as hints, not proof. Verify facts that affect your conclusion, recommendation, or operational action with current evidence from your available tools. Do not copy, paraphrase, or refresh prior memory entries into reusable notes. Only save a memory when the fact was newly learned or independently confirmed during this investigation, and cite current non-memory evidence."#
 }

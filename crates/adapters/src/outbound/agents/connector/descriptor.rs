@@ -7,12 +7,12 @@ pub struct ConnectorDescriptor {
     pub agent_description: String,
 }
 
-/// Shared context passed to a connector when building its specialist preamble.
+/// Shared context passed to a connector when building its sub-agent preamble.
 ///
 /// Source-specific values (GitHub org scope, esa team) are held by the connector itself; only the
-/// values common to every specialist live here.
+/// values common to every sub-agent live here.
 #[derive(Debug, Clone)]
-pub struct SpecialistPromptContext {
+pub struct SubAgentPromptContext {
     pub language: String,
     pub additional_system_prompt: Option<String>,
 }

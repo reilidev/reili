@@ -5,11 +5,11 @@ use rig::tool::ToolDyn;
 
 use crate::outbound::agents::connector::{
     ConnectorDescriptor, ConnectorFactory, ConnectorPrepareError, ConnectorPromptFact,
-    PreparedConnector, SpecialistPromptContext,
+    PreparedConnector, SubAgentPromptContext,
 };
 use crate::outbound::agents::instructions_support::{
     append_configured_additional_system_prompt, reusable_notes_instruction,
-    specialist_memory_context_instruction,
+    sub_agent_memory_context_instruction,
 };
 use crate::outbound::agents::tools::SearchPostsTool;
 use crate::outbound::esa::EsaPostSearchPort;
@@ -17,7 +17,7 @@ use crate::outbound::esa::EsaPostSearchPort;
 const ESA_AGENT_NAME: &str = "investigate_esa";
 const ESA_AGENT_DESCRIPTION: &str =
     "Delegates esa internal documentation, runbook, design note, team knowledge, and broader knowledge base search tasks.
-When instructing this specialist, include the relevant background, context, and why the documentation search matters, not just the immediate keywords.";
+When instructing this sub-agent, include the relevant background, context, and why the documentation search matters, not just the immediate keywords.";
 
 /// Connector for the esa knowledge base, exposed through the domain port + hand-written tool.
 pub struct EsaConnector {
@@ -66,11 +66,11 @@ impl PreparedConnector for PreparedEsaConnector {
         &self.descriptor
     }
 
-    fn specialist_tools(&self) -> Vec<Box<dyn ToolDyn>> {
+    fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
         vec![Box::new(SearchPostsTool::new(Arc::clone(&self.post_search_port))) as Box<dyn ToolDyn>]
     }
 
-    fn specialist_preamble(&self, context: &SpecialistPromptContext) -> String {
+    fn sub_agent_preamble(&self, context: &SubAgentPromptContext) -> String {
         build_esa_instructions(context, &self.team_name)
     }
 
@@ -87,13 +87,13 @@ impl PreparedConnector for PreparedEsaConnector {
     }
 }
 
-fn build_esa_instructions(context: &SpecialistPromptContext, team_name: &str) -> String {
+fn build_esa_instructions(context: &SubAgentPromptContext, team_name: &str) -> String {
     let reusable_notes_instruction = reusable_notes_instruction();
-    let memory_context_instruction = specialist_memory_context_instruction();
+    let memory_context_instruction = sub_agent_memory_context_instruction();
 
     append_configured_additional_system_prompt(
         format!(
-            "You are an esa documentation search specialist with deep expertise in internal
+            "You are an esa documentation search sub-agent with deep expertise in internal
 knowledge discovery, including operational runbooks, incident notes, design
 records, team processes, product specifications, onboarding guides, decision
 logs, and general internal documentation.
@@ -138,10 +138,10 @@ tool arguments or raw tool output.
 #[cfg(test)]
 mod tests {
     use super::build_esa_instructions;
-    use crate::outbound::agents::connector::SpecialistPromptContext;
+    use crate::outbound::agents::connector::SubAgentPromptContext;
 
-    fn context(additional_system_prompt: Option<String>) -> SpecialistPromptContext {
-        SpecialistPromptContext {
+    fn context(additional_system_prompt: Option<String>) -> SubAgentPromptContext {
+        SubAgentPromptContext {
             language: "Japanese".to_string(),
             additional_system_prompt,
         }

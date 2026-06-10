@@ -5,11 +5,11 @@ use rig::tool::ToolDyn;
 
 use crate::outbound::agents::connector::{
     ConnectorDescriptor, ConnectorFactory, ConnectorPrepareError, ConnectorPromptFact,
-    PreparedConnector, SpecialistPromptContext,
+    PreparedConnector, SubAgentPromptContext,
 };
 use crate::outbound::agents::instructions_support::{
     append_configured_additional_system_prompt, reusable_notes_instruction,
-    specialist_memory_context_instruction,
+    sub_agent_memory_context_instruction,
 };
 use crate::outbound::agents::mcp::datadog::tools::{
     DatadogMcpToolset, connect_datadog_mcp_toolset,
@@ -20,7 +20,7 @@ const DATADOG_AGENT_NAME: &str = "investigate_datadog";
 const DATADOG_AGENT_DESCRIPTION: &str =
     "Delegates Datadog observability and security investigation tasks.
 This tool is designed to be split into scopes and used in parallel.
-When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.";
+When instructing this sub-agent, include the relevant background, context, and why the investigation matters, not just the immediate question.";
 
 const DEFAULT_DATADOG_SITE: &str = "datadoghq.com";
 
@@ -73,15 +73,15 @@ impl PreparedConnector for PreparedDatadogConnector {
         &self.descriptor
     }
 
-    fn specialist_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        self.toolset.specialist_tools()
+    fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
+        self.toolset.sub_agent_tools()
     }
 
     fn lead_tools(&self) -> Vec<Box<dyn ToolDyn>> {
         self.toolset.lead_tools()
     }
 
-    fn specialist_preamble(&self, context: &SpecialistPromptContext) -> String {
+    fn sub_agent_preamble(&self, context: &SubAgentPromptContext) -> String {
         build_datadog_instructions(context)
     }
 
@@ -99,13 +99,13 @@ impl PreparedConnector for PreparedDatadogConnector {
     }
 }
 
-fn build_datadog_instructions(context: &SpecialistPromptContext) -> String {
+fn build_datadog_instructions(context: &SubAgentPromptContext) -> String {
     let reusable_notes_instruction = reusable_notes_instruction();
-    let memory_context_instruction = specialist_memory_context_instruction();
+    let memory_context_instruction = sub_agent_memory_context_instruction();
 
     append_configured_additional_system_prompt(
         format!(
-        "You are a Datadog investigation specialist with deep expertise in production reliability, observability, failure analysis, operational diagnostics, and security investigation.
+        "You are a Datadog investigation sub-agent with deep expertise in production reliability, observability, failure analysis, operational diagnostics, and security investigation.
 Your role is to investigate Datadog evidence across logs, metrics, events, dashboards, Synthetic tests, and any available Datadog security tools, and return concise, evidence-based findings that support safe and reliable operational decisions.
 
 Use {language} for all responses.
@@ -135,10 +135,10 @@ Include clickable Datadog links for all referenced evidence whenever available. 
 #[cfg(test)]
 mod tests {
     use super::{DEFAULT_DATADOG_SITE, build_datadog_instructions};
-    use crate::outbound::agents::connector::SpecialistPromptContext;
+    use crate::outbound::agents::connector::SubAgentPromptContext;
 
-    fn context(additional_system_prompt: Option<String>) -> SpecialistPromptContext {
-        SpecialistPromptContext {
+    fn context(additional_system_prompt: Option<String>) -> SubAgentPromptContext {
+        SubAgentPromptContext {
             language: "Japanese".to_string(),
             additional_system_prompt,
         }

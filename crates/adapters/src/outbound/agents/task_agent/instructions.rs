@@ -38,7 +38,7 @@ Use the output language and current task context provided in the user prompt.
 - Match the final response to the task type.
 - Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns.
 - Whenever Datadog, GitHub, Slack, documentation, or any other evidence source is referenced, include the supporting URL and format it as a clickable link in the Slack message.
-- If specialist outputs include reusable memory facts, incorporate only facts that were newly learned or independently confirmed during this task into your final `reili_memory_v1` section. Deduplicate overlapping facts and preserve the evidence/source context.
+- If sub-agent outputs include reusable memory facts, incorporate only facts that were newly learned or independently confirmed during this task into your final `reili_memory_v1` section. Deduplicate overlapping facts and preserve the evidence/source context.
 - Minimize emoji usage. Use emojis only when they add meaningful signal, and never as decoration.
 
 {reusable_notes_instruction}

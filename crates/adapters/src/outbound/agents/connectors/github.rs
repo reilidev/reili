@@ -5,11 +5,11 @@ use rig::tool::ToolDyn;
 
 use crate::outbound::agents::connector::{
     ConnectorDescriptor, ConnectorFactory, ConnectorPrepareError, ConnectorPromptFact,
-    PreparedConnector, SpecialistPromptContext,
+    PreparedConnector, SubAgentPromptContext,
 };
 use crate::outbound::agents::instructions_support::{
     append_configured_additional_system_prompt, reusable_notes_instruction,
-    specialist_memory_context_instruction,
+    sub_agent_memory_context_instruction,
 };
 use crate::outbound::agents::mcp::github::tools::{GitHubMcpToolset, connect_github_mcp_toolset};
 use crate::outbound::github::GitHubMcpConfig;
@@ -18,7 +18,7 @@ const GITHUB_AGENT_NAME: &str = "investigate_github";
 const GITHUB_AGENT_DESCRIPTION: &str =
     "Delegates GitHub repository, code, pull request, Actions, and Dependabot investigation tasks.
 This tool is designed to be split into scopes and used in parallel.
-When instructing this specialist, include the relevant background, context, and why the investigation matters, not just the immediate question.";
+When instructing this sub-agent, include the relevant background, context, and why the investigation matters, not just the immediate question.";
 
 /// Connector for GitHub repository context, exposed over the GitHub MCP server.
 pub struct GitHubConnector {
@@ -71,11 +71,11 @@ impl PreparedConnector for PreparedGitHubConnector {
         &self.descriptor
     }
 
-    fn specialist_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        self.toolset.specialist_tools()
+    fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
+        self.toolset.sub_agent_tools()
     }
 
-    fn specialist_preamble(&self, context: &SpecialistPromptContext) -> String {
+    fn sub_agent_preamble(&self, context: &SubAgentPromptContext) -> String {
         build_github_instructions(context, &self.scope_org)
     }
 
@@ -87,13 +87,13 @@ impl PreparedConnector for PreparedGitHubConnector {
     }
 }
 
-fn build_github_instructions(context: &SpecialistPromptContext, scope_org: &str) -> String {
+fn build_github_instructions(context: &SubAgentPromptContext, scope_org: &str) -> String {
     let reusable_notes_instruction = reusable_notes_instruction();
-    let memory_context_instruction = specialist_memory_context_instruction();
+    let memory_context_instruction = sub_agent_memory_context_instruction();
 
     append_configured_additional_system_prompt(
         format!(
-            "You are a GitHub specialist with deep expertise in software
+            "You are a GitHub sub-agent with deep expertise in software
 development, repository analysis, and change investigation. Your role is to
 use GitHub evidence to clarify system structure, ownership, code behavior,
 recent changes, pull request context, and other repository facts that matter
@@ -165,10 +165,10 @@ step established, without dumping raw tool arguments or raw tool output.
 #[cfg(test)]
 mod tests {
     use super::build_github_instructions;
-    use crate::outbound::agents::connector::SpecialistPromptContext;
+    use crate::outbound::agents::connector::SubAgentPromptContext;
 
-    fn context(additional_system_prompt: Option<String>) -> SpecialistPromptContext {
-        SpecialistPromptContext {
+    fn context(additional_system_prompt: Option<String>) -> SubAgentPromptContext {
+        SubAgentPromptContext {
             language: "Japanese".to_string(),
             additional_system_prompt,
         }
