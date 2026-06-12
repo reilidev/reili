@@ -84,7 +84,7 @@ where
             }))
             .default_max_turns(self.config.settings.task_runner_max_turns)
             .additional_params(self.config.settings.additional_params.clone());
-        let builder = with_max_tokens(builder, self.config.settings.max_tokens);
+        let builder = with_max_tokens(builder, self.config.settings.task_runner_max_tokens);
 
         let lead_tools: Vec<Box<dyn ToolDyn>> = input
             .prepared_connectors

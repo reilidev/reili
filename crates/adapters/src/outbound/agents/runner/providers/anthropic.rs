@@ -13,6 +13,7 @@ use crate::outbound::agents::connector::ConnectorSet;
 pub struct AnthropicTaskRunnerInput {
     pub api_key: SecretString,
     pub model: String,
+    pub sub_agent_model: String,
     pub connectors: ConnectorSet,
     pub language: String,
     pub additional_system_prompt: Option<String>,
@@ -31,7 +32,10 @@ impl AnthropicTaskRunner {
         Self {
             api_key: input.api_key,
             provider_settings: create_anthropic_provider_settings(
-                CreateAnthropicProviderSettingsInput { model: input.model },
+                CreateAnthropicProviderSettingsInput {
+                    model: input.model,
+                    sub_agent_model: input.sub_agent_model,
+                },
             ),
             connectors: input.connectors,
             language: input.language,

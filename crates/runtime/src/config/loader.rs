@@ -231,31 +231,47 @@ fn resolve_llm_provider(
     ai: &AiFileConfig,
     env: &dyn EnvironmentReader,
 ) -> Result<LlmProviderConfig, ConfigError> {
-    let backend_id = ai.default_backend.as_str();
-    let backend = ai
-        .backends
-        .get(backend_id)
-        .ok_or_else(|| ConfigError::InvalidValue {
-            field: "ai.default_backend".to_string(),
-            message: format!(
-                "references unknown backend `{backend_id}`; expected one of [{}]",
-                ai.backends.keys().cloned().collect::<Vec<_>>().join(", ")
-            ),
-        })?;
-    let backend_field_prefix = format!("ai.backends.{backend_id}");
+    let (lead_id, lead_field) = select_backend_id(
+        ai.lead_backend.as_deref(),
+        &ai.default_backend,
+        "ai.lead_backend",
+    );
+    let (sub_id, sub_field) = select_backend_id(
+        ai.sub_agent_backend.as_deref(),
+        &ai.default_backend,
+        "ai.sub_agent_backend",
+    );
 
-    match backend {
+    let lead_backend = lookup_backend(ai, lead_id, lead_field)?;
+    let sub_backend = lookup_backend(ai, sub_id, sub_field)?;
+
+    let lead_provider = backend_provider_name(lead_backend);
+    let sub_provider = backend_provider_name(sub_backend);
+    if lead_provider != sub_provider {
+        return Err(ConfigError::InvalidValue {
+            field: sub_field.to_string(),
+            message: format!(
+                "backend `{sub_id}` uses provider `{sub_provider}`, but the lead backend `{lead_id}` uses provider `{lead_provider}`; the lead and sub-agent must share the same provider"
+            ),
+        });
+    }
+
+    let sub_agent_model = backend_model(sub_backend).to_string();
+    let backend_field_prefix = format!("ai.backends.{lead_id}");
+
+    match lead_backend {
         AiBackendFileConfig::OpenAi {
             model,
             api_key_env,
             reasoning_effort,
-        } => resolve_openai_backend(
+        } => resolve_openai_backend(ResolveOpenAiBackendInput {
             model,
-            api_key_env.as_deref(),
-            reasoning_effort.as_deref(),
+            sub_agent_model,
+            api_key_env: api_key_env.as_deref(),
+            reasoning_effort: reasoning_effort.as_deref(),
             env,
-            &backend_field_prefix,
-        ),
+            prefix: &backend_field_prefix,
+        }),
         AiBackendFileConfig::Anthropic { model, api_key_env } => {
             Ok(LlmProviderConfig::Anthropic(AnthropicLlmConfig {
                 api_key: read_required_secret(
@@ -266,6 +282,7 @@ fn resolve_llm_provider(
                     &format!("{backend_field_prefix}.api_key_env"),
                 )?,
                 model: model.to_string(),
+                sub_agent_model,
             }))
         }
         AiBackendFileConfig::Bedrock {
@@ -274,6 +291,7 @@ fn resolve_llm_provider(
             aws_region,
         } => Ok(LlmProviderConfig::Bedrock(BedrockLlmConfig {
             model_id: model_id.to_string(),
+            sub_agent_model_id: sub_agent_model,
             aws_profile: optional_trimmed(aws_profile.as_deref()),
             aws_region: optional_trimmed(aws_region.as_deref()),
         })),
@@ -285,26 +303,84 @@ fn resolve_llm_provider(
             project_id: project_id.to_string(),
             location: location.to_string(),
             model_id: model_id.to_string(),
+            sub_agent_model_id: sub_agent_model,
         })),
     }
 }
 
+/// Pick the backend id for an agent role, falling back to `default_backend`.
+///
+/// Returns the resolved id alongside the config field that named it, so error
+/// messages point at the field the operator actually set.
+fn select_backend_id<'a>(
+    override_id: Option<&'a str>,
+    default_backend: &'a str,
+    override_field: &'static str,
+) -> (&'a str, &'static str) {
+    match override_id {
+        Some(id) => (id, override_field),
+        None => (default_backend, "ai.default_backend"),
+    }
+}
+
+fn lookup_backend<'a>(
+    ai: &'a AiFileConfig,
+    backend_id: &str,
+    field: &str,
+) -> Result<&'a AiBackendFileConfig, ConfigError> {
+    ai.backends
+        .get(backend_id)
+        .ok_or_else(|| ConfigError::InvalidValue {
+            field: field.to_string(),
+            message: format!(
+                "references unknown backend `{backend_id}`; expected one of [{}]",
+                ai.backends.keys().cloned().collect::<Vec<_>>().join(", ")
+            ),
+        })
+}
+
+fn backend_provider_name(backend: &AiBackendFileConfig) -> &'static str {
+    match backend {
+        AiBackendFileConfig::OpenAi { .. } => "openai",
+        AiBackendFileConfig::Anthropic { .. } => "anthropic",
+        AiBackendFileConfig::Bedrock { .. } => "bedrock",
+        AiBackendFileConfig::VertexAi { .. } => "vertexai",
+    }
+}
+
+fn backend_model(backend: &AiBackendFileConfig) -> &str {
+    match backend {
+        AiBackendFileConfig::OpenAi { model, .. }
+        | AiBackendFileConfig::Anthropic { model, .. } => model,
+        AiBackendFileConfig::Bedrock { model_id, .. }
+        | AiBackendFileConfig::VertexAi { model_id, .. } => model_id,
+    }
+}
+
+struct ResolveOpenAiBackendInput<'a> {
+    model: &'a str,
+    sub_agent_model: String,
+    api_key_env: Option<&'a str>,
+    reasoning_effort: Option<&'a str>,
+    env: &'a dyn EnvironmentReader,
+    prefix: &'a str,
+}
+
 fn resolve_openai_backend(
-    model: &str,
-    api_key_env: Option<&str>,
-    reasoning_effort: Option<&str>,
-    env: &dyn EnvironmentReader,
-    prefix: &str,
+    input: ResolveOpenAiBackendInput<'_>,
 ) -> Result<LlmProviderConfig, ConfigError> {
-    let reasoning_effort = reasoning_effort.unwrap_or(DEFAULT_OPENAI_REASONING_EFFORT);
+    let reasoning_effort = input
+        .reasoning_effort
+        .unwrap_or(DEFAULT_OPENAI_REASONING_EFFORT);
 
     Ok(LlmProviderConfig::OpenAi(OpenAiLlmConfig {
         api_key: read_required_secret(
-            env,
-            api_key_env.unwrap_or(DEFAULT_OPENAI_API_KEY_ENV),
-            &format!("{prefix}.api_key_env"),
+            input.env,
+            input.api_key_env.unwrap_or(DEFAULT_OPENAI_API_KEY_ENV),
+            &format!("{}.api_key_env", input.prefix),
         )?,
-        model: model.to_string(),
+        model: input.model.to_string(),
+        sub_agent_model: input.sub_agent_model,
         reasoning_effort: reasoning_effort.to_string(),
     }))
 }
@@ -1189,6 +1265,95 @@ user_group_ids = ["U001"]
             ConfigError::InvalidValue { field, message } => {
                 assert_eq!(field, "ai.default_backend");
                 assert!(message.contains("unknown backend `missing`"));
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn defaults_sub_agent_model_to_lead_model_when_overrides_omitted() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config());
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.llm.provider {
+            LlmProviderConfig::OpenAi(provider) => {
+                assert_eq!(provider.model, "gpt-5.3-codex");
+                assert_eq!(provider.sub_agent_model, "gpt-5.3-codex");
+            }
+            _ => panic!("expected openai provider"),
+        }
+    }
+
+    #[test]
+    fn resolves_distinct_lead_and_sub_agent_models_within_same_provider() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(
+            &valid_openai_config()
+                .replace(
+                    r#"[ai.backends.fast]
+provider = "anthropic"
+model = "claude-haiku-4-5"
+api_key_env = "LLM_ANTHROPIC_API_KEY"
+"#,
+                    r#"[ai.backends.fast]
+provider = "openai"
+model = "gpt-5.3-mini"
+api_key_env = "LLM_OPENAI_API_KEY"
+"#,
+                )
+                .replace(
+                    "default_backend = \"primary\"",
+                    "default_backend = \"primary\"\nlead_backend = \"primary\"\nsub_agent_backend = \"fast\"",
+                ),
+        );
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.llm.provider {
+            LlmProviderConfig::OpenAi(provider) => {
+                assert_eq!(provider.model, "gpt-5.3-codex");
+                assert_eq!(provider.sub_agent_model, "gpt-5.3-mini");
+            }
+            _ => panic!("expected openai provider"),
+        }
+    }
+
+    #[test]
+    fn rejects_lead_and_sub_agent_backends_with_different_providers() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "default_backend = \"primary\"",
+            "default_backend = \"primary\"\nlead_backend = \"primary\"\nsub_agent_backend = \"fast\"",
+        ));
+
+        let error = resolve_app_config(file_config, &env).expect_err("provider mismatch");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "ai.sub_agent_backend");
+                assert!(message.contains("provider `anthropic`"), "{message}");
+                assert!(message.contains("provider `openai`"), "{message}");
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_sub_agent_backend() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "default_backend = \"primary\"",
+            "default_backend = \"primary\"\nsub_agent_backend = \"missing\"",
+        ));
+
+        let error = resolve_app_config(file_config, &env).expect_err("invalid sub-agent backend");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "ai.sub_agent_backend");
+                assert!(message.contains("unknown backend `missing`"), "{message}");
             }
             other => panic!("expected invalid-value error, got {other}"),
         }

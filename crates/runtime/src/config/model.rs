@@ -79,6 +79,7 @@ impl LlmProviderConfig {
 pub struct OpenAiLlmConfig {
     pub api_key: SecretString,
     pub model: String,
+    pub sub_agent_model: String,
     pub reasoning_effort: String,
 }
 
@@ -86,11 +87,13 @@ pub struct OpenAiLlmConfig {
 pub struct AnthropicLlmConfig {
     pub api_key: SecretString,
     pub model: String,
+    pub sub_agent_model: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BedrockLlmConfig {
     pub model_id: String,
+    pub sub_agent_model_id: String,
     pub aws_profile: Option<String>,
     pub aws_region: Option<String>,
 }
@@ -100,6 +103,7 @@ pub struct VertexAiLlmConfig {
     pub project_id: String,
     pub location: String,
     pub model_id: String,
+    pub sub_agent_model_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,6 +175,7 @@ mod tests {
                 provider: LlmProviderConfig::OpenAi(OpenAiLlmConfig {
                     api_key: SecretString::new("openai-secret".to_string()),
                     model: "gpt-5.3-codex".to_string(),
+                    sub_agent_model: "gpt-5.3-codex".to_string(),
                     reasoning_effort: "low".to_string(),
                 }),
             },

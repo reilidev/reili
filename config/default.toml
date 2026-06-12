@@ -52,8 +52,16 @@ signing_secret_env = "SLACK_SIGNING_SECRET"
 
 # Required: AI backend selection.
 [ai]
-# Required: backend ID Reili uses for task execution.
+# Required: backend ID Reili uses for task execution. Also the fallback for the
+# lead and sub-agent roles below when they are not set explicitly.
 default_backend = "primary"
+
+# Optional: backend ID for the lead agent (task runner). Defaults to `default_backend`.
+# lead_backend = "primary"
+
+# Optional: backend ID for sub-agents. Defaults to `default_backend`. Must use the
+# same provider as the lead backend; only the model differs between the two roles.
+# sub_agent_backend = "fast"
 
 # "primary" is an arbitrary backend ID chosen by the config author.
 [ai.backends.primary]
@@ -65,6 +73,13 @@ model = "gpt-5.4"
 api_key_env = "LLM_OPENAI_API_KEY"
 # Optional for OpenAI backends: reasoning effort level (`low`, `medium`, `high`, or `xhigh`). Defaults to `medium`.
 # reasoning_effort = "medium"
+
+# Optional sibling backend for a cheaper sub-agent model. Reference it from
+# `sub_agent_backend` above to run sub-agents on a smaller model than the lead.
+# It must use the same provider as the lead backend.
+#[ai.backends.fast]
+#provider = "openai"
+#model = "gpt-5.4-mini"
 
 #[ai.backends.anthropic]
 #provider = "anthropic"

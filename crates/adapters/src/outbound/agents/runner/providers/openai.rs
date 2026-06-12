@@ -13,6 +13,7 @@ use crate::outbound::agents::connector::ConnectorSet;
 pub struct OpenAiTaskRunnerInput {
     pub api_key: SecretString,
     pub model: String,
+    pub sub_agent_model: String,
     pub reasoning_effort: String,
     pub connectors: ConnectorSet,
     pub language: String,
@@ -33,6 +34,7 @@ impl OpenAiTaskRunner {
             api_key: input.api_key,
             provider_settings: create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
                 model: input.model,
+                sub_agent_model: input.sub_agent_model,
                 reasoning_effort: input.reasoning_effort,
             }),
             connectors: input.connectors,

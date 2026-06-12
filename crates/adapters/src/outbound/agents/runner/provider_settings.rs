@@ -15,25 +15,30 @@ pub struct LlmProviderSettings {
     pub task_runner_max_turns: usize,
     pub sub_agent_max_turns: usize,
     pub tool_concurrency: usize,
-    pub max_tokens: Option<u64>,
+    pub task_runner_max_tokens: Option<u64>,
+    pub sub_agent_max_tokens: Option<u64>,
     pub additional_params: Value,
 }
 
 pub struct CreateOpenAiProviderSettingsInput {
     pub model: String,
+    pub sub_agent_model: String,
     pub reasoning_effort: String,
 }
 
 pub struct CreateAnthropicProviderSettingsInput {
     pub model: String,
+    pub sub_agent_model: String,
 }
 
 pub struct CreateBedrockProviderSettingsInput {
     pub model_id: String,
+    pub sub_agent_model_id: String,
 }
 
 pub struct CreateVertexAiProviderSettingsInput {
     pub model_id: String,
+    pub sub_agent_model_id: String,
 }
 
 pub fn create_openai_provider_settings(
@@ -41,12 +46,13 @@ pub fn create_openai_provider_settings(
 ) -> LlmProviderSettings {
     LlmProviderSettings {
         provider: "openai".to_string(),
-        sub_agent_model: input.model.clone(),
         task_runner_model: input.model,
+        sub_agent_model: input.sub_agent_model,
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
         sub_agent_max_turns: DEFAULT_SUB_AGENT_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
-        max_tokens: None,
+        task_runner_max_tokens: None,
+        sub_agent_max_tokens: None,
         additional_params: json!({
             "reasoning": {
                 "effort": input.reasoning_effort,
@@ -65,16 +71,15 @@ pub fn create_openai_provider_settings(
 pub fn create_anthropic_provider_settings(
     input: CreateAnthropicProviderSettingsInput,
 ) -> LlmProviderSettings {
-    let max_tokens = anthropic_max_tokens(&input.model);
-
     LlmProviderSettings {
         provider: "anthropic".to_string(),
-        sub_agent_model: input.model.clone(),
+        task_runner_max_tokens: anthropic_max_tokens(&input.model),
+        sub_agent_max_tokens: anthropic_max_tokens(&input.sub_agent_model),
         task_runner_model: input.model,
+        sub_agent_model: input.sub_agent_model,
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
         sub_agent_max_turns: DEFAULT_SUB_AGENT_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
-        max_tokens,
         additional_params: json!({}),
     }
 }
@@ -84,12 +89,13 @@ pub fn create_bedrock_provider_settings(
 ) -> LlmProviderSettings {
     LlmProviderSettings {
         provider: "bedrock".to_string(),
-        sub_agent_model: input.model_id.clone(),
         task_runner_model: input.model_id,
+        sub_agent_model: input.sub_agent_model_id,
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
         sub_agent_max_turns: DEFAULT_SUB_AGENT_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
-        max_tokens: None,
+        task_runner_max_tokens: None,
+        sub_agent_max_tokens: None,
         additional_params: json!({}),
     }
 }
@@ -99,12 +105,13 @@ pub fn create_vertex_ai_provider_settings(
 ) -> LlmProviderSettings {
     LlmProviderSettings {
         provider: "vertexai".to_string(),
-        sub_agent_model: input.model_id.clone(),
         task_runner_model: input.model_id,
+        sub_agent_model: input.sub_agent_model_id,
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
         sub_agent_max_turns: DEFAULT_SUB_AGENT_MAX_TURNS,
         tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
-        max_tokens: None,
+        task_runner_max_tokens: None,
+        sub_agent_max_tokens: None,
         additional_params: json!({}),
     }
 }
@@ -131,6 +138,7 @@ mod tests {
     fn provider_settings_enable_parallel_tool_calls() {
         let settings = create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
             model: "gpt-5.3-codex".to_string(),
+            sub_agent_model: "gpt-5.3-codex".to_string(),
             reasoning_effort: "low".to_string(),
         });
         let params = settings.additional_params;
@@ -149,11 +157,24 @@ mod tests {
     fn provider_settings_assign_agent_turn_limits() {
         let settings = create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
             model: "gpt-5.3-codex".to_string(),
+            sub_agent_model: "gpt-5.3-codex".to_string(),
             reasoning_effort: "low".to_string(),
         });
 
         assert_eq!(settings.task_runner_max_turns, 60);
         assert_eq!(settings.sub_agent_max_turns, 80);
+    }
+
+    #[test]
+    fn provider_settings_keep_distinct_lead_and_sub_agent_models() {
+        let settings = create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
+            model: "gpt-5.3-codex".to_string(),
+            sub_agent_model: "gpt-5.3-mini".to_string(),
+            reasoning_effort: "low".to_string(),
+        });
+
+        assert_eq!(settings.task_runner_model, "gpt-5.3-codex");
+        assert_eq!(settings.sub_agent_model, "gpt-5.3-mini");
     }
 
     #[test]
@@ -169,9 +190,22 @@ mod tests {
             let settings =
                 create_anthropic_provider_settings(CreateAnthropicProviderSettingsInput {
                     model: model.to_string(),
+                    sub_agent_model: model.to_string(),
                 });
 
-            assert_eq!(settings.max_tokens, expected_max_tokens);
+            assert_eq!(settings.task_runner_max_tokens, expected_max_tokens);
+            assert_eq!(settings.sub_agent_max_tokens, expected_max_tokens);
         }
+    }
+
+    #[test]
+    fn anthropic_provider_settings_derive_max_tokens_per_agent_role() {
+        let settings = create_anthropic_provider_settings(CreateAnthropicProviderSettingsInput {
+            model: "claude-sonnet-4-6".to_string(),
+            sub_agent_model: "claude-haiku-4-5".to_string(),
+        });
+
+        assert_eq!(settings.task_runner_max_tokens, Some(64_000));
+        assert_eq!(settings.sub_agent_max_tokens, Some(4_096));
     }
 }
