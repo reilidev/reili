@@ -12,6 +12,7 @@ use crate::outbound::agents::connector::ConnectorSet;
 
 pub struct BedrockTaskRunnerInput {
     pub model_id: String,
+    pub sub_agent_model_id: String,
     pub aws_profile: Option<String>,
     pub aws_region: Option<String>,
     pub connectors: ConnectorSet,
@@ -34,6 +35,7 @@ impl BedrockTaskRunner {
             provider_settings: create_bedrock_provider_settings(
                 CreateBedrockProviderSettingsInput {
                     model_id: input.model_id,
+                    sub_agent_model_id: input.sub_agent_model_id,
                 },
             ),
             aws_profile: input.aws_profile,
@@ -107,6 +109,7 @@ mod tests {
         ]);
         let input = BedrockTaskRunnerInput {
             model_id: "anthropic.claude".to_string(),
+            sub_agent_model_id: "anthropic.claude-haiku".to_string(),
             aws_profile: Some("prod-sso".to_string()),
             aws_region: Some("ap-northeast-1".to_string()),
             connectors,

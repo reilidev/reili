@@ -69,7 +69,8 @@ Non-secret settings live in `reili.toml`, including:
 - conversation language
 - Slack connection mode
 - optional Slack mention authorization allowlists and bot actor access
-- selected AI backend and backend-specific non-secret settings
+- selected AI backend and backend-specific non-secret settings, including optional separate
+  backends for the lead agent and sub-agents
 - Datadog site
 - GitHub MCP URL, GitHub App ID, installation ID, and search scope org
 - optional esa team name and access-token env var
@@ -122,6 +123,13 @@ When configured, Reili registers the `investigate_esa` sub-agent. That sub-agent
 tool unregistered.
 
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`.
+
+Reili runs a lead agent (the task runner) that delegates to per-connector sub-agents. By default both
+roles use `default_backend`. To run sub-agents on a different model than the lead, point
+`ai.lead_backend` and `ai.sub_agent_backend` at named backends in `[ai.backends]`. The two backends
+must use the same provider; only the model differs between the roles. A common setup is a stronger
+model for the lead and a cheaper, faster model for sub-agents. Either key falls back to
+`default_backend` when omitted.
 
 When the selected backend uses `provider = "anthropic"`, Claude is called through the Anthropic
 API.

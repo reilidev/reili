@@ -200,6 +200,10 @@ pub(crate) struct SlackAuthorizationActorsFileConfig {
 pub(crate) struct AiFileConfig {
     #[serde(deserialize_with = "require_non_empty_string")]
     pub default_backend: String,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
+    pub lead_backend: Option<String>,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
+    pub sub_agent_backend: Option<String>,
     pub backends: BTreeMap<String, AiBackendFileConfig>,
 }
 

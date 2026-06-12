@@ -12,6 +12,7 @@ use crate::outbound::agents::connector::ConnectorSet;
 pub struct VertexAiTaskRunnerInput {
     pub client: Client,
     pub model_id: String,
+    pub sub_agent_model_id: String,
     pub connectors: ConnectorSet,
     pub language: String,
     pub additional_system_prompt: Option<String>,
@@ -32,6 +33,7 @@ impl VertexAiTaskRunner {
             provider_settings: create_vertex_ai_provider_settings(
                 CreateVertexAiProviderSettingsInput {
                     model_id: input.model_id,
+                    sub_agent_model_id: input.sub_agent_model_id,
                 },
             ),
             connectors: input.connectors,

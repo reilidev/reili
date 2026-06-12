@@ -318,6 +318,7 @@ async fn create_provider_ports(
             task_runner: Arc::new(OpenAiTaskRunner::new(OpenAiTaskRunnerInput {
                 api_key: config.api_key.clone(),
                 model: config.model.clone(),
+                sub_agent_model: config.sub_agent_model.clone(),
                 reasoning_effort: config.reasoning_effort.clone(),
                 connectors: input.connectors,
                 language: input.language,
@@ -334,6 +335,7 @@ async fn create_provider_ports(
             task_runner: Arc::new(AnthropicTaskRunner::new(AnthropicTaskRunnerInput {
                 api_key: config.api_key.clone(),
                 model: config.model.clone(),
+                sub_agent_model: config.sub_agent_model.clone(),
                 connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
@@ -347,6 +349,7 @@ async fn create_provider_ports(
             )),
             task_runner: Arc::new(BedrockTaskRunner::new(BedrockTaskRunnerInput {
                 model_id: config.model_id.clone(),
+                sub_agent_model_id: config.sub_agent_model_id.clone(),
                 aws_profile: config.aws_profile.clone(),
                 aws_region: config.aws_region.clone(),
                 connectors: input.connectors,
@@ -367,6 +370,7 @@ async fn create_provider_ports(
                 task_runner: Arc::new(VertexAiTaskRunner::new(VertexAiTaskRunnerInput {
                     client,
                     model_id: config.model_id.clone(),
+                    sub_agent_model_id: config.sub_agent_model_id.clone(),
                     connectors: input.connectors,
                     language: input.language,
                     additional_system_prompt: input.additional_system_prompt,

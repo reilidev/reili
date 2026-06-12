@@ -109,7 +109,7 @@ where
             .preamble(&preamble)
             .default_max_turns(settings.sub_agent_max_turns)
             .additional_params(settings.additional_params.clone());
-        let builder = with_max_tokens(builder, settings.max_tokens);
+        let builder = with_max_tokens(builder, settings.sub_agent_max_tokens);
 
         builder
             .hook(AgentExecutionHook::new(
