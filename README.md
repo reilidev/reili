@@ -1,14 +1,14 @@
 <div align="center">
   <h1>Reili</h1>
   <img src="./docs/assets/reili.png" alt="Reili logo" width="240" />
-  <p><strong>An AI team member for SRE and DevOps, currently focused on investigations</strong></p>
+  <p><strong>An AI teammate for SRE and DevOps, currently focused on investigations</strong></p>
   <p>
     Investigate alerts quickly from Slack with Datadog telemetry and GitHub context.
   </p>
 </div>
 
 ## What is Reili?
-Reili works as an AI team member on your team, handling SRE and DevOps responsibilities.
+Reili works as an AI teammate on your team, handling SRE and DevOps responsibilities.
 
 When you assign a task to Reili, it will gather information from sources such as Datadog, GitHub, Slack, and configured knowledge bases to carry out the work
 As a general rule, Reili does not make changes to the production environment or perform recovery operations; instead,
