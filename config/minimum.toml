@@ -13,7 +13,7 @@ version = 1
 
 [channel.slack]
 
-[channel.slack.authorization.channels]
+[[channel.slack.channels]]
 names = ["*"]
 
 [ai]

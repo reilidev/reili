@@ -179,6 +179,26 @@ impl SlackAuthorizationDenyReason {
     }
 }
 
+/// A Slack channel name match pattern. Supports `*` wildcards (zero or more characters).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlackChannelNamePattern {
+    value: String,
+}
+
+impl SlackChannelNamePattern {
+    pub fn new(value: String) -> Self {
+        Self { value }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.value
+    }
+
+    pub fn matches(&self, channel_name: &str) -> bool {
+        wildcard_match(&self.value, channel_name)
+    }
+}
+
 fn wildcard_match(pattern: &str, value: &str) -> bool {
     if pattern == "*" {
         return true;

@@ -117,6 +117,8 @@ pub(crate) struct SlackFileConfig {
     pub auth: SlackAuthFileConfig,
     pub authorization: Option<SlackAuthorizationFileConfig>,
     #[serde(default)]
+    pub channels: Vec<SlackChannelFileConfig>,
+    #[serde(default)]
     pub socket: SlackSocketFileConfig,
     #[serde(default)]
     pub http: SlackHttpFileConfig,
@@ -177,14 +179,24 @@ impl Default for SlackHttpFileConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct SlackAuthorizationFileConfig {
-    pub channels: SlackAuthorizationChannelsFileConfig,
     pub actors: Option<SlackAuthorizationActorsFileConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub(crate) struct SlackAuthorizationChannelsFileConfig {
+pub(crate) struct SlackChannelFileConfig {
     pub names: Vec<String>,
+    #[serde(default = "default_true")]
+    pub mention: bool,
+    #[serde(default)]
+    pub auto_response: bool,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
+    pub auto_response_policy: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -204,6 +216,8 @@ pub(crate) struct AiFileConfig {
     pub lead_backend: Option<String>,
     #[serde(default, deserialize_with = "optional_non_empty_string")]
     pub sub_agent_backend: Option<String>,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
+    pub judge_backend: Option<String>,
     pub backends: BTreeMap<String, AiBackendFileConfig>,
 }
 
@@ -573,37 +587,101 @@ signing_secret_env = ""
     }
 
     #[test]
-    fn rejects_slack_authorization_without_channel_names_at_parse_time() {
-        for (authorization_config, missing_field) in [
-            (
-                r#"[channel.slack.authorization]
+    fn accepts_slack_authorization_with_actors_only_at_parse_time() {
+        for authorization_config in [
+            r#"[channel.slack.authorization]
 
 "#,
-                "channels",
-            ),
-            (
-                r#"[channel.slack.authorization.actors]
+            r#"[channel.slack.authorization.actors]
 user_ids = ["U001"]
 
 "#,
-                "channels",
-            ),
-            (
-                r#"[channel.slack.authorization.channels]
-
-"#,
-                "names",
-            ),
         ] {
             let toml = valid_config().replace("[ai]\n", &format!("{authorization_config}[ai]\n"));
 
-            let message = parse_error_message(&toml);
+            let config =
+                parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
 
-            assert!(
-                message.contains(&format!("missing field `{missing_field}`")),
-                "{message}"
-            );
+            assert!(config.channel.slack.authorization.is_some());
         }
+    }
+
+    #[test]
+    fn rejects_legacy_slack_authorization_channels_at_parse_time() {
+        let toml = valid_config().replace(
+            "[ai]\n",
+            r#"[channel.slack.authorization.channels]
+names = ["alerts-*"]
+
+[ai]
+"#,
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("unknown field `channels`"), "{message}");
+    }
+
+    #[test]
+    fn parses_slack_channels_table_with_defaults() {
+        let toml = valid_config().replace(
+            "[ai]\n",
+            r#"[[channel.slack.channels]]
+names = ["incidents", "alerts-*"]
+auto_response = true
+auto_response_policy = "React to incidents."
+
+[[channel.slack.channels]]
+names = ["team-sre"]
+
+[ai]
+"#,
+        );
+
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+        let channels = &config.channel.slack.channels;
+
+        assert_eq!(channels.len(), 2);
+        assert_eq!(
+            channels[0].names,
+            vec!["incidents".to_string(), "alerts-*".to_string()]
+        );
+        assert!(channels[0].mention);
+        assert!(channels[0].auto_response);
+        assert_eq!(
+            channels[0].auto_response_policy.as_deref(),
+            Some("React to incidents.")
+        );
+        assert_eq!(channels[1].names, vec!["team-sre".to_string()]);
+        assert!(channels[1].mention);
+        assert!(!channels[1].auto_response);
+        assert_eq!(channels[1].auto_response_policy, None);
+    }
+
+    #[test]
+    fn defaults_slack_channels_to_empty_when_omitted() {
+        let config =
+            parse_file_config(Path::new(TEST_PATH), &valid_config()).expect("parse should succeed");
+
+        assert!(config.channel.slack.channels.is_empty());
+    }
+
+    #[test]
+    fn rejects_empty_slack_channel_auto_response_policy_at_parse_time() {
+        let toml = valid_config().replace(
+            "[ai]\n",
+            r#"[[channel.slack.channels]]
+names = ["alerts-*"]
+auto_response = true
+auto_response_policy = "   "
+
+[ai]
+"#,
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("non-empty string"), "{message}");
     }
 
     fn parse_error_message(toml: &str) -> String {

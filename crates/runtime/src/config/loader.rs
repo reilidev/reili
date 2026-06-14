@@ -4,15 +4,16 @@ use std::path::{Path, PathBuf};
 use super::ConfigError;
 use super::env::{EnvironmentReader, ProcessEnvironment, read_required_secret};
 use super::file::{
-    AiBackendFileConfig, AiFileConfig, FileConfig, SlackAuthorizationFileConfig, SlackFileConfig,
-    parse_file_config,
+    AiBackendFileConfig, AiFileConfig, FileConfig, SlackAuthorizationFileConfig,
+    SlackChannelFileConfig, SlackFileConfig, parse_file_config,
 };
 use super::model::{
-    AnthropicLlmConfig, AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, LlmConfig,
-    LlmProviderConfig, OpenAiLlmConfig, SlackAuthorizationActors, SlackAuthorizationChannels,
-    SlackAuthorizationConfig, SlackChannelNamePattern, SlackConnectionMode, VertexAiLlmConfig,
+    AnthropicLlmConfig, AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, JudgeProviderConfig,
+    LlmConfig, LlmProviderConfig, OpenAiLlmConfig, SlackAuthorizationActors,
+    SlackAuthorizationConfig, SlackChannelConfig, SlackConnectionMode, VertexAiLlmConfig,
 };
 use crate::config::SecretString;
+use reili_core::messaging::slack::SlackChannelNamePattern;
 
 const DEFAULT_WORKER_CONCURRENCY: u32 = 8;
 const DEFAULT_JOB_MAX_RETRY: u32 = 2;
@@ -109,7 +110,13 @@ fn resolve_app_config(
     let slack_resolution = resolve_slack_connection_mode(&file_config.channel.slack, env)?;
     let slack_authorization =
         resolve_slack_authorization(file_config.channel.slack.authorization.as_ref());
+    let slack_channels = resolve_slack_channels(&file_config.channel.slack.channels)?;
     let llm_provider = resolve_llm_provider(&file_config.ai, env)?;
+    let judge_llm = if slack_channels.iter().any(|channel| channel.auto_response) {
+        Some(resolve_judge_llm_provider(&file_config.ai, env)?)
+    } else {
+        None
+    };
     let github = resolve_github_config(&file_config, env)?;
     let esa = resolve_esa_config(&file_config, env)?;
 
@@ -118,6 +125,7 @@ fn resolve_app_config(
         slack_signing_secret: slack_resolution.signing_secret,
         slack_connection_mode: slack_resolution.connection_mode,
         slack_authorization,
+        slack_channels,
         port: file_config.server.port,
         worker_concurrency: DEFAULT_WORKER_CONCURRENCY,
         job_max_retry: DEFAULT_JOB_MAX_RETRY,
@@ -136,6 +144,7 @@ fn resolve_app_config(
         llm: LlmConfig {
             provider: llm_provider,
         },
+        judge_llm,
         github,
         esa,
         language: file_config.conversation.language,
@@ -197,24 +206,14 @@ fn resolve_slack_connection_mode(
 fn resolve_slack_authorization(
     authorization: Option<&SlackAuthorizationFileConfig>,
 ) -> Option<SlackAuthorizationConfig> {
-    let authorization = authorization?;
-
-    let channel_names = authorization
-        .channels
-        .names
-        .iter()
-        .cloned()
-        .map(SlackChannelNamePattern::new)
-        .collect::<Vec<_>>();
-    let actors = authorization.actors.as_ref();
+    // `[channel.slack.authorization]` only carries actor conditions; channel conditions live in
+    // `[[channel.slack.channels]]`.
+    let actors = authorization?.actors.as_ref();
     let user_ids = actors.and_then(|a| a.user_ids.clone());
     let user_group_ids = actors.and_then(|a| a.user_group_ids.clone());
     let allow_bot = actors.is_some_and(|a| a.allow_bot);
 
     Some(SlackAuthorizationConfig {
-        channels: SlackAuthorizationChannels {
-            names: channel_names,
-        },
         actors: if user_ids.is_some() || user_group_ids.is_some() || allow_bot {
             Some(SlackAuthorizationActors {
                 user_ids,
@@ -225,6 +224,35 @@ fn resolve_slack_authorization(
             None
         },
     })
+}
+
+fn resolve_slack_channels(
+    channels: &[SlackChannelFileConfig],
+) -> Result<Vec<SlackChannelConfig>, ConfigError> {
+    channels
+        .iter()
+        .enumerate()
+        .map(|(index, channel)| {
+            let field = format!("channel.slack.channels[{index}]");
+            if !channel.mention && !channel.auto_response {
+                return Err(ConfigError::InvalidValue {
+                    field,
+                    message: "entry disables both `mention` and `auto_response`; remove it or enable at least one".to_string(),
+                });
+            }
+            Ok(SlackChannelConfig {
+                names: channel
+                    .names
+                    .iter()
+                    .cloned()
+                    .map(SlackChannelNamePattern::new)
+                    .collect(),
+                mention: channel.mention,
+                auto_response: channel.auto_response,
+                auto_response_policy: channel.auto_response_policy.clone(),
+            })
+        })
+        .collect()
 }
 
 fn resolve_llm_provider(
@@ -274,12 +302,10 @@ fn resolve_llm_provider(
         }),
         AiBackendFileConfig::Anthropic { model, api_key_env } => {
             Ok(LlmProviderConfig::Anthropic(AnthropicLlmConfig {
-                api_key: read_required_secret(
+                api_key: resolve_anthropic_api_key(
                     env,
-                    api_key_env
-                        .as_deref()
-                        .unwrap_or(DEFAULT_ANTHROPIC_API_KEY_ENV),
-                    &format!("{backend_field_prefix}.api_key_env"),
+                    api_key_env.as_deref(),
+                    &backend_field_prefix,
                 )?,
                 model: model.to_string(),
                 sub_agent_model,
@@ -306,6 +332,81 @@ fn resolve_llm_provider(
             sub_agent_model_id: sub_agent_model,
         })),
     }
+}
+
+/// Resolve the backend used by the auto-response judge. The judge is a
+/// single-shot call independent of the lead/sub-agent pair, so it may use a
+/// different provider than the task runner and carries no sub-agent model.
+fn resolve_judge_llm_provider(
+    ai: &AiFileConfig,
+    env: &dyn EnvironmentReader,
+) -> Result<JudgeProviderConfig, ConfigError> {
+    let (judge_id, judge_field) = select_backend_id(
+        ai.judge_backend.as_deref(),
+        &ai.default_backend,
+        "ai.judge_backend",
+    );
+    let judge_backend = lookup_backend(ai, judge_id, judge_field)?;
+    let prefix = format!("ai.backends.{judge_id}");
+
+    match judge_backend {
+        AiBackendFileConfig::OpenAi {
+            model, api_key_env, ..
+        } => Ok(JudgeProviderConfig::OpenAi {
+            api_key: resolve_openai_api_key(env, api_key_env.as_deref(), &prefix)?,
+            model: model.to_string(),
+        }),
+        AiBackendFileConfig::Anthropic { model, api_key_env } => {
+            Ok(JudgeProviderConfig::Anthropic {
+                api_key: resolve_anthropic_api_key(env, api_key_env.as_deref(), &prefix)?,
+                model: model.to_string(),
+            })
+        }
+        AiBackendFileConfig::Bedrock {
+            model_id,
+            aws_profile,
+            aws_region,
+        } => Ok(JudgeProviderConfig::Bedrock {
+            model_id: model_id.to_string(),
+            aws_profile: optional_trimmed(aws_profile.as_deref()),
+            aws_region: optional_trimmed(aws_region.as_deref()),
+        }),
+        AiBackendFileConfig::VertexAi {
+            project_id,
+            location,
+            model_id,
+        } => Ok(JudgeProviderConfig::VertexAi {
+            project_id: project_id.to_string(),
+            location: location.to_string(),
+            model_id: model_id.to_string(),
+        }),
+    }
+}
+
+/// Read an OpenAI backend's API key, falling back to the default env var.
+fn resolve_openai_api_key(
+    env: &dyn EnvironmentReader,
+    api_key_env: Option<&str>,
+    prefix: &str,
+) -> Result<SecretString, ConfigError> {
+    read_required_secret(
+        env,
+        api_key_env.unwrap_or(DEFAULT_OPENAI_API_KEY_ENV),
+        &format!("{prefix}.api_key_env"),
+    )
+}
+
+/// Read an Anthropic backend's API key, falling back to the default env var.
+fn resolve_anthropic_api_key(
+    env: &dyn EnvironmentReader,
+    api_key_env: Option<&str>,
+    prefix: &str,
+) -> Result<SecretString, ConfigError> {
+    read_required_secret(
+        env,
+        api_key_env.unwrap_or(DEFAULT_ANTHROPIC_API_KEY_ENV),
+        &format!("{prefix}.api_key_env"),
+    )
 }
 
 /// Pick the backend id for an agent role, falling back to `default_backend`.
@@ -374,11 +475,7 @@ fn resolve_openai_backend(
         .unwrap_or(DEFAULT_OPENAI_REASONING_EFFORT);
 
     Ok(LlmProviderConfig::OpenAi(OpenAiLlmConfig {
-        api_key: read_required_secret(
-            input.env,
-            input.api_key_env.unwrap_or(DEFAULT_OPENAI_API_KEY_ENV),
-            &format!("{}.api_key_env", input.prefix),
-        )?,
+        api_key: resolve_openai_api_key(input.env, input.api_key_env, input.prefix)?,
         model: input.model.to_string(),
         sub_agent_model: input.sub_agent_model,
         reasoning_effort: reasoning_effort.to_string(),
@@ -444,7 +541,7 @@ mod tests {
     use crate::config::ConfigError;
     use crate::config::env::EnvironmentReader;
     use crate::config::file::parse_file_config;
-    use crate::config::model::{LlmProviderConfig, SlackConnectionMode};
+    use crate::config::model::{JudgeProviderConfig, LlmProviderConfig, SlackConnectionMode};
 
     const TEST_PATH: &str = "/test/reili.toml";
 
@@ -1065,14 +1162,11 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
     }
 
     #[test]
-    fn resolves_slack_mention_authorization_allowlists_from_toml_without_normalization() {
+    fn resolves_slack_actor_authorization_from_toml_without_normalization() {
         let env = FixedEnvironment::with_overrides(&[]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "[ai]\n",
-            r#"[channel.slack.authorization.channels]
-names = [" Alerts-PROD ", "*-Prod", "alerts-prod"]
-
-[channel.slack.authorization.actors]
+            r#"[channel.slack.authorization.actors]
 user_ids = ["u001", "W002", "U001"]
 user_group_ids = ["s001", "S001"]
 allow_bot = true
@@ -1082,21 +1176,12 @@ allow_bot = true
         ));
 
         let config = resolve_app_config(file_config, &env).expect("resolve config");
-        let authorization = config
+        let actors = config
             .slack_authorization
-            .expect("slack authorization config");
-        let channel_names = authorization
-            .channels
-            .names
-            .iter()
-            .map(|pattern| pattern.as_str().to_string())
-            .collect::<Vec<_>>();
-        let actors = authorization.actors.expect("actor authorization");
+            .expect("slack authorization config")
+            .actors
+            .expect("actor authorization");
 
-        assert_eq!(
-            channel_names,
-            vec![" Alerts-PROD ", "*-Prod", "alerts-prod"]
-        );
         assert_eq!(
             actors.user_ids,
             Some(vec![
@@ -1117,10 +1202,7 @@ allow_bot = true
         let env = FixedEnvironment::with_overrides(&[]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "[ai]\n",
-            r#"[channel.slack.authorization.channels]
-names = []
-
-[channel.slack.authorization.actors]
+            r#"[channel.slack.authorization.actors]
 user_ids = []
 
 [ai]
@@ -1128,13 +1210,12 @@ user_ids = []
         ));
 
         let config = resolve_app_config(file_config, &env).expect("resolve config");
-        let authorization = config
+        let actors = config
             .slack_authorization
-            .expect("slack authorization config");
-        let channels = authorization.channels;
-        let actors = authorization.actors.expect("actor authorization");
+            .expect("slack authorization config")
+            .actors
+            .expect("actor authorization");
 
-        assert!(channels.names.is_empty());
         assert_eq!(actors.user_ids, Some(Vec::new()));
         assert_eq!(actors.user_group_ids, None);
         assert!(!actors.allow_bot);
@@ -1145,10 +1226,7 @@ user_ids = []
         let env = FixedEnvironment::with_overrides(&[]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "[ai]\n",
-            r#"[channel.slack.authorization.channels]
-names = ["alerts-*"]
-
-[channel.slack.authorization.actors]
+            r#"[channel.slack.authorization.actors]
 allow_bot = true
 
 [ai]
@@ -1168,28 +1246,230 @@ allow_bot = true
     }
 
     #[test]
-    fn keeps_blank_slack_authorization_strings_as_configured_values() {
+    fn resolves_slack_channels_table_without_normalization() {
         let env = FixedEnvironment::with_overrides(&[]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "[ai]\n",
-            r#"[channel.slack.authorization.channels]
-names = [" "]
+            r#"[[channel.slack.channels]]
+names = [" Alerts-PROD ", "alerts-*"]
+auto_response = true
+auto_response_policy = "React to incidents."
+
+[[channel.slack.channels]]
+names = ["team-sre"]
+
+[[channel.slack.channels]]
+names = ["aws-health"]
+mention = false
+auto_response = true
+auto_response_policy = "React to AWS health notices."
 
 [ai]
 "#,
         ));
 
         let config = resolve_app_config(file_config, &env).expect("resolve config");
-        let channel_names = config
-            .slack_authorization
-            .expect("slack authorization config")
-            .channels
-            .names
+
+        assert_eq!(config.slack_channels.len(), 3);
+        let first = &config.slack_channels[0];
+        assert_eq!(
+            first
+                .names
+                .iter()
+                .map(|pattern| pattern.as_str().to_string())
+                .collect::<Vec<_>>(),
+            vec![" Alerts-PROD ".to_string(), "alerts-*".to_string()]
+        );
+        assert!(first.mention);
+        assert!(first.auto_response);
+        assert_eq!(
+            first.auto_response_policy.as_deref(),
+            Some("React to incidents.")
+        );
+
+        let mention_patterns = config
+            .mention_channel_patterns()
             .iter()
             .map(|pattern| pattern.as_str().to_string())
             .collect::<Vec<_>>();
+        assert_eq!(
+            mention_patterns,
+            vec![" Alerts-PROD ", "alerts-*", "team-sre"]
+        );
 
-        assert_eq!(channel_names, vec![" ".to_string()]);
+        let auto_response_policies = config
+            .auto_response_channels()
+            .map(|channel| channel.auto_response_policy.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            auto_response_policies,
+            vec![
+                Some("React to incidents.".to_string()),
+                Some("React to AWS health notices.".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn resolves_auto_response_channel_without_policy() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[[channel.slack.channels]]
+names = ["alerts-*"]
+auto_response = true
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+        let channel = config
+            .auto_response_channels()
+            .next()
+            .expect("auto-response channel");
+
+        assert_eq!(channel.auto_response_policy, None);
+        assert!(config.judge_llm.is_some());
+    }
+
+    #[test]
+    fn rejects_channel_entry_with_mention_and_auto_response_disabled() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[[channel.slack.channels]]
+names = ["team-sre"]
+
+[[channel.slack.channels]]
+names = ["alerts-*"]
+mention = false
+auto_response = false
+
+[ai]
+"#,
+        ));
+
+        let error =
+            resolve_app_config(file_config, &env).expect_err("meaningless entry should fail");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "channel.slack.channels[1]");
+                assert!(message.contains("mention"), "{message}");
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn omits_judge_llm_when_no_auto_response_channels_are_configured() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[[channel.slack.channels]]
+names = ["team-sre"]
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert!(config.judge_llm.is_none());
+    }
+
+    #[test]
+    fn defaults_judge_backend_to_default_backend() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[[channel.slack.channels]]
+names = ["alerts-*"]
+auto_response = true
+auto_response_policy = "React to incidents."
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.judge_llm.expect("judge llm config") {
+            JudgeProviderConfig::OpenAi { model, api_key } => {
+                assert_eq!(model, "gpt-5.3-codex");
+                assert_eq!(api_key.expose(), "openai-api-key");
+            }
+            other => panic!("expected openai judge provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolves_judge_backend_with_provider_different_from_lead() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(
+            &valid_openai_config()
+                .replace(
+                    "[ai]\n",
+                    r#"[[channel.slack.channels]]
+names = ["alerts-*"]
+auto_response = true
+auto_response_policy = "React to incidents."
+
+[ai]
+"#,
+                )
+                .replace(
+                    "default_backend = \"primary\"",
+                    "default_backend = \"primary\"\njudge_backend = \"fast\"",
+                ),
+        );
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.llm.provider {
+            LlmProviderConfig::OpenAi(_) => {}
+            other => panic!("expected openai lead provider, got {other:?}"),
+        }
+        match config.judge_llm.expect("judge llm config") {
+            JudgeProviderConfig::Anthropic { model, api_key } => {
+                assert_eq!(model, "claude-haiku-4-5");
+                assert_eq!(api_key.expose(), "anthropic-api-key");
+            }
+            other => panic!("expected anthropic judge provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_judge_backend() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(
+            &valid_openai_config()
+                .replace(
+                    "[ai]\n",
+                    r#"[[channel.slack.channels]]
+names = ["alerts-*"]
+auto_response = true
+auto_response_policy = "React to incidents."
+
+[ai]
+"#,
+                )
+                .replace(
+                    "default_backend = \"primary\"",
+                    "default_backend = \"primary\"\njudge_backend = \"missing\"",
+                ),
+        );
+
+        let error = resolve_app_config(file_config, &env).expect_err("invalid judge backend");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "ai.judge_backend");
+                assert!(message.contains("unknown backend `missing`"), "{message}");
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
     }
 
     #[test]
@@ -1197,10 +1477,7 @@ names = [" "]
         let env = FixedEnvironment::with_overrides(&[]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "[ai]\n",
-            r#"[channel.slack.authorization.channels]
-names = ["alerts-*"]
-
-[channel.slack.authorization.actors]
+            r#"[channel.slack.authorization.actors]
 user_ids = ["S001"]
 user_group_ids = ["U001"]
 
