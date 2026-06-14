@@ -65,12 +65,16 @@ where
                 let reason = decision.reason.trim().to_string();
                 Ok(AutoResponseJudgeDecision {
                     respond: decision.respond,
-                    reason: if reason.is_empty() { None } else { Some(reason) },
+                    reason: if reason.is_empty() {
+                        None
+                    } else {
+                        Some(reason)
+                    },
                 })
             }
-            Err(ExtractionError::CompletionError(error)) => {
-                Err(PortError::new(format!("Auto-response judge request failed: {error}")))
-            }
+            Err(ExtractionError::CompletionError(error)) => Err(PortError::new(format!(
+                "Auto-response judge request failed: {error}"
+            ))),
             Err(error) => {
                 tracing::warn!(
                     error = %error,
