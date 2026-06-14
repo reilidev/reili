@@ -218,7 +218,7 @@ mod tests {
     fn builds_input_text_with_message() {
         let text = build_judge_input_text(&sample_input());
 
-        assert!(text.contains("Message:\nerror rate is spiking"));
+        assert!(text.contains("## Use message\nerror rate is spiking"));
         assert!(!text.contains("Recent thread context"));
     }
 
@@ -233,7 +233,9 @@ mod tests {
 
         let text = build_judge_input_text(&input);
 
-        assert!(text.contains("Recent thread context (optional):\n[2024-03-09T16:00:00Z] U002: deploy finished"));
+        assert!(text.contains(
+            "## Recent thread context (optional)\n[2024-03-09T16:00:00Z] U002: deploy finished"
+        ));
     }
 
     fn openai_function_call_body(arguments: serde_json::Value) -> serde_json::Value {
@@ -302,9 +304,11 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/responses"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(openai_function_call_body(
-                json!({"respond": true, "reason": "incident signal"}),
-            )))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(openai_function_call_body(
+                    json!({"respond": true, "reason": "incident signal"}),
+                )),
+            )
             .mount(&server)
             .await;
 
