@@ -54,6 +54,9 @@ Required Event Subscriptions:
 
 - Enable Events
 - `app_mention`: starts a task when someone mentions the bot and carries the `action_token` used by `assistant.search.context`
+- `message.channels`: feeds public-channel posts to the auto-response judge for channels configured
+  with `auto_response = true` in `[[channel.slack.channels]]`; events from other channels are
+  discarded without any Slack-visible action
 
 Configure the Slack app in two steps:
 
@@ -66,10 +69,10 @@ Common settings for both modes:
 |---------------------------------------|--------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
 | `Agents & AI Apps`                    | Turn on `Agent or Assistant`                                                                                       | Enables Slack agent search capabilities such as `assistant.search.context`                                       |
 | `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history`, `channels:read`, `usergroups:read`, `search:read.public` | Receive `app_mention`, mark accepted requests, reply in threads, read channel thread context, resolve authorization allowlists, reject private-channel mentions, and search Slack public-channel messages |
-| `Event Subscriptions`                 | Turn on events and add the bot event `app_mention`                                                                 | `app_mention` is the intake trigger in both modes                                                                |
+| `Event Subscriptions`                 | Turn on events and add the bot events `app_mention` and `message.channels`                                        | `app_mention` is the mention intake trigger; `message.channels` feeds the auto-response judge                    |
 | `Interactivity & Shortcuts`           | Turn on interactivity                                                                                              | Receive `block_actions` when a user clicks a task `Cancel` button                                                |
 | `Install App` / `OAuth & Permissions` | Install or reinstall the app after any scope change                                                                | Slack does not apply updated scopes until reinstall                                                              |
-| Slack workspace                       | Invite the app to every public channel where it should respond                                                     | The app must be present in the conversation to receive mentions and post replies                                 |
+| Slack workspace                       | Invite the app to every public channel where it should respond, including auto-response channels                   | The app must be present in the conversation to receive mentions, receive channel posts, and post replies         |
 
 Required Slack app settings for Socket Mode:
 
@@ -96,9 +99,9 @@ Required Bot OAuth scopes:
 - `app_mentions:read`: receive `app_mention` events
 - `chat:write`: post progress and final replies into the originating thread, post/update the task control message, and post authorization deny notices as ephemeral messages
 - `reactions:write`: add an `:eyes:` reaction to the triggering message once the task is queued
-- `channels:history`: read public channel thread history when additional context is needed
-- `channels:read`: resolve public channel metadata for mention authorization
-- `usergroups:read`: resolve user group membership for mention authorization
+- `channels:history`: read public channel thread history when additional context is needed, and receive `message.channels` events for auto-response channels
+- `channels:read`: resolve public channel metadata for mention and auto-response authorization
+- `usergroups:read`: resolve user group membership for mention and auto-response authorization
 - `search:read.public`: call `assistant.search.context` for public-channel Slack message search with a Bot Token
 
 Required App-Level Token scope for Socket Mode:
@@ -107,7 +110,6 @@ Required App-Level Token scope for Socket Mode:
 
 Not in scope for Slack:
 
-- Additional non-mention message triggers such as `message.channels`
 - Direct messages (`im`)
 - Group direct messages (`mpim`)
 - Their related event subscriptions and history scopes
@@ -119,8 +121,8 @@ Slack API methods currently used by the runtime:
   Reili uses this both for the `search_slack_messages` tool and for startup loading of recent
   Reili reusable notes marked with `reili_memory_v1`
 - `auth.test`: resolves the bot user ID at startup
-- `conversations.info`: resolves originating public channel metadata to evaluate channel name authorization patterns; private-channel lookup fails without `groups:read` and is denied before enqueue
-- `conversations.replies`: loads thread context when the triggering message is a thread reply
+- `conversations.info`: resolves originating public channel metadata to evaluate channel name patterns for mentions and auto-responses; private-channel lookup fails without `groups:read` and is denied before enqueue
+- `conversations.replies`: loads thread context when the triggering message is a thread reply, including auto-response judge context
 - `chat.postMessage`: posts queue failures, the final task summary, and the task control message
 - `chat.postEphemeral`: posts a private deny notice to the mentioning user when mention authorization rejects a request
 - `chat.update`: updates the task control message as tasks move through running/cancelled/completed/failed states
@@ -130,9 +132,10 @@ Slack API methods currently used by the runtime:
 
 Slack boundary:
 
-- Private channels are not supported; `app_mention` events from private channels are denied before enqueue
+- Private channels are not supported; `app_mention` and `message.channels` events from private channels are denied before enqueue
 - `groups:read` is intentionally not requested; private channel metadata is not read
-- When configured, handles only `app_mention` events matching the Slack channel name, user ID, user group, or bot actor authorization settings
+- Handles only `app_mention` events from channels matching a `mention = true` entry in `[[channel.slack.channels]]`, combined with the user ID, user group, or bot actor authorization settings
+- Evaluates `message.channels` events only for channels matching an `auto_response = true` entry; everything else is discarded silently, and posts the judge declines produce no Slack-visible action
 - Reads only the thread where the request was made, and only when additional thread context is needed
 - Searches only Slack public-channel messages permitted by the current app install, bot token scope, and `action_token` context
 - Loads lightweight memory only from Reili bot-authored Slack replies in the current public channel

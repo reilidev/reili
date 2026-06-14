@@ -5,14 +5,15 @@ mod model;
 
 use std::path::PathBuf;
 
+pub use reili_core::messaging::slack::SlackChannelNamePattern;
 pub use reili_core::secret::SecretString;
 use thiserror::Error;
 
 pub use loader::{ConfigLoadOptions, load_app_config};
 pub use model::{
-    AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, LlmConfig, LlmProviderConfig,
-    OpenAiLlmConfig, SlackAuthorizationActors, SlackAuthorizationChannels,
-    SlackAuthorizationConfig, SlackChannelNamePattern, SlackConnectionMode, VertexAiLlmConfig,
+    AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, JudgeProviderConfig, LlmConfig,
+    LlmProviderConfig, OpenAiLlmConfig, SlackAuthorizationActors, SlackAuthorizationConfig,
+    SlackChannelConfig, SlackConnectionMode, VertexAiLlmConfig,
 };
 
 #[derive(Debug, Error)]

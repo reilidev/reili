@@ -11,6 +11,11 @@ use reili_adapters::outbound::agents::{
 use reili_adapters::outbound::anthropic::{
     AnthropicWebSearchAdapter, AnthropicWebSearchAdapterConfig,
 };
+use reili_adapters::outbound::auto_response_judge::{
+    CreateBedrockAutoResponseJudgePortInput, create_anthropic_auto_response_judge_port,
+    create_bedrock_auto_response_judge_port, create_openai_auto_response_judge_port,
+    create_vertex_ai_auto_response_judge_port,
+};
 use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
 use reili_adapters::outbound::esa::{EsaClient, EsaClientConfig, EsaPostSearchPort};
 use reili_adapters::outbound::github::GitHubMcpConfig;
@@ -27,16 +32,17 @@ use reili_adapters::outbound::vertex_ai::{
 use reili_adapters::queue::InMemoryJobQueue;
 use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
-    HandleSlackInteractionUseCaseDeps, InFlightJobRegistry, SlackMentionAuthorizationGate,
-    SlackMentionAuthorizationService, StartTaskWorkerRunnerUseCase,
+    HandleSlackInteractionUseCaseDeps, InFlightJobRegistry, SlackAutoResponseGate,
+    SlackAutoResponseGateDeps, SlackAutoResponsePolicy, SlackInboundRouter,
+    SlackMentionAuthorizationGate, SlackMentionAuthorizationService, StartTaskWorkerRunnerUseCase,
     StartTaskWorkerRunnerUseCaseDeps, TaskExecutionDeps, TaskLogger,
 };
 use reili_core::error::PortError;
 use reili_core::knowledge::WebSearchPort;
 use reili_core::messaging::slack::{
-    SlackAuthorizationPolicy, SlackChannelLookupPort, SlackEphemeralMessagePort,
-    SlackInteractionHandlerPort, SlackMessageHandlerPort, SlackTaskControlMessagePort,
-    SlackUserGroupMembershipPort,
+    AutoResponseJudgePort, SlackAuthorizationPolicy, SlackChannelLookupPort,
+    SlackEphemeralMessagePort, SlackInteractionHandlerPort, SlackMessageHandlerPort,
+    SlackTaskControlMessagePort, SlackUserGroupMembershipPort,
 };
 use reili_core::messaging::slack::{
     SlackMessageSearchPort, SlackReactionPort, SlackThreadHistoryPort, SlackThreadReplyPort,
@@ -48,8 +54,7 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::config::{
-    AppConfig, EsaConfig, LlmProviderConfig, SecretString, SlackAuthorizationConfig,
-    SlackConnectionMode, VertexAiLlmConfig,
+    AppConfig, EsaConfig, JudgeProviderConfig, LlmProviderConfig, SecretString, SlackConnectionMode,
 };
 
 pub struct RuntimeDeps {
@@ -155,12 +160,14 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
             logger: Arc::clone(&logger),
         }),
     );
-    let slack_message_handler = build_slack_message_handler(
-        config.slack_authorization.as_ref(),
-        enqueue_slack_message_handler,
-        Arc::clone(&slack_web_api_client),
-        Arc::clone(&logger),
-    );
+    let slack_message_handler = build_slack_message_handler(BuildSlackMessageHandlerInput {
+        config,
+        next_handler: enqueue_slack_message_handler,
+        slack_web_api_client: Arc::clone(&slack_web_api_client),
+        slack_thread_history_port: Arc::clone(&slack_thread_history_port),
+        logger: Arc::clone(&logger),
+    })
+    .await?;
     let slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort> = Arc::new(
         HandleSlackInteractionUseCase::new(HandleSlackInteractionUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
@@ -204,64 +211,180 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     })
 }
 
-fn build_slack_message_handler(
-    authorization: Option<&SlackAuthorizationConfig>,
+struct BuildSlackMessageHandlerInput<'a> {
+    config: &'a AppConfig,
     next_handler: Arc<dyn SlackMessageHandlerPort>,
     slack_web_api_client: Arc<SlackWebApiClient>,
+    slack_thread_history_port: Arc<dyn SlackThreadHistoryPort>,
     logger: Arc<dyn TaskLogger>,
-) -> Arc<dyn SlackMessageHandlerPort> {
-    let authorization_service = SlackMentionAuthorizationService::new(
-        authorization
-            .map(build_slack_authorization_policy)
-            .unwrap_or_else(|| SlackAuthorizationPolicy::new(None, None, None, false)),
-        Arc::new(SlackChannelLookupAdapter::new(Arc::clone(
-            &slack_web_api_client,
-        ))) as Arc<dyn SlackChannelLookupPort>,
-        Arc::new(SlackUserGroupMembershipAdapter::new(Arc::clone(
-            &slack_web_api_client,
-        ))) as Arc<dyn SlackUserGroupMembershipPort>,
-        Arc::new(SlackEphemeralMessageAdapter::new(Arc::clone(
-            &slack_web_api_client,
-        ))) as Arc<dyn SlackEphemeralMessagePort>,
-        logger,
-    );
-
-    Arc::new(SlackMentionAuthorizationGate::new(
-        authorization_service,
-        next_handler,
-    ))
 }
 
-fn build_slack_authorization_policy(
-    authorization: &SlackAuthorizationConfig,
+struct SlackActorAuthorization {
+    user_ids: Option<Vec<String>>,
+    user_group_ids: Option<Vec<String>>,
+    allow_bot: bool,
+}
+
+async fn build_slack_message_handler(
+    input: BuildSlackMessageHandlerInput<'_>,
+) -> Result<Arc<dyn SlackMessageHandlerPort>, RuntimeBootstrapError> {
+    let channel_lookup_port: Arc<dyn SlackChannelLookupPort> = Arc::new(
+        SlackChannelLookupAdapter::new(Arc::clone(&input.slack_web_api_client)),
+    );
+    let user_group_membership_port: Arc<dyn SlackUserGroupMembershipPort> = Arc::new(
+        SlackUserGroupMembershipAdapter::new(Arc::clone(&input.slack_web_api_client)),
+    );
+    let actors = resolve_slack_actor_authorization(input.config);
+
+    let mention_service = SlackMentionAuthorizationService::new(
+        build_mention_authorization_policy(input.config, &actors),
+        Arc::clone(&channel_lookup_port),
+        Arc::clone(&user_group_membership_port),
+        Arc::new(SlackEphemeralMessageAdapter::new(Arc::clone(
+            &input.slack_web_api_client,
+        ))) as Arc<dyn SlackEphemeralMessagePort>,
+        Arc::clone(&input.logger),
+    );
+    let mention_gate: Arc<dyn SlackMessageHandlerPort> = Arc::new(
+        SlackMentionAuthorizationGate::new(mention_service, Arc::clone(&input.next_handler)),
+    );
+
+    let auto_response_gate = build_slack_auto_response_gate(BuildSlackAutoResponseGateInput {
+        config: input.config,
+        actors: &actors,
+        channel_lookup_port,
+        user_group_membership_port,
+        thread_history_port: input.slack_thread_history_port,
+        next_handler: input.next_handler,
+        logger: input.logger,
+    })
+    .await?;
+
+    Ok(Arc::new(SlackInboundRouter::new(
+        mention_gate,
+        auto_response_gate,
+    )))
+}
+
+fn resolve_slack_actor_authorization(config: &AppConfig) -> SlackActorAuthorization {
+    let actors = config
+        .slack_authorization
+        .as_ref()
+        .and_then(|authorization| authorization.actors.as_ref());
+
+    SlackActorAuthorization {
+        user_ids: actors.and_then(|actors| actors.user_ids.clone()),
+        user_group_ids: actors.and_then(|actors| actors.user_group_ids.clone()),
+        allow_bot: actors.is_some_and(|actors| actors.allow_bot),
+    }
+}
+
+fn build_mention_authorization_policy(
+    config: &AppConfig,
+    actors: &SlackActorAuthorization,
 ) -> SlackAuthorizationPolicy {
+    // An empty pattern list denies every mention, keeping the channels table opt-in.
     let channel_name_patterns = Some(
-        authorization
-            .channels
-            .names
+        config
+            .mention_channel_patterns()
             .iter()
             .map(|pattern| pattern.as_str().to_string())
-            .collect(),
+            .collect::<Vec<_>>(),
     );
-    let actor_user_ids = authorization
-        .actors
-        .as_ref()
-        .and_then(|actors| actors.user_ids.clone());
-    let actor_user_group_ids = authorization
-        .actors
-        .as_ref()
-        .and_then(|actors| actors.user_group_ids.clone());
-    let actor_allow_bot = authorization
-        .actors
-        .as_ref()
-        .is_some_and(|actors| actors.allow_bot);
 
     SlackAuthorizationPolicy::new(
         channel_name_patterns,
-        actor_user_ids,
-        actor_user_group_ids,
-        actor_allow_bot,
+        actors.user_ids.clone(),
+        actors.user_group_ids.clone(),
+        actors.allow_bot,
     )
+}
+
+struct BuildSlackAutoResponseGateInput<'a> {
+    config: &'a AppConfig,
+    actors: &'a SlackActorAuthorization,
+    channel_lookup_port: Arc<dyn SlackChannelLookupPort>,
+    user_group_membership_port: Arc<dyn SlackUserGroupMembershipPort>,
+    thread_history_port: Arc<dyn SlackThreadHistoryPort>,
+    next_handler: Arc<dyn SlackMessageHandlerPort>,
+    logger: Arc<dyn TaskLogger>,
+}
+
+async fn build_slack_auto_response_gate(
+    input: BuildSlackAutoResponseGateInput<'_>,
+) -> Result<Option<Arc<dyn SlackMessageHandlerPort>>, RuntimeBootstrapError> {
+    let channels = input
+        .config
+        .auto_response_channels()
+        .map(|channel| SlackAutoResponsePolicy {
+            names: channel.names.clone(),
+            policy: channel.auto_response_policy.clone(),
+        })
+        .collect::<Vec<_>>();
+    let Some(judge_llm) = input.config.judge_llm.as_ref() else {
+        return Ok(None);
+    };
+    if channels.is_empty() {
+        return Ok(None);
+    }
+
+    let actor_policy = SlackAuthorizationPolicy::new(
+        None,
+        input.actors.user_ids.clone(),
+        input.actors.user_group_ids.clone(),
+        input.actors.allow_bot,
+    );
+
+    Ok(Some(Arc::new(SlackAutoResponseGate::new(
+        SlackAutoResponseGateDeps {
+            channels,
+            actor_policy,
+            channel_lookup_port: input.channel_lookup_port,
+            user_group_membership_port: input.user_group_membership_port,
+            thread_history_port: input.thread_history_port,
+            judge_port: create_auto_response_judge_port(judge_llm).await?,
+            language: input.config.language.clone(),
+            next_handler: input.next_handler,
+            logger: input.logger,
+        },
+    ))))
+}
+
+async fn create_auto_response_judge_port(
+    judge_llm: &JudgeProviderConfig,
+) -> Result<Arc<dyn AutoResponseJudgePort>, RuntimeBootstrapError> {
+    match judge_llm {
+        JudgeProviderConfig::OpenAi { api_key, model } => Ok(
+            create_openai_auto_response_judge_port(api_key.clone(), model.clone()),
+        ),
+        JudgeProviderConfig::Anthropic { api_key, model } => Ok(
+            create_anthropic_auto_response_judge_port(api_key.clone(), model.clone()),
+        ),
+        JudgeProviderConfig::Bedrock {
+            model_id,
+            aws_profile,
+            aws_region,
+        } => Ok(
+            create_bedrock_auto_response_judge_port(CreateBedrockAutoResponseJudgePortInput {
+                model_id: model_id.clone(),
+                aws_profile: aws_profile.clone(),
+                aws_region: aws_region.clone(),
+            })
+            .await,
+        ),
+        JudgeProviderConfig::VertexAi {
+            project_id,
+            location,
+            model_id,
+        } => {
+            let client = build_vertex_ai_client(project_id, location)?;
+
+            Ok(create_vertex_ai_auto_response_judge_port(
+                client,
+                model_id.clone(),
+            ))
+        }
+    }
 }
 
 fn build_slack_signature_verifier(
@@ -358,7 +481,7 @@ async fn create_provider_ports(
             })),
         }),
         LlmProviderConfig::VertexAi(config) => {
-            let client = build_vertex_ai_client(config)?;
+            let client = build_vertex_ai_client(&config.project_id, &config.location)?;
 
             Ok(ProviderPorts {
                 web_search_port: Arc::new(VertexAiWebSearchAdapter::new(
@@ -381,11 +504,12 @@ async fn create_provider_ports(
 }
 
 fn build_vertex_ai_client(
-    config: &VertexAiLlmConfig,
+    project_id: &str,
+    location: &str,
 ) -> Result<VertexAiGeminiClient, RuntimeBootstrapError> {
     VertexAiGeminiClient::builder()
-        .with_project(&config.project_id)
-        .with_location(&config.location)
+        .with_project(project_id)
+        .with_location(location)
         .build()
         .map_err(
             |error| RuntimeBootstrapError::ProviderClientInitialization {

@@ -1,4 +1,5 @@
 pub mod authorization;
+pub mod auto_response;
 pub mod control_message;
 pub mod file;
 pub mod interaction;
@@ -41,7 +42,14 @@ pub use authorization::{
 pub use authorization::{
     PostSlackEphemeralMessageInput, SlackAuthorizationContext, SlackAuthorizationDecision,
     SlackAuthorizationDenyReason, SlackAuthorizationPolicy, SlackChannelInfo,
-    SlackChannelLookupPort, SlackEphemeralMessagePort, SlackUserGroupMembershipPort,
+    SlackChannelLookupPort, SlackChannelNamePattern, SlackEphemeralMessagePort,
+    SlackUserGroupMembershipPort,
+};
+#[cfg(any(test, feature = "test-support"))]
+pub use auto_response::MockAutoResponseJudgePort;
+pub use auto_response::{
+    AutoResponseContextMessage, AutoResponseJudgeDecision, AutoResponseJudgeInput,
+    AutoResponseJudgePort,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use control_message::MockSlackTaskControlMessagePort;

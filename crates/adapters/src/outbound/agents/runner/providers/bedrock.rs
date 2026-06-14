@@ -65,7 +65,10 @@ impl TaskRunnerPort for BedrockTaskRunner {
     }
 }
 
-async fn create_bedrock_client(aws_profile: Option<&str>, aws_region: Option<&str>) -> Client {
+pub(crate) async fn create_bedrock_client(
+    aws_profile: Option<&str>,
+    aws_region: Option<&str>,
+) -> Client {
     let mut loader = aws_config::defaults(BehaviorVersion::latest());
     if let Some(profile) = aws_profile {
         loader = loader.profile_name(profile);

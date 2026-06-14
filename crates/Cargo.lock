@@ -2867,6 +2867,7 @@ dependencies = [
  "rig-vertexai",
  "ring",
  "rmcp 1.7.0",
+ "schemars 1.2.1",
  "serde",
  "serde_json",
  "serde_urlencoded",

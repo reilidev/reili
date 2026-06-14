@@ -1,5 +1,6 @@
 use std::fmt;
 
+use reili_core::messaging::slack::SlackChannelNamePattern;
 use reili_core::secret::SecretString;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -19,13 +20,7 @@ impl fmt::Debug for SlackConnectionMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlackAuthorizationConfig {
-    pub channels: SlackAuthorizationChannels,
     pub actors: Option<SlackAuthorizationActors>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SlackAuthorizationChannels {
-    pub names: Vec<SlackChannelNamePattern>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,18 +31,13 @@ pub struct SlackAuthorizationActors {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SlackChannelNamePattern {
-    value: String,
-}
-
-impl SlackChannelNamePattern {
-    pub fn new(value: String) -> Self {
-        Self { value }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.value
-    }
+pub struct SlackChannelConfig {
+    pub names: Vec<SlackChannelNamePattern>,
+    pub mention: bool,
+    pub auto_response: bool,
+    /// Judge policy override for this channel; the judge's built-in policy
+    /// is used when omitted.
+    pub auto_response_policy: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +63,31 @@ impl LlmProviderConfig {
             Self::VertexAi(_) => "vertexai",
         }
     }
+}
+
+/// Provider configuration for the single-shot auto-response judge. The judge has
+/// no sub-agent, so this carries only the fields the judge call actually needs
+/// (unlike [`LlmProviderConfig`], which also tracks a sub-agent model).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JudgeProviderConfig {
+    OpenAi {
+        api_key: SecretString,
+        model: String,
+    },
+    Anthropic {
+        api_key: SecretString,
+        model: String,
+    },
+    Bedrock {
+        model_id: String,
+        aws_profile: Option<String>,
+        aws_region: Option<String>,
+    },
+    VertexAi {
+        project_id: String,
+        location: String,
+        model_id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +149,7 @@ pub struct AppConfig {
     pub slack_signing_secret: Option<SecretString>,
     pub slack_connection_mode: SlackConnectionMode,
     pub slack_authorization: Option<SlackAuthorizationConfig>,
+    pub slack_channels: Vec<SlackChannelConfig>,
     pub port: u16,
     pub worker_concurrency: u32,
     pub job_max_retry: u32,
@@ -142,17 +158,40 @@ pub struct AppConfig {
     pub datadog_app_key: SecretString,
     pub datadog_site: String,
     pub llm: LlmConfig,
+    /// Provider used by the auto-response judge; resolved only when at least
+    /// one channel enables `auto_response`.
+    pub judge_llm: Option<JudgeProviderConfig>,
     pub github: GitHubConfig,
     pub esa: Option<EsaConfig>,
     pub language: String,
     pub additional_system_prompt: Option<String>,
 }
 
+impl AppConfig {
+    /// Channel name patterns for mention authorization, aggregated from
+    /// `mention = true` entries. An empty list denies mentions in all channels.
+    pub fn mention_channel_patterns(&self) -> Vec<SlackChannelNamePattern> {
+        self.slack_channels
+            .iter()
+            .filter(|channel| channel.mention)
+            .flat_map(|channel| channel.names.iter().cloned())
+            .collect()
+    }
+
+    /// Channels eligible for auto-response judgement.
+    pub fn auto_response_channels(&self) -> impl Iterator<Item = &SlackChannelConfig> {
+        self.slack_channels
+            .iter()
+            .filter(|channel| channel.auto_response)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AppConfig, EsaConfig, GitHubConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig,
-        SecretString, SlackConnectionMode,
+        AppConfig, EsaConfig, GitHubConfig, JudgeProviderConfig, LlmConfig, LlmProviderConfig,
+        OpenAiLlmConfig, SecretString, SlackChannelConfig, SlackChannelNamePattern,
+        SlackConnectionMode,
     };
 
     #[test]
@@ -164,6 +203,7 @@ mod tests {
                 app_token: SecretString::new("xapp-secret".to_string()),
             },
             slack_authorization: None,
+            slack_channels: Vec::new(),
             port: 3000,
             worker_concurrency: 8,
             job_max_retry: 2,
@@ -179,6 +219,10 @@ mod tests {
                     reasoning_effort: "low".to_string(),
                 }),
             },
+            judge_llm: Some(JudgeProviderConfig::OpenAi {
+                api_key: SecretString::new("judge-openai-secret".to_string()),
+                model: "gpt-5.4-mini".to_string(),
+            }),
             github: GitHubConfig {
                 url: "https://api.githubcopilot.com/mcp/".to_string(),
                 app_id: "12345".to_string(),
@@ -202,8 +246,101 @@ mod tests {
         assert!(!debug_output.contains("dd-api"));
         assert!(!debug_output.contains("dd-app"));
         assert!(!debug_output.contains("openai-secret"));
+        assert!(!debug_output.contains("judge-openai-secret"));
         assert!(!debug_output.contains("private-key"));
         assert!(!debug_output.contains("esa-token"));
         assert!(debug_output.contains("[REDACTED]"));
+    }
+
+    fn channel(
+        names: Vec<&str>,
+        mention: bool,
+        auto_response: bool,
+        auto_response_policy: Option<&str>,
+    ) -> SlackChannelConfig {
+        SlackChannelConfig {
+            names: names
+                .into_iter()
+                .map(|name| SlackChannelNamePattern::new(name.to_string()))
+                .collect(),
+            mention,
+            auto_response,
+            auto_response_policy: auto_response_policy.map(ToString::to_string),
+        }
+    }
+
+    fn config_with_channels(slack_channels: Vec<SlackChannelConfig>) -> AppConfig {
+        AppConfig {
+            slack_bot_token: SecretString::new("xoxb-secret".to_string()),
+            slack_signing_secret: None,
+            slack_connection_mode: SlackConnectionMode::Http,
+            slack_authorization: None,
+            slack_channels,
+            port: 3000,
+            worker_concurrency: 8,
+            job_max_retry: 2,
+            job_backoff_ms: 1_000,
+            datadog_api_key: SecretString::new("dd-api".to_string()),
+            datadog_app_key: SecretString::new("dd-app".to_string()),
+            datadog_site: "datadoghq.com".to_string(),
+            llm: LlmConfig {
+                provider: LlmProviderConfig::OpenAi(OpenAiLlmConfig {
+                    api_key: SecretString::new("openai-secret".to_string()),
+                    model: "gpt-5.3-codex".to_string(),
+                    sub_agent_model: "gpt-5.3-codex".to_string(),
+                    reasoning_effort: "low".to_string(),
+                }),
+            },
+            judge_llm: None,
+            github: GitHubConfig {
+                url: "https://api.githubcopilot.com/mcp/".to_string(),
+                app_id: "12345".to_string(),
+                private_key: SecretString::new("private-key".to_string()),
+                installation_id: 99,
+                scope_org: "example-org".to_string(),
+            },
+            esa: None,
+            language: "English".to_string(),
+            additional_system_prompt: None,
+        }
+    }
+
+    #[test]
+    fn aggregates_mention_channel_patterns_from_mention_entries_only() {
+        let config = config_with_channels(vec![
+            channel(vec!["incidents", "alerts-*"], true, true, Some("prompt")),
+            channel(vec!["aws-health"], false, true, Some("prompt")),
+            channel(vec!["team-sre"], true, false, None),
+        ]);
+
+        let patterns = config
+            .mention_channel_patterns()
+            .iter()
+            .map(|pattern| pattern.as_str().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(patterns, vec!["incidents", "alerts-*", "team-sre"]);
+    }
+
+    #[test]
+    fn returns_empty_mention_patterns_for_empty_channels_table() {
+        let config = config_with_channels(Vec::new());
+
+        assert!(config.mention_channel_patterns().is_empty());
+    }
+
+    #[test]
+    fn filters_auto_response_channels() {
+        let config = config_with_channels(vec![
+            channel(vec!["incidents"], true, true, Some("prompt")),
+            channel(vec!["team-sre"], true, false, None),
+        ]);
+
+        let auto_response_names = config
+            .auto_response_channels()
+            .flat_map(|channel| channel.names.iter().map(|name| name.as_str().to_string()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(auto_response_names, vec!["incidents"]);
     }
 }

@@ -80,6 +80,19 @@ fn parse_message_event(
         return Ok(ParsedSlackEvent::Ignored);
     }
 
+    // A post that mentions the bot also arrives as an `app_mention` event, which carries the
+    // `action_token` and goes through mention authorization. Drop the duplicate `message` event so
+    // the same post is not handled twice (mention path and auto-response path).
+    if trigger == SlackTriggerType::Message
+        && input
+            .event
+            .text
+            .as_deref()
+            .is_some_and(|text| mentions_bot(text, input.bot_user_id))
+    {
+        return Ok(ParsedSlackEvent::Ignored);
+    }
+
     let actor_is_bot = input.event.bot_id.is_some() || input.event.bot_profile.is_some();
     let user = match input.event.user {
         Some(value) => value,
@@ -165,6 +178,11 @@ fn resolve_message_text(
         Some(value) if !value.trim().is_empty() => Some(value),
         _ => render_slack_legacy_attachments_text(legacy_attachments),
     }
+}
+
+/// Whether `text` mentions the bot. Slack renders mentions as `<@U123>` or `<@U123|displayname>`.
+fn mentions_bot(text: &str, bot_user_id: &str) -> bool {
+    text.contains(&format!("<@{bot_user_id}>")) || text.contains(&format!("<@{bot_user_id}|"))
 }
 
 #[cfg(test)]
@@ -478,6 +496,110 @@ mod tests {
         )
         .expect("parse bot event");
         assert_eq!(bot_message_event, ParsedSlackEvent::Ignored);
+    }
+
+    #[test]
+    fn ignores_message_event_that_mentions_bot() {
+        let parsed = parse_slack_event(
+            json!({
+                "type": "event_callback",
+                "event_id": "evt-dup",
+                "event": {
+                    "type": "message",
+                    "channel": "C001",
+                    "user": "U001",
+                    "text": "<@U-BOT> investigate this alert",
+                    "ts": "1710000000.000005"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+            "U-BOT",
+        )
+        .expect("parse event");
+
+        assert_eq!(parsed, ParsedSlackEvent::Ignored);
+    }
+
+    #[test]
+    fn ignores_message_event_that_mentions_bot_with_display_label() {
+        let parsed = parse_slack_event(
+            json!({
+                "type": "event_callback",
+                "event_id": "evt-dup-label",
+                "event": {
+                    "type": "message",
+                    "channel": "C001",
+                    "user": "U001",
+                    "text": "<@U-BOT|reili> investigate this alert",
+                    "ts": "1710000000.000006"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+            "U-BOT",
+        )
+        .expect("parse event");
+
+        assert_eq!(parsed, ParsedSlackEvent::Ignored);
+    }
+
+    #[test]
+    fn parses_message_event_without_bot_mention() {
+        let parsed = parse_slack_event(
+            json!({
+                "type": "event_callback",
+                "event_id": "evt-auto",
+                "event": {
+                    "type": "message",
+                    "channel": "C001",
+                    "user": "U001",
+                    "text": "error rate is spiking on api",
+                    "ts": "1710000000.000005"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+            "U-BOT",
+        )
+        .expect("parse event");
+
+        match parsed {
+            ParsedSlackEvent::Message(message) => {
+                assert_eq!(message.trigger, SlackTriggerType::Message);
+                assert_eq!(message.text, "error rate is spiking on api");
+            }
+            other => panic!("expected message event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_app_mention_event_even_when_it_mentions_bot() {
+        let parsed = parse_slack_event(
+            json!({
+                "type": "event_callback",
+                "event_id": "evt-mention",
+                "event": {
+                    "type": "app_mention",
+                    "channel": "C001",
+                    "user": "U001",
+                    "text": "<@U-BOT> investigate this alert",
+                    "ts": "1710000000.000006"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+            "U-BOT",
+        )
+        .expect("parse event");
+
+        match parsed {
+            ParsedSlackEvent::Message(message) => {
+                assert_eq!(message.trigger, SlackTriggerType::AppMention);
+                assert_eq!(message.text, "<@U-BOT> investigate this alert");
+            }
+            other => panic!("expected app mention event, got {other:?}"),
+        }
     }
 
     #[test]

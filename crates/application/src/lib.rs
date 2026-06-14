@@ -12,7 +12,8 @@ pub use execution::{
 };
 pub use ingress::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
-    HandleSlackInteractionUseCaseDeps, SlackMentionAuthorizationGate,
+    HandleSlackInteractionUseCaseDeps, SlackAutoResponseGate, SlackAutoResponseGateDeps,
+    SlackAutoResponsePolicy, SlackInboundRouter, SlackMentionAuthorizationGate,
     SlackMentionAuthorizationOutcome, SlackMentionAuthorizationService,
 };
 pub use progress::{
