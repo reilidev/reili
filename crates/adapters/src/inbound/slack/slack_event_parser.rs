@@ -120,10 +120,12 @@ fn parse_message_event(
     let message = SlackMessage {
         slack_event_id: input.event_id,
         team_id: input.team_id,
-        action_token: input
-            .event
-            .assistant_thread
-            .and_then(|thread| thread.action_token),
+        action_token: input.event.action_token.or_else(|| {
+            input
+                .event
+                .assistant_thread
+                .and_then(|thread| thread.action_token)
+        }),
         trigger,
         channel,
         user,
@@ -162,6 +164,7 @@ struct SlackCallbackEvent {
     files: Option<Vec<SlackMessageFile>>,
     ts: Option<String>,
     thread_ts: Option<String>,
+    action_token: Option<SecretString>,
     assistant_thread: Option<SlackAssistantThread>,
 }
 
@@ -264,9 +267,7 @@ mod tests {
                 "event_id": "evt-2",
                 "event": {
                     "type": "app_mention",
-                    "assistant_thread": {
-                        "action_token": "action-token"
-                    },
+                    "action_token": "action-token",
                     "channel": "C001",
                     "user": "U002",
                     "text": "<@U-BOT> investigate this alert",
@@ -299,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_action_token_from_assistant_thread() {
+    fn falls_back_to_action_token_from_assistant_thread() {
         let parsed = parse_slack_event(
             json!({
                 "type": "event_callback",
