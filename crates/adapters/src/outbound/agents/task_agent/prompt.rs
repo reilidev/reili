@@ -88,7 +88,7 @@ pub(super) fn build_memory_context(memory_items: &[reili_core::task::TaskMemoryI
                 .as_deref()
                 .unwrap_or("permalink_unavailable");
             format!(
-                "source: {source}\nchannel: {}, ts: {}\nmemory:\n{}",
+                "source: {source}\nchannel: {}\nts: {}\nmemory:\n{}",
                 item.source.channel_id,
                 item.source.message_ts,
                 item.content.trim()
