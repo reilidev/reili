@@ -133,10 +133,16 @@ pub fn create_vertex_ai_auto_response_judge_port(
 
 fn build_judge_preamble(input: &AutoResponseJudgeInput) -> String {
     format!(
-        "You are working as a software engineer on a team. For each Slack message, your only task is to decide whether or not to react to it.
-Following the policy, determine whether you should react to the Slack message. Your output must strictly conform to the JSON schema.
+        "Your only task is to decide whether to react to a single Slack message.
 
-Write the \"reason\" field in {language}.
+The policy below is the sole and authoritative criterion for this decision. Apply it literally and
+exhaustively: react only when the message satisfies the policy, and do not react otherwise.
+When the message is ambiguous or the policy does not clearly cover it, do not react.
+Use the recent thread context, when provided, only to interpret the message against the policy,
+never as an independent reason to react.
+
+Your output must strictly conform to the JSON schema. Write the \"reason\" field in {language}, and
+state which part of the policy the message did or did not satisfy.
 
 ## Policy
 {policy}

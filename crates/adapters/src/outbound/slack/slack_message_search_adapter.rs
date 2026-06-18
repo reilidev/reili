@@ -5,6 +5,7 @@ use reili_core::error::PortError;
 use reili_core::messaging::slack::{
     SlackContextMessage, SlackMessageSearchContextMessages, SlackMessageSearchInput,
     SlackMessageSearchPort, SlackMessageSearchResult, SlackMessageSearchResultItem,
+    SlackMessageSearchSort, SlackMessageSearchSortDirection,
 };
 use serde::{Deserialize, Serialize};
 
@@ -18,11 +19,11 @@ pub struct SlackMessageSearchAdapter {
 }
 
 #[derive(Debug, Serialize)]
-struct AssistantSearchContextRequest<'a> {
-    query: &'a str,
-    action_token: &'a str,
+struct AssistantSearchContextRequest {
+    query: String,
+    action_token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    context_channel_id: Option<&'a str>,
+    context_channel_id: Option<String>,
     content_types: [&'static str; 1],
     channel_types: [&'static str; 1],
     include_bots: bool,
@@ -32,9 +33,9 @@ struct AssistantSearchContextRequest<'a> {
     before: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     after: Option<i64>,
-    sort: &'a reili_core::messaging::slack::SlackMessageSearchSort,
+    sort: SlackMessageSearchSort,
     #[serde(rename = "sort_dir")]
-    sort_direction: &'a reili_core::messaging::slack::SlackMessageSearchSortDirection,
+    sort_direction: SlackMessageSearchSortDirection,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -105,25 +106,24 @@ impl SlackMessageSearchPort for SlackMessageSearchAdapter {
 
         let query = input.query.trim().to_string();
         let action_token = input.action_token.expose().trim().to_string();
+        let request = AssistantSearchContextRequest {
+            query,
+            action_token,
+            context_channel_id: input.context_channel_id,
+            content_types: ["messages"],
+            channel_types: ["public_channel"],
+            include_bots: input.include_bots,
+            include_context_messages: input.include_context_messages,
+            limit: input.limit,
+            before: input.before,
+            after: input.after,
+            sort: input.sort,
+            sort_direction: input.sort_direction,
+        };
+
         let response = self
             .client
-            .post(
-                "assistant.search.context",
-                &AssistantSearchContextRequest {
-                    query: &query,
-                    action_token: &action_token,
-                    context_channel_id: input.context_channel_id.as_deref(),
-                    content_types: ["messages"],
-                    channel_types: ["public_channel"],
-                    include_bots: input.include_bots,
-                    include_context_messages: input.include_context_messages,
-                    limit: input.limit,
-                    before: input.before,
-                    after: input.after,
-                    sort: &input.sort,
-                    sort_direction: &input.sort_direction,
-                },
-            )
+            .post("assistant.search.context", &request)
             .await?;
 
         let parsed: AssistantSearchContextResponse =
