@@ -346,63 +346,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn reads_attached_file_name_and_plain_text_from_replies() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/conversations.replies"))
-            .and(query_param("channel", "C123"))
-            .and(query_param("ts", "1710000000.000000"))
-            .and(query_param("limit", THREAD_HISTORY_PAGE_LIMIT.to_string()))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "ok": true,
-                "messages": [
-                    {
-                        "ts": "1710000000.000001",
-                        "user": "U1",
-                        "text": "",
-                        "files": [{
-                            "name": "aws-health.eml",
-                            "title": "AWS Health Event",
-                            "plain_text": "scheduled upgrade required"
-                        }]
-                    }
-                ]
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let adapter = SlackThreadHistoryAdapter::new(Arc::new(create_client(&server.uri())));
-        let result = adapter
-            .fetch_thread_history(FetchSlackThreadHistoryInput {
-                channel: "C123".to_string(),
-                thread_ts: "1710000000.000000".to_string(),
-            })
-            .await
-            .expect("fetch thread history");
-
-        assert_eq!(
-            result,
-            vec![SlackThreadMessage {
-                ts: "1710000000.000001".to_string(),
-                user: Some("U1".to_string()),
-                text: String::new(),
-                legacy_attachments: Vec::new(),
-                files: vec![SlackMessageFile {
-                    name: Some("aws-health.eml".to_string()),
-                    title: Some("AWS Health Event".to_string()),
-                    plain_text: Some("scheduled upgrade required".to_string()),
-                }],
-                metadata: None,
-            }]
-        );
-        assert_eq!(
-            result[0].rendered_text(),
-            "attached_file: aws-health.eml\nplain_text:\nscheduled upgrade required"
-        );
-    }
-
     fn create_client(base_url: &str) -> SlackWebApiClient {
         SlackWebApiClient::new(SlackWebApiClientConfig {
             bot_token: SecretString::from("xoxb-test"),

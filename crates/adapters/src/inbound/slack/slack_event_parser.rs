@@ -1,6 +1,6 @@
 use reili_core::error::PortError;
 use reili_core::messaging::slack::{
-    SlackLegacyAttachment, SlackMessage, SlackMessageFile, SlackTriggerType,
+    SlackFileSharedEvent, SlackLegacyAttachment, SlackMessage, SlackMessageFile, SlackTriggerType,
     render_slack_legacy_attachments_text, render_slack_message_files_text,
 };
 use reili_core::secret::SecretString;
@@ -14,6 +14,7 @@ use serde::Deserialize;
 pub enum ParsedSlackEvent {
     UrlVerification { challenge: String },
     Message(SlackMessage),
+    FileShared(SlackFileSharedEvent),
     Ignored,
 }
 
@@ -61,8 +62,24 @@ pub fn parse_slack_event(payload: &[u8], bot_user_id: &str) -> Result<ParsedSlac
             },
             SlackTriggerType::AppMention,
         ),
+        "file_shared" => Ok(parse_file_shared_event(event_id, envelope.team_id, event)),
         _ => Ok(ParsedSlackEvent::Ignored),
     }
+}
+
+fn parse_file_shared_event(
+    event_id: String,
+    team_id: Option<String>,
+    event: SlackCallbackEvent,
+) -> ParsedSlackEvent {
+    ParsedSlackEvent::FileShared(SlackFileSharedEvent {
+        slack_event_id: event_id,
+        team_id: team_id.unwrap_or_default(),
+        channel_id: event.channel_id.unwrap_or_default(),
+        file_id: event.file_id.unwrap_or_default(),
+        user_id: event.user_id.unwrap_or_default(),
+        event_ts: event.event_ts.unwrap_or_default(),
+    })
 }
 
 struct ParseEventInput<'a> {
@@ -156,7 +173,9 @@ struct SlackCallbackEvent {
     event_type: String,
     subtype: Option<String>,
     channel: Option<String>,
+    channel_id: Option<String>,
     user: Option<String>,
+    user_id: Option<String>,
     bot_id: Option<String>,
     bot_profile: Option<serde_json::Value>,
     text: Option<String>,
@@ -164,6 +183,8 @@ struct SlackCallbackEvent {
     files: Option<Vec<SlackMessageFile>>,
     ts: Option<String>,
     thread_ts: Option<String>,
+    event_ts: Option<String>,
+    file_id: Option<String>,
     action_token: Option<SecretString>,
     assistant_thread: Option<SlackAssistantThread>,
 }
@@ -194,6 +215,8 @@ mod tests {
     use reili_core::messaging::slack::{SlackLegacyAttachment, SlackMessage, SlackTriggerType};
     use reili_core::secret::SecretString;
     use serde_json::json;
+
+    use reili_core::messaging::slack::SlackFileSharedEvent;
 
     use super::{ParsedSlackEvent, parse_slack_event};
 
@@ -442,6 +465,7 @@ mod tests {
                     name: Some("aws-health.eml".to_string()),
                     title: Some("AWS Health Event".to_string()),
                     plain_text: Some("scheduled upgrade required".to_string()),
+                    is_binary: false,
                 }],
                 ts: "1710000000.000006".to_string(),
                 thread_ts: None,
@@ -453,7 +477,75 @@ mod tests {
         };
         assert_eq!(
             message.rendered_text(),
-            "attached_file: aws-health.eml\nplain_text:\nscheduled upgrade required"
+            "## Attached file title\n aws-health.eml\n\n## Plain text\nscheduled upgrade required\n"
+        );
+    }
+
+    #[test]
+    fn parses_file_shared_event_with_required_fields() {
+        let parsed = parse_slack_event(
+            json!({
+                "type": "event_callback",
+                "event_id": "evt-file-shared",
+                "team_id": "T001",
+                "event": {
+                    "type": "file_shared",
+                    "channel_id": "C001",
+                    "file_id": "F001",
+                    "user_id": "U001",
+                    "event_ts": "1710000000.000007"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+            "U-BOT",
+        )
+        .expect("parse file_shared event");
+
+        assert_eq!(
+            parsed,
+            ParsedSlackEvent::FileShared(SlackFileSharedEvent {
+                slack_event_id: "evt-file-shared".to_string(),
+                team_id: "T001".to_string(),
+                channel_id: "C001".to_string(),
+                file_id: "F001".to_string(),
+                user_id: "U001".to_string(),
+                event_ts: "1710000000.000007".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_file_shared_event_without_strict_field_validation() {
+        let parsed = parse_slack_event(
+            json!({
+                "type": "event_callback",
+                "event_id": "evt-file-shared",
+                "team_id": "T001",
+                "event": {
+                    "type": "file_shared",
+                    "channel_id": "C001",
+                    "file_id": "",
+                    "user_id": "U001",
+                    "event_ts": "1710000000.000007"
+                }
+            })
+            .to_string()
+            .as_bytes(),
+            "U-BOT",
+        )
+        .expect("parse file_shared event");
+
+        assert_eq!(
+            parsed,
+            ParsedSlackEvent::FileShared(SlackFileSharedEvent {
+                slack_event_id: "evt-file-shared".to_string(),
+                team_id: "T001".to_string(),
+                channel_id: "C001".to_string(),
+                file_id: String::new(),
+                user_id: "U001".to_string(),
+                event_ts: "1710000000.000007".to_string(),
+            })
         );
     }
 

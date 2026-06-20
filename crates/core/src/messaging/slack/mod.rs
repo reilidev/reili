@@ -2,6 +2,7 @@ pub mod authorization;
 pub mod auto_response;
 pub mod control_message;
 pub mod file;
+pub mod file_shared;
 pub mod interaction;
 pub mod interaction_handler;
 pub mod legacy_attachment;
@@ -18,6 +19,7 @@ pub use control_message::{
     SlackTaskControlState, UpdateTaskControlMessageInput,
 };
 pub use file::{SlackMessageFile, render_slack_message_files_text};
+pub use file_shared::{SlackFileSharedEvent, SlackFileSharedMessagePort};
 pub use interaction::{SlackCancelJobInteraction, SlackInteraction};
 pub use interaction_handler::SlackInteractionHandlerPort;
 pub use legacy_attachment::{
@@ -53,6 +55,8 @@ pub use auto_response::{
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use control_message::MockSlackTaskControlMessagePort;
+#[cfg(any(test, feature = "test-support"))]
+pub use file_shared::MockSlackFileSharedMessagePort;
 #[cfg(any(test, feature = "test-support"))]
 pub use interaction_handler::MockSlackInteractionHandlerPort;
 #[cfg(any(test, feature = "test-support"))]

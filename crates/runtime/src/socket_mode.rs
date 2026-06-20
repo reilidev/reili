@@ -8,7 +8,10 @@ use reili_adapters::inbound::slack::{
     ParsedSlackEvent, ParsedSlackInteraction, parse_slack_event, parse_slack_interaction_value,
 };
 use reili_application::{TaskLogger, string_log_meta};
-use reili_core::messaging::slack::{SlackInteractionHandlerPort, SlackMessageHandlerPort};
+use reili_core::messaging::slack::{
+    SlackFileSharedEvent, SlackFileSharedMessagePort, SlackInteractionHandlerPort,
+    SlackMessageHandlerPort,
+};
 use reili_core::secret::SecretString;
 use serde::Deserialize;
 use serde_json::json;
@@ -73,6 +76,7 @@ pub struct SocketModeConfig {
     pub app_token: SecretString,
     pub bot_user_id: String,
     pub slack_message_handler: Arc<dyn SlackMessageHandlerPort>,
+    pub slack_file_shared_message_port: Arc<dyn SlackFileSharedMessagePort>,
     pub slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort>,
     pub logger: Arc<dyn TaskLogger>,
 }
@@ -258,6 +262,21 @@ impl SocketModeClient {
                                 }
                             });
                         }
+                        Ok(ParsedSlackEvent::FileShared(event)) => {
+                            let file_shared_message_port =
+                                Arc::clone(&self.config.slack_file_shared_message_port);
+                            let handler = Arc::clone(&self.config.slack_message_handler);
+                            let logger = Arc::clone(&self.config.logger);
+                            tokio::spawn(async move {
+                                handle_file_shared_event(
+                                    file_shared_message_port,
+                                    handler,
+                                    logger,
+                                    event,
+                                )
+                                .await;
+                            });
+                        }
                         Ok(ParsedSlackEvent::UrlVerification { .. }) => {
                             // Does not occur in Socket Mode
                         }
@@ -336,6 +355,54 @@ impl SocketModeClient {
                 body.error.unwrap_or_else(|| "unknown error".to_string()),
             )),
         }
+    }
+}
+
+async fn handle_file_shared_event(
+    file_shared_message_port: Arc<dyn SlackFileSharedMessagePort>,
+    slack_message_handler: Arc<dyn SlackMessageHandlerPort>,
+    logger: Arc<dyn TaskLogger>,
+    event: SlackFileSharedEvent,
+) {
+    logger.info(
+        "Received Slack file_shared event",
+        string_log_meta([
+            ("slackEventId", event.slack_event_id.clone()),
+            ("teamId", event.team_id.clone()),
+            ("channelId", event.channel_id.clone()),
+            ("fileId", event.file_id.clone()),
+            ("userId", event.user_id.clone()),
+            ("eventTs", event.event_ts.clone()),
+        ]),
+    );
+
+    let slack_event_id = event.slack_event_id.clone();
+    let message = match file_shared_message_port
+        .fetch_shared_file_message(event)
+        .await
+    {
+        Ok(Some(message)) => message,
+        Ok(None) => {
+            logger.warn(
+                "Ignored Slack file_shared event without processable file message",
+                string_log_meta([("slackEventId", slack_event_id)]),
+            );
+            return;
+        }
+        Err(error) => {
+            logger.warn(
+                "Failed to fetch Slack file_shared message",
+                string_log_meta([("slackEventId", slack_event_id), ("error", error.message)]),
+            );
+            return;
+        }
+    };
+
+    if let Err(error) = slack_message_handler.handle(message).await {
+        logger.error(
+            "Failed to handle Slack file_shared message",
+            string_log_meta([("slackEventId", slack_event_id), ("error", error.message)]),
+        );
     }
 }
 

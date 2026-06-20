@@ -8,6 +8,8 @@ pub struct SlackMessageFile {
     pub title: Option<String>,
     #[serde(default, alias = "plain_text", skip_serializing_if = "Option::is_none")]
     pub plain_text: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_binary: bool,
 }
 
 impl SlackMessageFile {
@@ -15,11 +17,19 @@ impl SlackMessageFile {
         let name = self.name().unwrap_or_default();
         let plain_text = self.plain_text().unwrap_or_default();
 
-        if name.is_empty() && plain_text.is_empty() {
+        if name.is_empty() && plain_text.is_empty() && !self.is_binary {
             return None;
         }
 
-        Some(format!("attached_file: {name}\nplain_text:\n{plain_text}"))
+        let mut parts = vec![format!("## Attached file title\n {name}\n")];
+        if self.is_binary {
+            parts.push("This is binary file".to_string());
+        }
+        if !plain_text.is_empty() || !self.is_binary {
+            parts.push(format!("## Plain text\n{plain_text}\n"));
+        }
+
+        Some(parts.join("\n"))
     }
 
     fn name(&self) -> Option<&str> {
@@ -32,6 +42,10 @@ impl SlackMessageFile {
     fn plain_text(&self) -> Option<&str> {
         self.plain_text.as_deref().filter(|text| !text.is_empty())
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 pub fn render_slack_message_files_text(files: &[SlackMessageFile]) -> Option<String> {
@@ -57,11 +71,15 @@ mod tests {
             name: Some("alert.eml".to_string()),
             title: Some("Alert email".to_string()),
             plain_text: Some("scheduled upgrade required".to_string()),
+            is_binary: false,
         };
 
         assert_eq!(
             file.rendered_text(),
-            Some("attached_file: alert.eml\nplain_text:\nscheduled upgrade required".to_string())
+            Some(
+                "## Attached file title\n alert.eml\n\n## Plain text\nscheduled upgrade required\n"
+                    .to_string()
+            )
         );
     }
 
@@ -71,11 +89,15 @@ mod tests {
             name: None,
             title: Some("AWS Health Event".to_string()),
             plain_text: Some("important notice".to_string()),
+            is_binary: false,
         };
 
         assert_eq!(
             file.rendered_text(),
-            Some("attached_file: AWS Health Event\nplain_text:\nimportant notice".to_string())
+            Some(
+                "## Attached file title\n AWS Health Event\n\n## Plain text\nimportant notice\n"
+                    .to_string()
+            )
         );
     }
 
@@ -85,11 +107,27 @@ mod tests {
             name: Some("alert.eml".to_string()),
             title: Some("Alert email".to_string()),
             plain_text: None,
+            is_binary: false,
         };
 
         assert_eq!(
             file.rendered_text(),
-            Some("attached_file: alert.eml\nplain_text:\n".to_string())
+            Some("## Attached file title\n alert.eml\n\n## Plain text\n\n".to_string())
+        );
+    }
+
+    #[test]
+    fn renders_binary_file_marker_without_plain_text() {
+        let file = SlackMessageFile {
+            name: Some("alert.eml".to_string()),
+            title: Some("Alert email".to_string()),
+            plain_text: None,
+            is_binary: true,
+        };
+
+        assert_eq!(
+            file.rendered_text(),
+            Some("## Attached file title\n alert.eml\n\nThis is binary file".to_string())
         );
     }
 
@@ -100,18 +138,20 @@ mod tests {
                 name: Some("one.txt".to_string()),
                 title: None,
                 plain_text: Some("first".to_string()),
+                is_binary: false,
             },
             SlackMessageFile {
                 name: Some("two.txt".to_string()),
                 title: None,
                 plain_text: Some("second".to_string()),
+                is_binary: false,
             },
         ]);
 
         assert_eq!(
             rendered,
             Some(
-                "attached_file: one.txt\nplain_text:\nfirst\n\nattached_file: two.txt\nplain_text:\nsecond"
+                "## Attached file title\n one.txt\n\n## Plain text\nfirst\n\n\n## Attached file title\n two.txt\n\n## Plain text\nsecond\n"
                     .to_string()
             )
         );

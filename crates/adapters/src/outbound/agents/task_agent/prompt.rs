@@ -202,6 +202,7 @@ mod tests {
             name: Some("aws-health.eml".to_string()),
             title: Some("AWS Health Event".to_string()),
             plain_text: Some("scheduled upgrade required".to_string()),
+            is_binary: false,
         }];
         let request = TaskRequest {
             trigger_message: trigger,
@@ -228,6 +229,7 @@ mod tests {
                     name: Some("aws-health.eml".to_string()),
                     title: Some("AWS Health Event".to_string()),
                     plain_text: Some("scheduled upgrade required".to_string()),
+                    is_binary: false,
                 }],
                 metadata: None,
             }],

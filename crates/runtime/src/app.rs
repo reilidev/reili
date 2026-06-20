@@ -15,7 +15,10 @@ use reili_adapters::inbound::slack::{
 };
 use reili_adapters::logger::init_json_logger;
 use reili_application::{TaskLogger, string_log_meta};
-use reili_core::messaging::slack::{SlackInteractionHandlerPort, SlackMessageHandlerPort};
+use reili_core::messaging::slack::{
+    SlackFileSharedEvent, SlackFileSharedMessagePort, SlackInteractionHandlerPort,
+    SlackMessageHandlerPort,
+};
 use serde_json::json;
 
 use crate::bootstrap::{RuntimeBootstrapError, build_runtime_deps};
@@ -50,6 +53,7 @@ pub enum AppRunError {
 #[derive(Clone)]
 struct AppHttpState {
     slack_message_handler: Arc<dyn SlackMessageHandlerPort>,
+    slack_file_shared_message_port: Arc<dyn SlackFileSharedMessagePort>,
     slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort>,
     bot_user_id: String,
     logger: Arc<dyn TaskLogger>,
@@ -90,6 +94,7 @@ async fn run_http_server(
 
     let http_state = Arc::new(AppHttpState {
         slack_message_handler: Arc::clone(&deps.slack_message_handler),
+        slack_file_shared_message_port: Arc::clone(&deps.slack_file_shared_message_port),
         slack_interaction_handler: Arc::clone(&deps.slack_interaction_handler),
         bot_user_id: deps.bot_user_id.clone(),
         logger: Arc::clone(&deps.logger),
@@ -129,6 +134,7 @@ async fn run_socket_mode(
         app_token,
         bot_user_id: deps.bot_user_id.clone(),
         slack_message_handler: Arc::clone(&deps.slack_message_handler),
+        slack_file_shared_message_port: Arc::clone(&deps.slack_file_shared_message_port),
         slack_interaction_handler: Arc::clone(&deps.slack_interaction_handler),
         logger: Arc::clone(&deps.logger),
     });
@@ -170,7 +176,65 @@ async fn handle_slack_events(State(state): State<Arc<AppHttpState>>, body: Bytes
 
             StatusCode::OK.into_response()
         }
+        ParsedSlackEvent::FileShared(event) => {
+            handle_file_shared_event(
+                &state.slack_file_shared_message_port,
+                &state.slack_message_handler,
+                &state.logger,
+                event,
+            )
+            .await;
+            StatusCode::OK.into_response()
+        }
         ParsedSlackEvent::Ignored => StatusCode::OK.into_response(),
+    }
+}
+
+async fn handle_file_shared_event(
+    file_shared_message_port: &Arc<dyn SlackFileSharedMessagePort>,
+    slack_message_handler: &Arc<dyn SlackMessageHandlerPort>,
+    logger: &Arc<dyn TaskLogger>,
+    event: SlackFileSharedEvent,
+) {
+    logger.info(
+        "Received Slack file_shared event",
+        string_log_meta([
+            ("slackEventId", event.slack_event_id.clone()),
+            ("teamId", event.team_id.clone()),
+            ("channelId", event.channel_id.clone()),
+            ("fileId", event.file_id.clone()),
+            ("userId", event.user_id.clone()),
+            ("eventTs", event.event_ts.clone()),
+        ]),
+    );
+
+    let slack_event_id = event.slack_event_id.clone();
+    let message = match file_shared_message_port
+        .fetch_shared_file_message(event)
+        .await
+    {
+        Ok(Some(message)) => message,
+        Ok(None) => {
+            logger.warn(
+                "Ignored Slack file_shared event without processable file message",
+                string_log_meta([("slackEventId", slack_event_id)]),
+            );
+            return;
+        }
+        Err(error) => {
+            logger.warn(
+                "Failed to fetch Slack file_shared message",
+                string_log_meta([("slackEventId", slack_event_id), ("error", error.message)]),
+            );
+            return;
+        }
+    };
+
+    if let Err(error) = slack_message_handler.handle(message).await {
+        logger.error(
+            "Failed to handle Slack file_shared message",
+            string_log_meta([("slackEventId", slack_event_id), ("error", error.message)]),
+        );
     }
 }
 

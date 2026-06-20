@@ -12,6 +12,7 @@ oauth_config:
       - channels:history
       - channels:read
       - chat:write
+      - files:read
       - usergroups:read
       - assistant:write
       - search:read.files
@@ -23,6 +24,7 @@ settings:
     request_url: https://example.com/slack/events
     bot_events:
       - app_mention
+      - file_shared
       - message.channels
   interactivity:
     is_enabled: true

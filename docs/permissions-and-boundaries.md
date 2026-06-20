@@ -54,6 +54,7 @@ Required Event Subscriptions:
 
 - Enable Events
 - `app_mention`: starts a task when someone mentions the bot and carries the `action_token` used by `assistant.search.context`
+- `file_shared`: fetches shared file content, including forwarded emails, and feeds it through the same auto-response path as public-channel messages
 - `message.channels`: feeds public-channel posts to the auto-response judge for channels configured
   with `auto_response = true` in `[[channel.slack.channels]]`; events from other channels are
   discarded without any Slack-visible action
@@ -68,8 +69,8 @@ Common settings for both modes:
 | Slack screen                          | Required setting                                                                                                   | Why                                                                                                              |
 |---------------------------------------|--------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
 | `Agents & AI Apps`                    | Turn on `Agent or Assistant`                                                                                       | Enables Slack agent search capabilities such as `assistant.search.context`                                       |
-| `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history`, `channels:read`, `usergroups:read`, `search:read.public` | Receive `app_mention`, mark accepted requests, reply in threads, read channel thread context, resolve authorization allowlists, reject private-channel mentions, and search Slack public-channel messages |
-| `Event Subscriptions`                 | Turn on events and add the bot events `app_mention` and `message.channels`                                        | `app_mention` is the mention intake trigger; `message.channels` feeds the auto-response judge                    |
+| `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history`, `channels:read`, `files:read`, `usergroups:read`, `search:read.public` | Receive `app_mention`, mark accepted requests, reply in threads, read channel thread context, receive file share events, resolve authorization allowlists, reject private-channel mentions, and search Slack public-channel messages |
+| `Event Subscriptions`                 | Turn on events and add the bot events `app_mention`, `file_shared`, and `message.channels`                       | `app_mention` is the mention intake trigger; `file_shared` feeds shared-file content to the auto-response path; `message.channels` feeds the auto-response judge |
 | `Interactivity & Shortcuts`           | Turn on interactivity                                                                                              | Receive `block_actions` when a user clicks a task `Cancel` button                                                |
 | `Install App` / `OAuth & Permissions` | Install or reinstall the app after any scope change                                                                | Slack does not apply updated scopes until reinstall                                                              |
 | Slack workspace                       | Invite the app to every public channel where it should respond, including auto-response channels                   | The app must be present in the conversation to receive mentions, receive channel posts, and post replies         |
@@ -101,6 +102,7 @@ Required Bot OAuth scopes:
 - `reactions:write`: add an `:eyes:` reaction to the triggering message once the task is queued
 - `channels:history`: read public channel thread history when additional context is needed, and receive `message.channels` events for auto-response channels
 - `channels:read`: resolve public channel metadata for mention and auto-response authorization
+- `files:read`: receive and inspect Slack file share events, including forwarded emails represented as files
 - `usergroups:read`: resolve user group membership for mention and auto-response authorization
 - `search:read.public`: call `assistant.search.context` for public-channel Slack message search with a Bot Token
 
