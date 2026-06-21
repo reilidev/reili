@@ -135,7 +135,7 @@ mod tests {
 
     use reili_core::messaging::slack::{
         FetchSlackThreadHistoryInput, SlackLegacyAttachment, SlackLegacyAttachmentField,
-        SlackMessageFile, SlackThreadHistoryPort, SlackThreadMessage,
+        SlackThreadHistoryPort, SlackThreadMessage,
     };
     use reili_core::secret::SecretString;
     use serde_json::json;
