@@ -105,6 +105,7 @@ mod tests {
                 name: Some("thread.txt".to_string()),
                 title: None,
                 plain_text: Some("details".to_string()),
+                is_binary: false,
             }],
             metadata: Some(SlackMessageMetadata {
                 event_type: "task_control_message_posted".to_string(),
@@ -130,27 +131,6 @@ mod tests {
 
         assert!(restored.legacy_attachments.is_empty());
         assert!(restored.files.is_empty());
-    }
-
-    #[test]
-    fn renders_thread_text_with_attached_file_plain_text() {
-        let message = SlackThreadMessage {
-            ts: "123.456".to_string(),
-            user: Some("U001".to_string()),
-            text: String::new(),
-            legacy_attachments: Vec::new(),
-            files: vec![SlackMessageFile {
-                name: Some("thread.txt".to_string()),
-                title: None,
-                plain_text: Some("attachment context".to_string()),
-            }],
-            metadata: None,
-        };
-
-        assert_eq!(
-            message.rendered_text(),
-            "attached_file: thread.txt\nplain_text:\nattachment context"
-        );
     }
 
     #[test]

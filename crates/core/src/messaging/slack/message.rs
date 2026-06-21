@@ -78,6 +78,7 @@ mod tests {
                 name: Some("alert.eml".to_string()),
                 title: None,
                 plain_text: Some("notice".to_string()),
+                is_binary: false,
             }],
             ts: "123.456".to_string(),
             thread_ts: None,
@@ -159,6 +160,7 @@ mod tests {
                 name: Some("alert.eml".to_string()),
                 title: None,
                 plain_text: Some("scheduled upgrade required".to_string()),
+                is_binary: false,
             }],
             ts: "123.456".to_string(),
             thread_ts: None,
@@ -166,7 +168,7 @@ mod tests {
 
         assert_eq!(
             message.rendered_text(),
-            "please investigate\n\nattached_file: alert.eml\nplain_text:\nscheduled upgrade required"
+            "please investigate\n\n## Attached file title\n alert.eml\n\n## Plain text\nscheduled upgrade required\n"
         );
     }
 }
