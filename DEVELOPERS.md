@@ -13,6 +13,8 @@ This document is for contributors and maintainers of `Reili`.
   - Anthropic API key
   - AWS credentials for Amazon Bedrock
   - Google Application Default Credentials for Vertex AI
+- Optional: an esa access token with the `read` scope, only when the esa knowledge base
+  integration (`[connector.esa]`) is configured
 
 ## Repository Layout
 
@@ -45,10 +47,12 @@ Non-secret settings live in `reili.toml`, including:
 
 - server port
 - conversation language and optional additional system prompt
-- Slack connection mode
-- selected AI backend and backend-specific non-secret settings
+- Slack connection mode, channel opt-in, and actor authorization
+- AI backend selection (`default_backend` plus optional per-role `lead_backend`,
+  `sub_agent_backend`, and `judge_backend`) and backend-specific non-secret settings
 - Datadog site
 - GitHub MCP URL, GitHub App ID, installation ID, and search scope org
+- esa team name when the `[connector.esa]` integration is configured
 
 3. Prepare local secrets:
 
@@ -64,6 +68,7 @@ Common required secrets:
 - `DATADOG_API_KEY`
 - `DATADOG_APP_KEY`
 - `GITHUB_APP_PRIVATE_KEY`
+- `ESA_ACCESS_TOKEN` when `[connector.esa]` is configured
 
 Slack mode-specific secrets:
 
@@ -96,8 +101,12 @@ Supported config schema version:
 version = 1
 ```
 
-The current AI backend selector is `ai.default_backend`, which points to one entry under
-`ai.backends`. Do not use the old `LLM_PROVIDER` environment variable pattern.
+AI backends are named entries under `ai.backends`. `ai.default_backend` selects the fallback
+backend; `ai.lead_backend`, `ai.sub_agent_backend`, and `ai.judge_backend` override the backend for
+each role and fall back to `default_backend` when unset. The sub-agent backend must use the same
+provider as the lead backend (only the model differs); the judge backend may use a different
+provider, and a cheap, fast model is recommended for it. Do not use the old `LLM_PROVIDER`
+environment variable pattern.
 
 Supported backend providers:
 
@@ -106,9 +115,11 @@ Supported backend providers:
 - `bedrock`
 - `vertexai` (`vertex_ai` is also accepted by the loader)
 
-OpenAI backends require `model` and may set `reasoning_effort` to `low`, `medium`, `high`, or
-`xhigh`. Anthropic backends currently accept `claude-opus-4-6`, `claude-sonnet-4-6`, and
-`claude-haiku-4-5`. Bedrock and Vertex AI backends use `model_id`.
+OpenAI backends require `model`. `reasoning_effort` defaults to `medium`; `low`, `medium`, `high`,
+and `xhigh` are the documented values, but the loader passes the configured value through without
+validating it. Anthropic backends tune the max-token budget for `claude-opus-4-6`,
+`claude-sonnet-4-6`, and `claude-haiku-4-5`; other model ids are accepted and fall back to a default
+budget. Bedrock and Vertex AI backends use `model_id`.
 
 ## Local Run
 
@@ -122,14 +133,14 @@ If you prefer running from `crates/`:
 
 ```bash
 cd crates
-bash -lc 'set -a; source ../.env; set +a; cargo run -p reili_runtime -- --config ../reili.toml' 2>&1 | tee ../.tmp/reili.log
+bash -lc 'set -a; source ../.env; set +a; cargo run -p reili_runtime -- --config reili.toml' 2>&1 | tee ../.tmp/reili.log
 ```
 
 If you use `cargo-watch`:
 
 ```bash
 cd crates
-bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p reili_runtime -- --config ../reili.toml"' 2>&1 | tee ../.tmp/reili.log
+bash -lc 'set -a; source ../.env; set +a; cargo watch -x "run -p reili_runtime -- --config reili.toml"' 2>&1 | tee ../.tmp/reili.log
 ```
 
 ## Slack Runtime Modes
@@ -251,7 +262,7 @@ assembled from those prebuilt binaries and published by the release workflow.
 
 ## Useful Commands
 
-- `cargo run -p reili_runtime -- --config ../reili.toml`: start the app from `crates/`
-- `cargo watch -x "run -p reili_runtime -- --config ../reili.toml"`: start with reload from `crates/`
+- `cargo run -p reili_runtime -- --config reili.toml`: start the app from `crates/`
+- `cargo watch -x "run -p reili_runtime -- --config reili.toml"`: start with reload from `crates/`
 - `cargo test --workspace`: run Rust tests
 - `cargo clippy --workspace --all-targets -- -D warnings`: run lints
