@@ -12,6 +12,7 @@ pub struct BuildTaskPromptInput {
 }
 
 pub fn build_task_prompt(input: BuildTaskPromptInput) -> String {
+    let trigger_message_user = &input.request.trigger_message.user;
     let trigger_message_text = input.request.trigger_message.rendered_text();
     let thread_transcript = build_thread_transcript(&input.request.thread_messages);
     let memory_context = build_memory_context(&input.request.memory_items);
@@ -32,6 +33,8 @@ Current context:
 {memory_context}
 
 # User message
+posted_by: {trigger_message_user}
+
 {trigger_message_text}",
         language = input.language,
         current_context = current_context,
@@ -192,6 +195,7 @@ mod tests {
         assert!(prompt.contains("U456"));
         assert!(prompt.contains("First message"));
         assert!(prompt.contains("follow-up from bot"));
+        assert!(prompt.contains("# User message\nposted_by: U001"));
     }
 
     #[test]
