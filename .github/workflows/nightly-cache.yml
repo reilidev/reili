@@ -1,0 +1,64 @@
+name: Nightly Cache Warmup
+
+on:
+  schedule:
+    # 04:00 JST
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  CARGO_HTTP_TIMEOUT: 60
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+jobs:
+  # Job ids match development.yml's lint/test jobs so Swatinem/rust-cache
+  # (whose cache key includes the job id) refreshes the same cache entries
+  # those PR checks restore, keeping them warm and under the 7-day GitHub
+  # Actions cache eviction window even when main is quiet.
+  lint:
+    permissions:
+      contents: read
+    runs-on: ubuntu-slim
+    defaults:
+      run:
+        working-directory: crates
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # release tag v1; upstream does not publish v1.x.y tags
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: crates -> target
+          cache-on-failure: true
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    permissions:
+      contents: read
+    runs-on: ubuntu-slim
+    defaults:
+      run:
+        working-directory: crates
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # release tag v1; upstream does not publish v1.x.y tags
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: crates -> target
+          cache-on-failure: true
+
+      - run: cargo test --workspace --locked --all-targets
