@@ -14,7 +14,7 @@ use crate::outbound::agents::instructions_support::{
 use crate::outbound::agents::mcp::github::tools::{GitHubMcpToolset, connect_github_mcp_toolset};
 use crate::outbound::github::GitHubMcpConfig;
 
-const GITHUB_AGENT_NAME: &str = "investigate_github";
+const GITHUB_AGENT_NAME: &str = "github_agent";
 const GITHUB_AGENT_DESCRIPTION: &str =
     "Delegates GitHub repository, code, pull request, Actions, and Dependabot investigation tasks.
 This tool is designed to be split into scopes and used in parallel.

@@ -25,7 +25,7 @@ The runtime can expose only the following tool families:
 - GitHub MCP reads: `search_code`, `search_repositories`, `search_issues`,
   `search_pull_requests`, `get_file_contents`, `pull_request_read`, `actions_get`,
   `actions_list`, `get_job_logs`, `get_dependabot_alert`, `list_dependabot_alerts`
-- esa sub-agent delegation when `[connector.esa]` is configured: `investigate_esa`
+- esa sub-agent delegation when `[connector.esa]` is configured: `esa_agent`
 - External web lookup: `search_web`
 
 In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog
@@ -284,7 +284,7 @@ GitHub boundary in the current runtime:
 Reili can optionally search an esa team's posts as an internal documentation source.
 This integration is disabled unless `[connector.esa]` is present in `reili.toml`.
 When the section is omitted, Reili does not read `ESA_ACCESS_TOKEN` and does not register
-`investigate_esa` or `search_posts`.
+`esa_agent` or `search_posts`.
 
 Required esa credential when configured:
 
@@ -301,7 +301,7 @@ esa API endpoint currently used by the runtime:
 
 esa capabilities currently used by the runtime:
 
-- Delegate documentation investigation to the `investigate_esa` sub-agent
+- Delegate documentation investigation to the `esa_agent` sub-agent
 - Search posts through the sub-agent's `search_posts` tool using esa's `q` search syntax
 - Return post metadata, links, tags, authors, pagination metadata, and Markdown body content from
   the search response
