@@ -408,11 +408,11 @@ mod tests {
     use reili_core::knowledge::{MockWebSearchPort, WebSearchPort};
     use reili_core::logger::LogEntry;
     use reili_core::messaging::slack::{
-        FetchSlackThreadHistoryInput, MockSlackMessageSearchPort, MockSlackThreadHistoryPort,
-        MockSlackThreadReplyPort, SlackMessage, SlackMessageSearchContextMessages,
-        SlackMessageSearchInput, SlackMessageSearchPort, SlackMessageSearchResult,
-        SlackMessageSearchResultItem, SlackThreadHistoryPort, SlackThreadMessage,
-        SlackThreadReplyInput, SlackThreadReplyPort, SlackTriggerType,
+        FetchSlackThreadHistoryInput, MockSlackFileDownloadPort, MockSlackMessageSearchPort,
+        MockSlackThreadHistoryPort, MockSlackThreadReplyPort, SlackFileDownloadPort, SlackMessage,
+        SlackMessageSearchContextMessages, SlackMessageSearchInput, SlackMessageSearchPort,
+        SlackMessageSearchResult, SlackMessageSearchResultItem, SlackThreadHistoryPort,
+        SlackThreadMessage, SlackThreadReplyInput, SlackThreadReplyPort, SlackTriggerType,
     };
     use reili_core::secret::SecretString;
     use reili_core::task::{
@@ -447,10 +447,13 @@ mod tests {
     fn create_resources() -> TaskResources {
         let slack_message_search_port: Arc<dyn SlackMessageSearchPort> =
             Arc::new(MockSlackMessageSearchPort::new());
+        let slack_file_download_port: Arc<dyn SlackFileDownloadPort> =
+            Arc::new(MockSlackFileDownloadPort::new());
         let web_search_port: Arc<dyn WebSearchPort> = Arc::new(MockWebSearchPort::new());
 
         TaskResources {
             slack_message_search_port,
+            slack_file_download_port,
             web_search_port,
         }
     }
@@ -595,6 +598,7 @@ mod tests {
             task_resources: TaskResources {
                 slack_message_search_port: Arc::new(slack_message_search_port)
                     as Arc<dyn SlackMessageSearchPort>,
+                slack_file_download_port: create_resources().slack_file_download_port,
                 web_search_port: create_resources().web_search_port,
             },
             task_runner: Arc::new(task_runner) as Arc<dyn TaskRunnerPort>,

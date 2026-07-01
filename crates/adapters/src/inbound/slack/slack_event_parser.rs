@@ -466,6 +466,7 @@ mod tests {
                     title: Some("AWS Health Event".to_string()),
                     plain_text: Some("scheduled upgrade required".to_string()),
                     is_binary: false,
+                    ..Default::default()
                 }],
                 ts: "1710000000.000006".to_string(),
                 thread_ts: None,
