@@ -14,7 +14,7 @@ use crate::outbound::agents::instructions_support::{
 use crate::outbound::agents::tools::SearchPostsTool;
 use crate::outbound::esa::EsaPostSearchPort;
 
-const ESA_AGENT_NAME: &str = "investigate_esa";
+const ESA_AGENT_NAME: &str = "esa_agent";
 const ESA_AGENT_DESCRIPTION: &str =
     "Delegates esa internal documentation, runbook, design note, team knowledge, and broader knowledge base search tasks.
 When instructing this sub-agent, include the relevant background, context, and why the documentation search matters, not just the immediate keywords.";

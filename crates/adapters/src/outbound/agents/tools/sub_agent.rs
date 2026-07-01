@@ -191,15 +191,15 @@ mod tests {
                 AgentBuilder::new(PromptCaptureModel {
                     captured_prompts: Arc::clone(&captured_prompts),
                 })
-                .name("investigate_datadog")
+                .name("datadog_agent")
                 .build()
             })
         };
         let tool = ProgressReportingSubAgentTool::new(ProgressReportingSubAgentToolInput {
             agent_factory,
-            agent_name: "investigate_datadog".to_string(),
+            agent_name: "datadog_agent".to_string(),
             agent_description: Some("Datadog sub-agent".to_string()),
-            owner_id: "investigate_datadog".to_string(),
+            owner_id: "datadog_agent".to_string(),
             on_progress_event: Arc::new(progress_event_port),
             tool_concurrency: 8,
             shared_prompt_context: None,
@@ -224,9 +224,9 @@ mod tests {
         assert_eq!(built_owner_ids.len(), 2);
         assert_ne!(built_owner_ids[0], built_owner_ids[1]);
         for owner_id in built_owner_ids.iter() {
-            assert!(owner_id.starts_with("investigate_datadog:"));
+            assert!(owner_id.starts_with("datadog_agent:"));
             let uuid_part = owner_id
-                .strip_prefix("investigate_datadog:")
+                .strip_prefix("datadog_agent:")
                 .expect("owner id should contain prefix");
             uuid::Uuid::parse_str(uuid_part).expect("owner id should contain UUID");
         }
@@ -255,7 +255,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
         let agent = AgentBuilder::new(ParallelToolCallModel::new())
-            .name("investigate_datadog")
+            .name("datadog_agent")
             .tool(ConcurrentProbeTool {
                 active_calls: Arc::clone(&active_calls),
                 max_active_calls: Arc::clone(&max_active_calls),
@@ -264,9 +264,9 @@ mod tests {
         let agent_factory = Arc::new(move |_owner_id| agent.clone());
         let tool = ProgressReportingSubAgentTool::new(ProgressReportingSubAgentToolInput {
             agent_factory,
-            agent_name: "investigate_datadog".to_string(),
+            agent_name: "datadog_agent".to_string(),
             agent_description: Some("Datadog sub-agent".to_string()),
-            owner_id: "investigate_datadog".to_string(),
+            owner_id: "datadog_agent".to_string(),
             on_progress_event: Arc::new(progress_event_port),
             tool_concurrency: 2,
             shared_prompt_context: None,
@@ -294,14 +294,14 @@ mod tests {
         let agent = AgentBuilder::new(PromptCaptureModel {
             captured_prompts: Arc::clone(&captured_prompts),
         })
-        .name("investigate_datadog")
+        .name("datadog_agent")
         .build();
         let agent_factory = Arc::new(move |_owner_id| agent.clone());
         let tool = ProgressReportingSubAgentTool::new(ProgressReportingSubAgentToolInput {
             agent_factory,
-            agent_name: "investigate_datadog".to_string(),
+            agent_name: "datadog_agent".to_string(),
             agent_description: Some("Datadog sub-agent".to_string()),
-            owner_id: "investigate_datadog".to_string(),
+            owner_id: "datadog_agent".to_string(),
             on_progress_event: Arc::new(progress_event_port),
             tool_concurrency: 1,
             shared_prompt_context: Some(

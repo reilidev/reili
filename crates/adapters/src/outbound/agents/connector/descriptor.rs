@@ -1,7 +1,7 @@
 /// Stable identity for a connector: the source of the sub-agent name and description.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorDescriptor {
-    /// Sub-agent name, e.g. `"investigate_github"`. Also used as the progress owner id.
+    /// Sub-agent name, e.g. `"github_agent"`. Also used as the progress owner id.
     pub agent_name: String,
     /// Description shown on the `ProgressReportingSubAgentTool`.
     pub agent_description: String,

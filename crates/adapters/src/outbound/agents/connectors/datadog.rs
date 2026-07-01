@@ -16,7 +16,7 @@ use crate::outbound::agents::mcp::datadog::tools::{
 };
 use crate::outbound::datadog::DatadogMcpToolConfig;
 
-const DATADOG_AGENT_NAME: &str = "investigate_datadog";
+const DATADOG_AGENT_NAME: &str = "datadog_agent";
 const DATADOG_AGENT_DESCRIPTION: &str =
     "Delegates Datadog observability and security investigation tasks.
 This tool is designed to be split into scopes and used in parallel.

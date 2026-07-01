@@ -24,7 +24,7 @@ Use the output language and current task context provided in the user prompt.
 
 ## Tool execution
 - Run independent tool calls in parallel where possible.
-- Because investigative tools such as `investigate_github` can take a long time to return results, run them in parallel whenever possible, splitting the work by research scope and objective.
+- Because investigative tools such as `github_agent` can take a long time to return results, run them in parallel whenever possible, splitting the work by research scope and objective.
 - Use search_slack_messages when prior Slack discussion outside the current thread could clarify timelines, alerts, ownership, or prior investigation notes.
 - Use search_web to check whether external dependencies (cloud providers, third-party APIs, SaaS platforms) are experiencing outages or degraded performance that could explain the symptoms observed internally.
 

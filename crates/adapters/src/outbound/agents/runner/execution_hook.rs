@@ -357,7 +357,7 @@ mod tests {
                 Ok(())
             });
         let hook = AgentExecutionHook::new(
-            "investigate_datadog".to_string(),
+            "datadog_agent".to_string(),
             sample_runtime(),
             sample_cancellation(),
             logger_with_entries(Arc::new(Mutex::new(Vec::new())), 0),
@@ -371,7 +371,7 @@ mod tests {
         assert_eq!(
             calls.lock().expect("lock calls").as_slice(),
             &[TaskProgressEventInput {
-                owner_id: "investigate_datadog".to_string(),
+                owner_id: "datadog_agent".to_string(),
                 event: TaskProgressEvent::ToolCallStarted {
                     task_id: "task-1".to_string(),
                     title: "search_datadog_logs".to_string(),
@@ -393,7 +393,7 @@ mod tests {
                 Ok(())
             });
         let hook = AgentExecutionHook::new(
-            "investigate_datadog".to_string(),
+            "datadog_agent".to_string(),
             sample_runtime(),
             sample_cancellation(),
             logger_with_entries(Arc::new(Mutex::new(Vec::new())), 0),
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(
             calls.lock().expect("lock calls").as_slice(),
             &[TaskProgressEventInput {
-                owner_id: "investigate_datadog".to_string(),
+                owner_id: "datadog_agent".to_string(),
                 event: TaskProgressEvent::ToolCallCompleted {
                     task_id: "task-2".to_string(),
                     title: "search_datadog_metrics".to_string(),
@@ -422,7 +422,7 @@ mod tests {
         let mut progress_event_port = MockTaskProgressEventPort::new();
         progress_event_port.expect_publish().times(0);
         let hook = AgentExecutionHook::new(
-            "investigate_github".to_string(),
+            "github_agent".to_string(),
             sample_runtime(),
             sample_cancellation(),
             logger_with_entries(log_entries, 2),
@@ -459,7 +459,7 @@ mod tests {
         progress_event_port.expect_publish().times(0);
         let collector = LlmUsageCollector::new();
         let hook = AgentExecutionHook::new(
-            "investigate_datadog".to_string(),
+            "datadog_agent".to_string(),
             sample_runtime(),
             sample_cancellation(),
             logger_with_entries(log_entries, 0),
@@ -494,7 +494,7 @@ mod tests {
                 Ok(())
             });
         let hook = AgentExecutionHook::new(
-            "investigate_datadog".to_string(),
+            "datadog_agent".to_string(),
             sample_runtime(),
             sample_cancellation(),
             logger_with_entries(Arc::clone(&log_entries), 1),
@@ -521,7 +521,7 @@ mod tests {
                 .fields
                 .get("ownerId")
                 .and_then(LogFieldValue::as_str),
-            Some("investigate_datadog")
+            Some("datadog_agent")
         );
         assert_eq!(
             entries[0]
@@ -579,7 +579,7 @@ mod tests {
                 Ok(())
             });
         let hook = AgentExecutionHook::new(
-            "investigate_datadog".to_string(),
+            "datadog_agent".to_string(),
             sample_runtime(),
             sample_cancellation(),
             logger_with_entries(Arc::clone(&log_entries), 1),
@@ -626,7 +626,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
         let hook = AgentExecutionHook::new(
-            "investigate_datadog".to_string(),
+            "datadog_agent".to_string(),
             sample_runtime(),
             sample_cancellation(),
             logger_with_entries(Arc::clone(&log_entries), 1),
@@ -663,7 +663,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
         let hook = AgentExecutionHook::new(
-            "investigate_datadog".to_string(),
+            "datadog_agent".to_string(),
             sample_runtime(),
             sample_cancellation(),
             logger_with_entries(Arc::clone(&log_entries), 1),
