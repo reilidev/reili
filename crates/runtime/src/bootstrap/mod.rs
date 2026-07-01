@@ -21,11 +21,11 @@ use reili_adapters::outbound::esa::{EsaClient, EsaClientConfig, EsaPostSearchPor
 use reili_adapters::outbound::github::GitHubMcpConfig;
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
-    SlackChannelLookupAdapter, SlackEphemeralMessageAdapter, SlackFileSharedMessageAdapter,
-    SlackMessageSearchAdapter, SlackProgressReporter, SlackProgressReporterInput,
-    SlackReactionAdapter, SlackTaskControlMessageAdapter, SlackThreadHistoryAdapter,
-    SlackThreadReplyAdapter, SlackUserGroupMembershipAdapter, SlackWebApiClient,
-    SlackWebApiClientConfig,
+    SlackChannelLookupAdapter, SlackEphemeralMessageAdapter, SlackFileDownloadAdapter,
+    SlackFileSharedMessageAdapter, SlackMessageSearchAdapter, SlackProgressReporter,
+    SlackProgressReporterInput, SlackReactionAdapter, SlackTaskControlMessageAdapter,
+    SlackThreadHistoryAdapter, SlackThreadReplyAdapter, SlackUserGroupMembershipAdapter,
+    SlackWebApiClient, SlackWebApiClientConfig,
 };
 use reili_adapters::outbound::vertex_ai::{
     VertexAiWebSearchAdapter, VertexAiWebSearchAdapterConfig,
@@ -42,8 +42,9 @@ use reili_core::error::PortError;
 use reili_core::knowledge::WebSearchPort;
 use reili_core::messaging::slack::{
     AutoResponseJudgePort, SlackAuthorizationPolicy, SlackChannelLookupPort,
-    SlackEphemeralMessagePort, SlackFileSharedMessagePort, SlackInteractionHandlerPort,
-    SlackMessageHandlerPort, SlackTaskControlMessagePort, SlackUserGroupMembershipPort,
+    SlackEphemeralMessagePort, SlackFileDownloadPort, SlackFileSharedMessagePort,
+    SlackInteractionHandlerPort, SlackMessageHandlerPort, SlackTaskControlMessagePort,
+    SlackUserGroupMembershipPort,
 };
 use reili_core::messaging::slack::{
     SlackMessageSearchPort, SlackReactionPort, SlackThreadHistoryPort, SlackThreadReplyPort,
@@ -126,6 +127,9 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let slack_file_shared_message_port: Arc<dyn SlackFileSharedMessagePort> = Arc::new(
         SlackFileSharedMessageAdapter::new(Arc::clone(&slack_web_api_client)),
     );
+    let slack_file_download_port: Arc<dyn SlackFileDownloadPort> = Arc::new(
+        SlackFileDownloadAdapter::new(Arc::clone(&slack_web_api_client)),
+    );
     let connectors = build_connector_set(BuildConnectorSetInput {
         datadog: DatadogMcpToolConfig {
             api_key: config.datadog_api_key.clone(),
@@ -153,6 +157,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
 
     let task_resources = TaskResources {
         slack_message_search_port,
+        slack_file_download_port,
         web_search_port: provider_ports.web_search_port,
     };
     let task_runner = provider_ports.task_runner;

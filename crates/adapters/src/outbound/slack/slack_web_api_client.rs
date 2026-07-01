@@ -119,6 +119,78 @@ impl SlackWebApiClient {
         self.execute(&method_path, request).await
     }
 
+    /// Fetches the raw bytes of a Slack-hosted file from a full URL (e.g. `url_private_download`),
+    /// authenticating with the bot token. Unlike [`Self::get`]/[`Self::post`], the URL is used as-is
+    /// rather than being resolved against the API base URL.
+    ///
+    /// `max_bytes` caps the download: a file whose advertised or actual size exceeds the limit is
+    /// rejected with an error instead of being buffered into memory.
+    pub async fn download_bytes(&self, url: &str, max_bytes: u64) -> Result<Vec<u8>, PortError> {
+        let trimmed = url.trim();
+        if trimmed.is_empty() {
+            return Err(PortError::invalid_input("Slack file URL must not be empty"));
+        }
+
+        let response = self
+            .client
+            .get(trimmed)
+            .bearer_auth(self.bot_token.expose())
+            .send()
+            .await
+            .map_err(|error| {
+                PortError::connection_failed(format!(
+                    "Slack file download request failed: error={error}"
+                ))
+            })?;
+
+        let status = response.status();
+        if status.is_success()
+            && let Some(content_length) = response.content_length()
+            && content_length > max_bytes
+        {
+            return Err(file_too_large_error(content_length, max_bytes));
+        }
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let bytes = response.bytes().await.map_err(|error| {
+            PortError::invalid_response(format!(
+                "Failed to read Slack file download body: error={error}"
+            ))
+        })?;
+
+        if !status.is_success() {
+            return Err(PortError::http_status(
+                status.as_u16(),
+                format!(
+                    "Slack file download failed: status={} body={}",
+                    status.as_u16(),
+                    truncate_for_error(String::from_utf8_lossy(&bytes).as_ref())
+                ),
+            ));
+        }
+
+        // Slack returns the HTML sign-in page with a 200 status when the token cannot access the
+        // file, so a HTML content type signals an authentication/authorization failure.
+        if content_type
+            .as_deref()
+            .is_some_and(|value| value.starts_with("text/html"))
+        {
+            return Err(PortError::invalid_response(
+                "Slack file download returned HTML instead of file bytes (likely missing files:read scope or no access)",
+            ));
+        }
+
+        // Guard against a missing or dishonest Content-Length header.
+        if bytes.len() as u64 > max_bytes {
+            return Err(file_too_large_error(bytes.len() as u64, max_bytes));
+        }
+
+        Ok(bytes.to_vec())
+    }
+
     async fn execute(
         &self,
         method_path: &str,
@@ -187,6 +259,12 @@ fn format_slack_service_error_message(
     message.push_str(" messages=");
     message.push_str(&truncate_for_error(&metadata_messages.join(" | ")));
     message
+}
+
+fn file_too_large_error(actual_bytes: u64, max_bytes: u64) -> PortError {
+    PortError::invalid_response(format!(
+        "Slack file exceeds maximum download size: {actual_bytes} bytes > {max_bytes} bytes"
+    ))
 }
 
 fn normalize_base_url(value: &str) -> Result<String, PortError> {
@@ -346,6 +424,104 @@ mod tests {
 
         assert!(error.message.contains("status=500"));
         assert_eq!(error.status_code(), Some(500));
+    }
+
+    #[tokio::test]
+    async fn downloads_file_bytes_with_bearer_token() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/files/report.pdf"))
+            .and(header("Authorization", "Bearer xoxb-test"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/pdf")
+                    .set_body_bytes(b"%PDF-1.7 bytes".to_vec()),
+            )
+            .mount(&server)
+            .await;
+
+        let client = create_client(&server.uri());
+        let bytes = client
+            .download_bytes(
+                &format!("{}/files/report.pdf", server.uri()),
+                32 * 1024 * 1024,
+            )
+            .await
+            .expect("download file bytes");
+
+        assert_eq!(bytes, b"%PDF-1.7 bytes".to_vec());
+    }
+
+    #[tokio::test]
+    async fn rejects_download_exceeding_max_bytes_via_content_length() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/files/big.pdf"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/pdf")
+                    .insert_header("content-length", "1048576")
+                    .set_body_bytes(vec![0_u8; 1_048_576]),
+            )
+            .mount(&server)
+            .await;
+
+        let client = create_client(&server.uri());
+        let error = client
+            .download_bytes(&format!("{}/files/big.pdf", server.uri()), 1024)
+            .await
+            .expect_err("download should be rejected");
+
+        assert!(error.message.contains("exceeds maximum download size"));
+    }
+
+    #[tokio::test]
+    async fn returns_error_when_download_returns_html_login_page() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/files/report.pdf"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw("<html>sign in</html>", "text/html; charset=utf-8"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = create_client(&server.uri());
+        let error = client
+            .download_bytes(
+                &format!("{}/files/report.pdf", server.uri()),
+                32 * 1024 * 1024,
+            )
+            .await
+            .expect_err("download should fail");
+
+        assert!(error.message.contains("HTML instead of file bytes"));
+    }
+
+    #[tokio::test]
+    async fn returns_error_when_download_status_is_not_successful() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/files/report.pdf"))
+            .respond_with(ResponseTemplate::new(StatusCode::NOT_FOUND.as_u16()))
+            .mount(&server)
+            .await;
+
+        let client = create_client(&server.uri());
+        let error = client
+            .download_bytes(
+                &format!("{}/files/report.pdf", server.uri()),
+                32 * 1024 * 1024,
+            )
+            .await
+            .expect_err("download should fail");
+
+        assert_eq!(error.status_code(), Some(404));
     }
 
     fn create_client(base_url: &str) -> SlackWebApiClient {

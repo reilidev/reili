@@ -106,6 +106,7 @@ mod tests {
                 title: None,
                 plain_text: Some("details".to_string()),
                 is_binary: false,
+                ..Default::default()
             }],
             metadata: Some(SlackMessageMetadata {
                 event_type: "task_control_message_posted".to_string(),

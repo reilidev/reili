@@ -10,6 +10,17 @@ pub struct SlackMessageFile {
     pub plain_text: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_binary: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mimetype: Option<String>,
+    #[serde(
+        default,
+        alias = "url_private_download",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub download_url: Option<String>,
+    /// File size in bytes, as reported by Slack. Used to skip downloads that exceed model limits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
 }
 
 impl SlackMessageFile {
@@ -42,6 +53,34 @@ impl SlackMessageFile {
     fn plain_text(&self) -> Option<&str> {
         self.plain_text.as_deref().filter(|text| !text.is_empty())
     }
+
+    /// Whether this file is a PDF, based on its MIME type or filename extension.
+    pub fn is_pdf(&self) -> bool {
+        if self
+            .mimetype
+            .as_deref()
+            .is_some_and(|mimetype| mimetype.eq_ignore_ascii_case("application/pdf"))
+        {
+            return true;
+        }
+
+        [self.name.as_deref(), self.title.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|value| value.to_ascii_lowercase().ends_with(".pdf"))
+    }
+
+    /// Download URL usable to fetch this file's bytes when it is a PDF.
+    pub fn pdf_download_url(&self) -> Option<&str> {
+        if !self.is_pdf() {
+            return None;
+        }
+
+        self.download_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+    }
 }
 
 fn is_false(value: &bool) -> bool {
@@ -72,6 +111,7 @@ mod tests {
             title: Some("Alert email".to_string()),
             plain_text: Some("scheduled upgrade required".to_string()),
             is_binary: false,
+            ..Default::default()
         };
 
         assert_eq!(
@@ -90,6 +130,7 @@ mod tests {
             title: Some("AWS Health Event".to_string()),
             plain_text: Some("important notice".to_string()),
             is_binary: false,
+            ..Default::default()
         };
 
         assert_eq!(
@@ -108,6 +149,7 @@ mod tests {
             title: Some("Alert email".to_string()),
             plain_text: None,
             is_binary: false,
+            ..Default::default()
         };
 
         assert_eq!(
@@ -123,12 +165,68 @@ mod tests {
             title: Some("Alert email".to_string()),
             plain_text: None,
             is_binary: true,
+            ..Default::default()
         };
 
         assert_eq!(
             file.rendered_text(),
             Some("## Attached file title\n alert.eml\n\nThis is binary file".to_string())
         );
+    }
+
+    #[test]
+    fn detects_pdf_by_mimetype() {
+        let file = SlackMessageFile {
+            name: Some("report".to_string()),
+            mimetype: Some("application/pdf".to_string()),
+            download_url: Some("https://files.slack.com/report".to_string()),
+            ..Default::default()
+        };
+
+        assert!(file.is_pdf());
+        assert_eq!(
+            file.pdf_download_url(),
+            Some("https://files.slack.com/report")
+        );
+    }
+
+    #[test]
+    fn detects_pdf_by_filename_extension() {
+        let file = SlackMessageFile {
+            name: Some("incident.PDF".to_string()),
+            download_url: Some("https://files.slack.com/incident".to_string()),
+            ..Default::default()
+        };
+
+        assert!(file.is_pdf());
+        assert_eq!(
+            file.pdf_download_url(),
+            Some("https://files.slack.com/incident")
+        );
+    }
+
+    #[test]
+    fn pdf_download_url_is_none_for_non_pdf() {
+        let file = SlackMessageFile {
+            name: Some("notes.txt".to_string()),
+            download_url: Some("https://files.slack.com/notes".to_string()),
+            ..Default::default()
+        };
+
+        assert!(!file.is_pdf());
+        assert_eq!(file.pdf_download_url(), None);
+    }
+
+    #[test]
+    fn pdf_download_url_is_none_when_url_missing_or_blank() {
+        let file = SlackMessageFile {
+            name: Some("report.pdf".to_string()),
+            download_url: Some("   ".to_string()),
+            ..Default::default()
+        };
+
+        assert!(file.is_pdf());
+        assert_eq!(file.pdf_download_url(), None);
     }
 
     #[test]
@@ -139,12 +237,14 @@ mod tests {
                 title: None,
                 plain_text: Some("first".to_string()),
                 is_binary: false,
+                ..Default::default()
             },
             SlackMessageFile {
                 name: Some("two.txt".to_string()),
                 title: None,
                 plain_text: Some("second".to_string()),
                 is_binary: false,
+                ..Default::default()
             },
         ]);
 

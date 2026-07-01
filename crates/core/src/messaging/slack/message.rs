@@ -79,6 +79,7 @@ mod tests {
                 title: None,
                 plain_text: Some("notice".to_string()),
                 is_binary: false,
+                ..Default::default()
             }],
             ts: "123.456".to_string(),
             thread_ts: None,
@@ -161,6 +162,7 @@ mod tests {
                 title: None,
                 plain_text: Some("scheduled upgrade required".to_string()),
                 is_binary: false,
+                ..Default::default()
             }],
             ts: "123.456".to_string(),
             thread_ts: None,

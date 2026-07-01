@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
 use crate::{
-    knowledge::WebSearchPort, messaging::slack::SlackMessageSearchPort, task::TaskCancellation,
+    knowledge::WebSearchPort,
+    messaging::slack::{SlackFileDownloadPort, SlackMessageSearchPort},
+    task::TaskCancellation,
 };
 
 #[derive(Clone)]
 pub struct TaskResources {
     pub slack_message_search_port: Arc<dyn SlackMessageSearchPort>,
+    pub slack_file_download_port: Arc<dyn SlackFileDownloadPort>,
     pub web_search_port: Arc<dyn WebSearchPort>,
 }
 

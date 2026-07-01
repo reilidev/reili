@@ -32,6 +32,9 @@ struct SlackFileInfo {
     id: String,
     name: Option<String>,
     title: Option<String>,
+    mimetype: Option<String>,
+    url_private_download: Option<String>,
+    size: Option<u64>,
     bot_id: Option<String>,
     bot_user_id: Option<String>,
     #[serde(default)]
@@ -146,6 +149,9 @@ impl SlackFileSharedMessagePort for SlackFileSharedMessageAdapter {
                 title: file.title,
                 plain_text,
                 is_binary,
+                mimetype: non_empty_string(file.mimetype.as_deref()),
+                download_url: non_empty_string(file.url_private_download.as_deref()),
+                size: file.size,
             }],
             ts,
             thread_ts: share
@@ -254,6 +260,7 @@ mod tests {
                 title: Some("AWS Health Event".to_string()),
                 plain_text: Some("scheduled upgrade required".to_string()),
                 is_binary: false,
+                ..Default::default()
             }]
         );
         assert_eq!(
@@ -303,6 +310,56 @@ mod tests {
         assert_eq!(
             message.rendered_text(),
             "## Attached file title\n alert.eml\n\nThis is binary file"
+        );
+    }
+
+    #[tokio::test]
+    async fn captures_pdf_mimetype_and_download_url_as_binary_file() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/files.info"))
+            .and(query_param("file", "F001"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "ok": true,
+                "file": {
+                    "id": "F001",
+                    "name": "incident-report.pdf",
+                    "title": "Incident Report",
+                    "mimetype": "application/pdf",
+                    "url_private_download": "https://files.slack.com/files-pri/T001-F001/download/incident-report.pdf",
+                    "size": 204_800,
+                    "user": "U001",
+                    "shares": {
+                        "public": {
+                            "C001": [
+                                {
+                                    "ts": "1710000000.000100",
+                                    "user": "U001",
+                                    "team_id": "T001"
+                                }
+                            ]
+                        }
+                    }
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let adapter = SlackFileSharedMessageAdapter::new(Arc::new(create_client(&server.uri())));
+        let message = adapter
+            .fetch_shared_file_message(create_event())
+            .await
+            .expect("fetch shared file message")
+            .expect("message");
+
+        let file = &message.files[0];
+        assert!(file.is_binary);
+        assert_eq!(file.mimetype.as_deref(), Some("application/pdf"));
+        assert_eq!(file.size, Some(204_800));
+        assert!(file.is_pdf());
+        assert_eq!(
+            file.pdf_download_url(),
+            Some("https://files.slack.com/files-pri/T001-F001/download/incident-report.pdf")
         );
     }
 

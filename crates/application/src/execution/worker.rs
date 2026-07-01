@@ -587,9 +587,10 @@ mod tests {
     use reili_core::knowledge::{MockWebSearchPort, WebSearchPort};
     use reili_core::logger::{LogEntry as CoreLogEntry, LogLevel};
     use reili_core::messaging::slack::{
-        MockSlackMessageSearchPort, MockSlackTaskControlMessagePort, MockSlackThreadHistoryPort,
-        MockSlackThreadReplyPort, SlackMessage, SlackMessageSearchPort,
-        SlackTaskControlMessagePort, SlackThreadHistoryPort, SlackTriggerType,
+        MockSlackFileDownloadPort, MockSlackMessageSearchPort, MockSlackTaskControlMessagePort,
+        MockSlackThreadHistoryPort, MockSlackThreadReplyPort, SlackFileDownloadPort, SlackMessage,
+        SlackMessageSearchPort, SlackTaskControlMessagePort, SlackThreadHistoryPort,
+        SlackTriggerType,
     };
     use reili_core::queue::{CompleteJobInput, FailJobInput, JobFailResult, MockJobQueuePort};
     use reili_core::task::{
@@ -651,10 +652,13 @@ mod tests {
     fn create_resources() -> TaskResources {
         let slack_message_search_port: Arc<dyn SlackMessageSearchPort> =
             Arc::new(MockSlackMessageSearchPort::new());
+        let slack_file_download_port: Arc<dyn SlackFileDownloadPort> =
+            Arc::new(MockSlackFileDownloadPort::new());
         let web_search_port: Arc<dyn WebSearchPort> = Arc::new(MockWebSearchPort::new());
 
         TaskResources {
             slack_message_search_port,
+            slack_file_download_port,
             web_search_port,
         }
     }

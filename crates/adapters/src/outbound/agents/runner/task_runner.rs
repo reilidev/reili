@@ -1,12 +1,19 @@
 use std::sync::Arc;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use chrono::Utc;
 use reili_core::error::AgentRunFailedError;
 use reili_core::logger::Logger;
+use reili_core::messaging::slack::{SlackFileDownloadPort, SlackMessageFile};
 use reili_core::task::{
     LlmExecutionMetadata, LlmUsageSnapshot, RunTaskInput, TASK_RUNNER_PROGRESS_OWNER_ID,
     TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort, TaskRunOutcome,
     TaskRunReport,
+};
+use rig::OneOrMany;
+use rig::completion::message::{
+    Document, DocumentMediaType, DocumentSourceKind, Message, UserContent,
 };
 use rig::completion::{Prompt, PromptError};
 use rig::prelude::CompletionClient;
@@ -75,6 +82,17 @@ where
         .collect();
     let memory_items = input.run.request.memory_items.clone();
     let slack_action_token = input.run.request.trigger_message.action_token.clone();
+    let pdf_files: Vec<SlackMessageFile> = input
+        .run
+        .request
+        .trigger_message
+        .files
+        .iter()
+        .filter(|file| file.is_pdf())
+        .cloned()
+        .collect();
+    let slack_file_download_port =
+        Arc::clone(&input.run.context.resources.slack_file_download_port);
     let task_prompt = build_task_prompt(BuildTaskPromptInput {
         request: input.run.request,
         now: Utc::now(),
@@ -108,8 +126,15 @@ where
         prepared_connectors,
     });
 
+    let prompt_message = build_prompt_message(BuildPromptMessageInput {
+        task_prompt,
+        pdf_files: &pdf_files,
+        slack_file_download_port: &slack_file_download_port,
+    })
+    .await;
+
     let prompt_response_result = task_agent
-        .prompt(task_prompt)
+        .prompt(prompt_message)
         .max_turns(input.settings.task_runner_max_turns)
         .with_tool_concurrency(input.settings.tool_concurrency)
         .with_hook(task_runner_prompt_hook)
@@ -145,6 +170,51 @@ where
             model: input.settings.task_runner_model,
         },
     }))
+}
+
+/// Maximum size of a PDF attachment sent to the model, matching the Anthropic PDF request limit of
+/// 32 MiB. Larger files are skipped rather than downloaded.
+const MAX_PDF_BYTES: u64 = 32 * 1024 * 1024;
+
+struct BuildPromptMessageInput<'a> {
+    task_prompt: String,
+    pdf_files: &'a [SlackMessageFile],
+    slack_file_download_port: &'a Arc<dyn SlackFileDownloadPort>,
+}
+
+/// Builds the user prompt message, attaching each PDF file as a base64 document so the model can
+/// read it natively. A file that exceeds [`MAX_PDF_BYTES`] or cannot be downloaded is skipped
+/// rather than failing the whole task; the textual prompt is always included.
+async fn build_prompt_message(input: BuildPromptMessageInput<'_>) -> Message {
+    let mut content = OneOrMany::one(UserContent::text(input.task_prompt));
+
+    for file in input.pdf_files {
+        let Some(url) = file.pdf_download_url() else {
+            continue;
+        };
+
+        if file.size.is_some_and(|size| size > MAX_PDF_BYTES) {
+            continue;
+        }
+
+        if let Ok(bytes) = input
+            .slack_file_download_port
+            .download_file(url, MAX_PDF_BYTES)
+            .await
+        {
+            let encoded = BASE64_STANDARD.encode(&bytes);
+            // Use the Base64 source kind explicitly: the OpenAI Responses API only accepts
+            // base64 (or URL) PDF sources and rejects the plain `String` variant that
+            // `UserContent::document` would produce.
+            content.push(UserContent::Document(Document {
+                data: DocumentSourceKind::Base64(encoded),
+                media_type: Some(DocumentMediaType::PDF),
+                ..Default::default()
+            }));
+        }
+    }
+
+    Message::User { content }
 }
 
 struct PublishMessageOutputCreatedEventInput {
@@ -204,16 +274,148 @@ fn create_failed_error(input: CreateTaskRunnerFailedErrorInput) -> AgentRunFaile
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use reili_core::error::PortError;
     use reili_core::logger::{LogEntry, Logger, MockLogger};
+    use reili_core::messaging::slack::{MockSlackFileDownloadPort, SlackMessageFile};
     use reili_core::task::{
         MockTaskProgressEventPort, TASK_RUNNER_PROGRESS_OWNER_ID, TaskCancellation,
         TaskProgressEvent, TaskProgressEventInput, TaskRuntime,
     };
     use rig::agent::{PromptHook, ToolCallHookAction};
+    use rig::completion::message::{DocumentMediaType, DocumentSourceKind, Message, UserContent};
     use rig::providers::openai;
 
-    use super::{CreateTaskRunnerPromptHookInput, create_task_runner_prompt_hook};
+    use super::{
+        BuildPromptMessageInput, CreateTaskRunnerPromptHookInput, MAX_PDF_BYTES,
+        SlackFileDownloadPort, build_prompt_message, create_task_runner_prompt_hook,
+    };
     use crate::outbound::agents::runner::usage_collector::LlmUsageCollector;
+
+    fn pdf_file(name: &str, url: &str) -> SlackMessageFile {
+        SlackMessageFile {
+            name: Some(name.to_string()),
+            mimetype: Some("application/pdf".to_string()),
+            download_url: Some(url.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn build_prompt_message_attaches_downloaded_pdf_as_document() {
+        let mut download = MockSlackFileDownloadPort::new();
+        download
+            .expect_download_file()
+            .withf(|url, max_bytes| {
+                url == "https://files.slack.com/report.pdf" && *max_bytes == MAX_PDF_BYTES
+            })
+            .times(1)
+            .returning(|_, _| Ok(b"%PDF-1.7 bytes".to_vec()));
+        let download_port: Arc<dyn SlackFileDownloadPort> = Arc::new(download);
+
+        let message = build_prompt_message(BuildPromptMessageInput {
+            task_prompt: "investigate this".to_string(),
+            pdf_files: &[pdf_file("report.pdf", "https://files.slack.com/report.pdf")],
+            slack_file_download_port: &download_port,
+        })
+        .await;
+
+        let Message::User { content } = message else {
+            panic!("expected user message");
+        };
+        let items: Vec<UserContent> = content.into_iter().collect();
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0], UserContent::Text(_)));
+        match &items[1] {
+            UserContent::Document(document) => {
+                assert_eq!(document.media_type, Some(DocumentMediaType::PDF));
+                assert!(
+                    matches!(document.data, DocumentSourceKind::Base64(_)),
+                    "PDF must use the base64 source kind for cross-provider support"
+                );
+            }
+            other => panic!("expected document content, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn build_prompt_message_skips_pdf_when_download_fails() {
+        let mut download = MockSlackFileDownloadPort::new();
+        download
+            .expect_download_file()
+            .times(1)
+            .returning(|_, _| Err(PortError::new("download exploded")));
+        let download_port: Arc<dyn SlackFileDownloadPort> = Arc::new(download);
+
+        let message = build_prompt_message(BuildPromptMessageInput {
+            task_prompt: "investigate this".to_string(),
+            pdf_files: &[pdf_file("report.pdf", "https://files.slack.com/report.pdf")],
+            slack_file_download_port: &download_port,
+        })
+        .await;
+
+        let Message::User { content } = message else {
+            panic!("expected user message");
+        };
+        let items: Vec<UserContent> = content.into_iter().collect();
+        assert_eq!(items.len(), 1);
+        assert!(matches!(items[0], UserContent::Text(_)));
+    }
+
+    #[tokio::test]
+    async fn build_prompt_message_skips_pdf_without_download_url() {
+        let mut download = MockSlackFileDownloadPort::new();
+        download.expect_download_file().times(0);
+        let download_port: Arc<dyn SlackFileDownloadPort> = Arc::new(download);
+
+        let pdf_without_url = SlackMessageFile {
+            name: Some("report.pdf".to_string()),
+            mimetype: Some("application/pdf".to_string()),
+            download_url: None,
+            ..Default::default()
+        };
+
+        let message = build_prompt_message(BuildPromptMessageInput {
+            task_prompt: "investigate this".to_string(),
+            pdf_files: &[pdf_without_url],
+            slack_file_download_port: &download_port,
+        })
+        .await;
+
+        let Message::User { content } = message else {
+            panic!("expected user message");
+        };
+        let items: Vec<UserContent> = content.into_iter().collect();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn build_prompt_message_skips_pdf_that_exceeds_max_bytes() {
+        let mut download = MockSlackFileDownloadPort::new();
+        download.expect_download_file().times(0);
+        let download_port: Arc<dyn SlackFileDownloadPort> = Arc::new(download);
+
+        let oversized = SlackMessageFile {
+            name: Some("huge.pdf".to_string()),
+            mimetype: Some("application/pdf".to_string()),
+            download_url: Some("https://files.slack.com/huge.pdf".to_string()),
+            size: Some(MAX_PDF_BYTES + 1),
+            ..Default::default()
+        };
+
+        let message = build_prompt_message(BuildPromptMessageInput {
+            task_prompt: "investigate this".to_string(),
+            pdf_files: &[oversized],
+            slack_file_download_port: &download_port,
+        })
+        .await;
+
+        let Message::User { content } = message else {
+            panic!("expected user message");
+        };
+        let items: Vec<UserContent> = content.into_iter().collect();
+        assert_eq!(items.len(), 1);
+        assert!(matches!(items[0], UserContent::Text(_)));
+    }
 
     struct LoggerHarness {
         inner: MockLogger,
