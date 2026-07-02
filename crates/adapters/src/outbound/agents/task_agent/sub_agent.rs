@@ -4,11 +4,17 @@ use reili_core::task::TaskResources;
 use rig::agent::Agent;
 use rig::prelude::CompletionClient;
 
+use super::spawn::{
+    ComposeSpawnedPreambleInput, ResolveSpawnSelectionInput, compose_spawned_sub_agent_preamble,
+    resolve_spawn_selection,
+};
 use super::{TaskAgentExecutionContext, TaskAgentRunContext, with_max_tokens};
-use crate::outbound::agents::connector::{PreparedConnector, SubAgentPromptContext};
+use crate::outbound::agents::connector::PreparedConnector;
 use crate::outbound::agents::runner::execution_hook::AgentExecutionHook;
 use crate::outbound::agents::runner::provider_settings::LlmProviderSettings;
-use crate::outbound::agents::tools::{ReportProgressTool, ReportProgressToolInput, SearchWebTool};
+use crate::outbound::agents::tools::{
+    ReportProgressTool, ReportProgressToolInput, SpawnedSubAgentSpec,
+};
 
 type SubAgent<C> = Agent<<C as CompletionClient>::CompletionModel, AgentExecutionHook>;
 
@@ -36,10 +42,10 @@ pub(super) struct SubAgentConfig {
     pub(super) additional_system_prompt: Option<String>,
 }
 
-pub(super) struct BuildSubAgentInput {
+pub(super) struct BuildSpawnedSubAgentInput {
     pub(super) run_context: TaskAgentRunContext,
-    pub(super) prepared: Arc<dyn PreparedConnector>,
-    pub(super) owner_id: String,
+    pub(super) prepared_connectors: Vec<Arc<dyn PreparedConnector>>,
+    pub(super) spec: SpawnedSubAgentSpec,
 }
 
 struct SubAgentCommonInput<C>
@@ -70,9 +76,11 @@ where
     C: CompletionClient + Clone,
     C::CompletionModel: 'static,
 {
-    /// Build a sub-agent from a prepared connector.
-    pub(super) fn build_sub_agent(&self, input: BuildSubAgentInput) -> SubAgent<C> {
-        let common = self.common_input(&input.run_context, input.owner_id);
+    /// Build a sub-agent from a lead-composed spawn spec: resolve the selected tools, compose
+    /// the fixed-frame preamble around the lead-generated mission, and attach the shared
+    /// execution hook and progress tooling.
+    pub(super) fn build_spawned_sub_agent(&self, input: BuildSpawnedSubAgentInput) -> SubAgent<C> {
+        let common = self.common_input(&input.run_context, input.spec.owner_id.clone());
         let SubAgentCommonInput {
             client,
             config,
@@ -93,19 +101,22 @@ where
             usage_collector,
         } = execution;
 
-        let prompt_context = SubAgentPromptContext {
-            language,
-            additional_system_prompt,
-        };
-        let preamble = input.prepared.sub_agent_preamble(&prompt_context);
-        let descriptor = input.prepared.descriptor();
-        let agent_name = descriptor.agent_name.clone();
-        let agent_description = descriptor.agent_description.clone();
+        let selection = resolve_spawn_selection(&ResolveSpawnSelectionInput {
+            prepared_connectors: &input.prepared_connectors,
+            resources: &resources,
+            tool_names: &input.spec.tool_names,
+        });
+        let preamble = compose_spawned_sub_agent_preamble(&ComposeSpawnedPreambleInput {
+            language: &language,
+            additional_system_prompt: additional_system_prompt.as_deref(),
+            lead_instructions: &input.spec.instructions,
+            guardrails: &selection.guardrails,
+        });
 
         let builder = client
             .agent(settings.sub_agent_model.clone())
-            .name(&agent_name)
-            .description(&agent_description)
+            .name(&input.spec.name)
+            .description("Dynamically spawned sub-agent")
             .preamble(&preamble)
             .default_max_turns(settings.sub_agent_max_turns)
             .additional_params(settings.additional_params.clone());
@@ -124,8 +135,7 @@ where
                 on_progress_event: Arc::clone(&on_progress_event),
                 owner_id,
             }))
-            .tools(input.prepared.sub_agent_tools())
-            .tool(SearchWebTool::new(resources))
+            .tools(selection.tools)
             .build()
     }
 

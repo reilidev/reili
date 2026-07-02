@@ -118,19 +118,22 @@ subset of those tools, including dashboard detail retrieval and Synthetic test r
 returns them for your plan and application key permissions.
 
 The optional esa integration is enabled only when `[connector.esa]` is present in `reili.toml`.
-When configured, Reili registers the `esa_agent` sub-agent. That sub-agent uses
-`search_posts`, which calls `GET /v1/teams/:team_name/posts` with the esa search query syntax in
-`q`. Omit `[connector.esa]` to avoid reading the esa token env var and to keep the sub-agent and
-tool unregistered.
+When configured, `search_posts` (calling `GET /v1/teams/:team_name/posts` with esa's search query
+syntax) becomes available to spawned sub-agents. Omit `[connector.esa]` to disable it.
 
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`.
 
-Reili runs a lead agent (the task runner) that delegates to per-connector sub-agents. By default both
-roles use `default_backend`. To run sub-agents on a different model than the lead, point
-`ai.lead_backend` and `ai.sub_agent_backend` at named backends in `[ai.backends]`. The two backends
-must use the same provider; only the model differs between the roles. A common setup is a stronger
-model for the lead and a cheaper, faster model for sub-agents. Either key falls back to
-`default_backend` when omitted.
+Reili runs a lead agent (the task runner) that delegates work to sub-agents spawned on the fly
+through a single `spawn_agent` tool. For each delegation, the lead writes the sub-agent's
+instructions and picks a minimal tool set from a compact catalog, mixing tools from different
+sources (Datadog, GitHub, esa) when needed. Guardrails like the GitHub org scope are enforced in
+code, not left to the lead.
+
+By default the lead and spawned sub-agents both use `default_backend`. To run sub-agents on a
+different model than the lead, point `ai.lead_backend` and `ai.sub_agent_backend` at named backends
+in `[ai.backends]`. The two backends must use the same provider; only the model differs between the
+roles. A common setup is a stronger model for the lead and a cheaper, faster model for sub-agents.
+Either key falls back to `default_backend` when omitted.
 
 When the selected backend uses `provider = "anthropic"`, Claude is called through the Anthropic
 API.
