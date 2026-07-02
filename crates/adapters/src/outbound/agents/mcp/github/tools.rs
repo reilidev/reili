@@ -11,6 +11,7 @@ use serde_json::{Map, Value};
 use tracing::error;
 
 use super::read_file::GitHubReadFileToolAdapter;
+use crate::outbound::agents::connector::ToolCatalogEntry;
 use crate::outbound::github::github_mcp_client::{GitHubMcpConfig, GitHubMcpHttpClient};
 
 const REQUIRED_GITHUB_SUB_AGENT_TOOLS: &[&str] = &[
@@ -46,6 +47,55 @@ const GITHUB_SUB_AGENT_TOOLS: &[&str] = &[
     "get_dependabot_alert",
     "list_dependabot_alerts",
 ];
+
+/// One-line catalog summaries for the tools a spawned sub-agent can request, keyed by tool name.
+/// Kept short on purpose: the lead only needs enough signal to pick tools; the full schema is
+/// injected into the spawned sub-agent.
+const GITHUB_SUB_AGENT_TOOL_SUMMARIES: &[(&str, &str)] = &[
+    (
+        "search_code",
+        "Search code across the GitHub org using GitHub code search syntax.",
+    ),
+    (
+        "search_repositories",
+        "Find repositories in the org by name, topic, or description.",
+    ),
+    (
+        "search_issues",
+        "Search issues in the org by keywords, labels, author, and state.",
+    ),
+    (
+        "search_pull_requests",
+        "Search pull requests in the org by keywords, author, state, and dates.",
+    ),
+    (
+        "pull_request_read",
+        "Read one pull request: metadata, diff, files, reviews, and comments.",
+    ),
+    (
+        "actions_get",
+        "Get details of a GitHub Actions workflow run or job.",
+    ),
+    (
+        "actions_list",
+        "List GitHub Actions workflows, runs, or jobs for a repository.",
+    ),
+    (
+        "get_job_logs",
+        "Fetch logs for a GitHub Actions job, including failed jobs.",
+    ),
+    (
+        "get_dependabot_alert",
+        "Get one Dependabot alert by number for a repository.",
+    ),
+    (
+        "list_dependabot_alerts",
+        "List Dependabot alerts for a repository.",
+    ),
+];
+
+const READ_FILE_TOOL_SUMMARY: &str =
+    "Read a repository file as a bounded, line-numbered window (supports offset/limit).";
 
 /// Agent-facing name of the windowed file read wrapper.
 pub(super) const READ_FILE_TOOL_NAME: &str = "read_file";
@@ -91,6 +141,27 @@ impl GitHubMcpToolset {
         )) as Box<dyn ToolDyn>);
         adapters
     }
+
+    /// Catalog entries matching the tools [`Self::sub_agent_tools`] can supply: the allowlisted
+    /// tools available on the connected server, plus the always-present `read_file` wrapper.
+    #[must_use]
+    pub fn sub_agent_catalog_entries(&self) -> Vec<ToolCatalogEntry> {
+        build_sub_agent_catalog_entries(&self.tools)
+    }
+}
+
+fn build_sub_agent_catalog_entries(tools: &[Tool]) -> Vec<ToolCatalogEntry> {
+    let available_names: HashSet<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
+    let mut entries: Vec<ToolCatalogEntry> = GITHUB_SUB_AGENT_TOOL_SUMMARIES
+        .iter()
+        .filter(|(name, _)| available_names.contains(name))
+        .map(|(name, summary)| ToolCatalogEntry::new(name, summary))
+        .collect();
+    entries.push(ToolCatalogEntry::new(
+        READ_FILE_TOOL_NAME,
+        READ_FILE_TOOL_SUMMARY,
+    ));
+    entries
 }
 
 pub async fn connect_github_mcp_toolset(
@@ -467,6 +538,28 @@ mod tests {
     #[test]
     fn get_file_contents_is_not_exposed_to_agent() {
         assert!(!GITHUB_SUB_AGENT_TOOLS.contains(&"get_file_contents"));
+    }
+
+    #[test]
+    fn catalog_summaries_cover_exactly_the_sub_agent_allowlist() {
+        let summary_names: Vec<&str> = super::GITHUB_SUB_AGENT_TOOL_SUMMARIES
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
+
+        assert_eq!(summary_names, GITHUB_SUB_AGENT_TOOLS);
+    }
+
+    #[test]
+    fn catalog_entries_include_only_available_tools_plus_read_file() {
+        let tools = vec![tool("search_code"), tool("pull_request_read")];
+
+        let names: Vec<String> = super::build_sub_agent_catalog_entries(&tools)
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+
+        assert_eq!(names, vec!["search_code", "pull_request_read", "read_file"]);
     }
 
     #[test]

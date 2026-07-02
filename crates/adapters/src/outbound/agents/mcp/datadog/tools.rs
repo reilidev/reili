@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io;
 
+use crate::outbound::agents::connector::ToolCatalogEntry;
 pub use crate::outbound::datadog::DatadogMcpToolConfig;
 use crate::outbound::datadog::mcp_client::DatadogMcpHttpClient;
 use reili_core::error::PortError;
@@ -24,6 +25,63 @@ const DATADOG_SUB_AGENT_TOOLS: &[&str] = &[
     "security_findings_schema",
     "search_security_findings",
     "analyze_security_findings",
+];
+/// One-line catalog summaries for the tools a spawned sub-agent can request, keyed by tool name.
+/// Kept short on purpose: the lead only needs enough signal to pick tools; the full schema is
+/// injected into the spawned sub-agent.
+const DATADOG_SUB_AGENT_TOOL_SUMMARIES: &[(&str, &str)] = &[
+    (
+        "search_datadog_logs",
+        "Search Datadog logs with a query over a time range.",
+    ),
+    (
+        "analyze_datadog_logs",
+        "Aggregate Datadog logs to surface patterns, counts, and groupings.",
+    ),
+    (
+        "search_datadog_metrics",
+        "Find Datadog metric names matching a search term.",
+    ),
+    (
+        "get_datadog_metric",
+        "Query time-series values for a Datadog metric.",
+    ),
+    (
+        "get_datadog_metric_context",
+        "Get metadata, tags, and usage context for a Datadog metric.",
+    ),
+    (
+        "search_datadog_events",
+        "Search Datadog events (deploys, alerts, changes) over a time range.",
+    ),
+    (
+        "search_datadog_dashboards",
+        "Find Datadog dashboards by name or keyword.",
+    ),
+    (
+        "get_datadog_dashboard",
+        "Get a Datadog dashboard definition and its widgets.",
+    ),
+    (
+        "get_synthetics_tests",
+        "List Datadog Synthetic tests and their status.",
+    ),
+    (
+        "search_datadog_security_signals",
+        "Search Datadog security signals over a time range.",
+    ),
+    (
+        "security_findings_schema",
+        "Get the schema used to query Datadog security findings.",
+    ),
+    (
+        "search_security_findings",
+        "Search Datadog security findings.",
+    ),
+    (
+        "analyze_security_findings",
+        "Aggregate Datadog security findings to surface patterns and counts.",
+    ),
 ];
 const DATADOG_LEAD_AGENT_TOOLS: &[&str] = &[
     "search_datadog_services",
@@ -59,6 +117,22 @@ impl DatadogMcpToolset {
             self.client.clone(),
         )
     }
+
+    /// Catalog entries matching the tools [`Self::sub_agent_tools`] can supply: the allowlisted
+    /// tools available on the connected server.
+    #[must_use]
+    pub fn sub_agent_catalog_entries(&self) -> Vec<ToolCatalogEntry> {
+        build_sub_agent_catalog_entries(&self.tools)
+    }
+}
+
+fn build_sub_agent_catalog_entries(tools: &[Tool]) -> Vec<ToolCatalogEntry> {
+    let available_names: HashSet<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
+    DATADOG_SUB_AGENT_TOOL_SUMMARIES
+        .iter()
+        .filter(|(name, _)| available_names.contains(name))
+        .map(|(name, summary)| ToolCatalogEntry::new(name, summary))
+        .collect()
 }
 
 pub async fn connect_datadog_mcp_toolset(
@@ -251,6 +325,28 @@ mod tests {
 
     fn tool(name: &str) -> Tool {
         Tool::new(name.to_string(), "test tool", serde_json::Map::new())
+    }
+
+    #[test]
+    fn catalog_summaries_cover_exactly_the_sub_agent_allowlist() {
+        let summary_names: Vec<&str> = super::DATADOG_SUB_AGENT_TOOL_SUMMARIES
+            .iter()
+            .map(|(name, _)| *name)
+            .collect();
+
+        assert_eq!(summary_names, DATADOG_SUB_AGENT_TOOLS);
+    }
+
+    #[test]
+    fn catalog_entries_include_only_available_tools() {
+        let tools = vec![tool("search_datadog_logs"), tool("get_datadog_metric")];
+
+        let names: Vec<String> = super::build_sub_agent_catalog_entries(&tools)
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+
+        assert_eq!(names, vec!["search_datadog_logs", "get_datadog_metric"]);
     }
 
     #[test]
