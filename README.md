@@ -10,7 +10,7 @@
 ## What is Reili?
 Reili works as an AI teammate on your team, handling SRE and DevOps responsibilities.
 
-When you assign a task to Reili, it will gather information from sources such as Datadog, GitHub, Slack, and configured knowledge bases to carry out the work
+When you assign a task to Reili, it will gather information from sources such as Datadog, GitHub, JIRA, Slack, and configured knowledge bases to carry out the work
 As a general rule, Reili does not make changes to the production environment or perform recovery operations; instead,
 it uses the gathered information to investigate issues and generate reports.
 
@@ -23,13 +23,13 @@ action is needed. Reili takes that work off your plate.
 
 - Let you decide exactly what permissions each connector can request and what authority you delegate to Reili, instead of accepting a fixed permission set chosen by a hosted app provider
 - Investigate in Slack public channels like a teammate, working from the ongoing conversation where your team is already collaborating
-- Connect Datadog telemetry, GitHub repositories and changes, optional knowledge base docs, and relevant Slack public-channel history to build investigation context
-- Expand over time to cover additional external services beyond Datadog, GitHub, and Slack
+- Connect Datadog telemetry, GitHub repositories and changes, optional JIRA ticket search, optional knowledge base docs, and relevant Slack public-channel history to build investigation context
+- Expand over time to cover additional external services beyond Datadog, GitHub, JIRA, and Slack
 
 Core:
 
 - **Read-focused**: Reili reads and reports — it never changes your infrastructure
-- **Cross-service**: works across Datadog, GitHub, Slack, and optional knowledge base search today, with additional services planned over time
+- **Cross-service**: works across Datadog, GitHub, JIRA, Slack, and optional knowledge base search today, with additional services planned over time
 - **Chat-based**: currently works in Slack
 
 ## Quick Start
@@ -50,6 +50,13 @@ Core:
   - Configure the required permissions and scope in
     [GitHub Permissions and Scope](./docs/permissions-and-boundaries.md#github-permissions-and-scope).
 - Optional esa access token with `read` scope when you want Reili to search esa posts.
+- Optional JIRA integration via the Atlassian Rovo MCP server, when you want Reili to search and
+  reference JIRA tickets:
+  - An Atlassian org admin must enable "Authentication via API token" for the Rovo MCP server
+    (Atlassian Administration → Rovo → Rovo MCP server → Authentication) and issue a service
+    account API token (Jira, classic scopes) scoped to `read:jira-work` only.
+  - Configure the required scope in
+    [JIRA Permissions and Scope](./docs/permissions-and-boundaries.md#jira-permissions-and-scope).
 
 ### 2. Configure `reili.toml`
 
@@ -75,6 +82,7 @@ Non-secret settings live in `reili.toml`, including:
 - Datadog site
 - GitHub MCP URL, GitHub App ID, installation ID, and search scope org
 - optional esa team name and access-token env var
+- optional JIRA site and service-account-API-token env var
 
 Runtime config resolution is:
 
@@ -102,6 +110,7 @@ Required secrets depend on your selected Slack mode and backend:
 - `DATADOG_APP_KEY`
 - `GITHUB_APP_PRIVATE_KEY`
 - `ESA_ACCESS_TOKEN` when `[connector.esa]` is configured
+- `JIRA_SERVICE_ACCOUNT_API_TOKEN` when `[connector.jira]` is configured
 - `LLM_OPENAI_API_KEY` when the selected backend uses `provider = "openai"`
 - `LLM_ANTHROPIC_API_KEY` when the selected backend uses `provider = "anthropic"`
 
@@ -121,13 +130,22 @@ The optional esa integration is enabled only when `[connector.esa]` is present i
 When configured, `search_posts` (calling `GET /v1/teams/:team_name/posts` with esa's search query
 syntax) becomes available to spawned sub-agents. Omit `[connector.esa]` to disable it.
 
+The optional JIRA integration is enabled only when `[connector.jira]` is present in `reili.toml`.
+When configured, it talks to the Atlassian Rovo MCP server (`https://mcp.atlassian.com/v1/mcp`)
+using a service account API token, and exposes a small allowlisted set of read-only Jira MCP tools —
+JQL search, issue detail, remote issue links, and available workflow transitions — to spawned
+sub-agents. Which JIRA projects Reili can read is governed by the service account token's own
+permissions on the Atlassian side, not by Reili configuration. The configured `site` is stamped
+onto every call as the Atlassian `cloudId`, so a sub-agent can never target a different Atlassian
+site. Omit `[connector.jira]` to disable it.
+
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`.
 
 Reili runs a lead agent (the task runner) that delegates work to sub-agents spawned on the fly
 through a single `spawn_agent` tool. For each delegation, the lead writes the sub-agent's
 instructions and picks a minimal tool set from a compact catalog, mixing tools from different
-sources (Datadog, GitHub, esa) when needed. Guardrails like the GitHub org scope are enforced in
-code, not left to the lead.
+sources (Datadog, GitHub, esa, JIRA) when needed. Guardrails like the GitHub org scope are enforced
+in code, not left to the lead.
 
 By default the lead and spawned sub-agents both use `default_backend`. To run sub-agents on a
 different model than the lead, point `ai.lead_backend` and `ai.sub_agent_backend` at named backends
@@ -210,7 +228,7 @@ What happens:
 1. It posts a task control message with a `Cancel` button in the thread
 2. It posts task progress in the thread
 3. It loads current thread context and any recent reusable Reili notes visible through Slack search
-4. It investigates across Datadog, GitHub, and configured knowledge sources
+4. It investigates across Datadog, GitHub, optional JIRA, and configured knowledge sources
 5. It replies with an evidence-backed summary
 
 If you need to stop a queued or running investigation, click `Cancel` on that task's control
@@ -224,11 +242,15 @@ access, cluster access, or deployment credentials in production.
 
 At a high level, the current runtime:
 
-- reads from Datadog, GitHub, optional esa posts, Slack thread history, Slack public-channel search, and web lookup
-  integrations, and writes only Slack progress and result messages
+- reads from Datadog, GitHub, optional esa posts, optional JIRA tickets, Slack thread history,
+  Slack public-channel search, and web lookup integrations, and writes only Slack progress and
+  result messages
 - exposes only read-only Datadog MCP tools, including dashboard detail retrieval and Synthetic
   test reads when Datadog returns them
-- does not register tools for Datadog mutations, GitHub writes, esa writes, remediation, or deployments
+- exposes only read-only JIRA MCP tools (service account token scoped to `read:jira-work` only);
+  which projects are reachable is governed by the service account token's Atlassian permissions
+- does not register tools for Datadog mutations, GitHub writes, esa writes, JIRA writes,
+  remediation, or deployments
 - is designed to investigate and report, not to change infrastructure, Datadog state, or repository
   state
 

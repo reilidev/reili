@@ -5,8 +5,8 @@ use reili_adapters::logger::TracingLogger;
 use reili_adapters::outbound::agents::{
     AnthropicTaskRunner, AnthropicTaskRunnerInput, BedrockTaskRunner, BedrockTaskRunnerInput,
     ConnectorSet, DatadogConnector, DatadogMcpToolConfig, EsaConnector, GitHubConnector,
-    OpenAiTaskRunner, OpenAiTaskRunnerInput, VertexAiGeminiClient, VertexAiTaskRunner,
-    VertexAiTaskRunnerInput,
+    JiraConnector, OpenAiTaskRunner, OpenAiTaskRunnerInput, VertexAiGeminiClient,
+    VertexAiTaskRunner, VertexAiTaskRunnerInput,
 };
 use reili_adapters::outbound::anthropic::{
     AnthropicWebSearchAdapter, AnthropicWebSearchAdapterConfig,
@@ -19,6 +19,7 @@ use reili_adapters::outbound::auto_response_judge::{
 use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
 use reili_adapters::outbound::esa::{EsaClient, EsaClientConfig, EsaPostSearchPort};
 use reili_adapters::outbound::github::GitHubMcpConfig;
+use reili_adapters::outbound::jira::JiraMcpConfig;
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
     SlackChannelLookupAdapter, SlackEphemeralMessageAdapter, SlackFileDownloadAdapter,
@@ -56,7 +57,8 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::config::{
-    AppConfig, EsaConfig, JudgeProviderConfig, LlmProviderConfig, SecretString, SlackConnectionMode,
+    AppConfig, EsaConfig, JiraConfig, JudgeProviderConfig, LlmProviderConfig, SecretString,
+    SlackConnectionMode,
 };
 
 pub struct RuntimeDeps {
@@ -96,6 +98,7 @@ struct BuildConnectorSetInput {
     github_mcp: GitHubMcpConfig,
     github_scope_org: String,
     esa: Option<EsaConfig>,
+    jira: Option<JiraConfig>,
 }
 
 pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, RuntimeBootstrapError> {
@@ -144,6 +147,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         },
         github_scope_org: config.github.scope_org.clone(),
         esa: config.esa.clone(),
+        jira: config.jira.clone(),
     })?;
     let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
     let in_flight_job_registry = InFlightJobRegistry::new();
@@ -422,6 +426,9 @@ fn build_connector_set(input: BuildConnectorSetInput) -> Result<ConnectorSet, Po
     if let Some(esa_config) = input.esa {
         connectors.push(Arc::new(build_esa_connector(esa_config)?));
     }
+    if let Some(jira_config) = input.jira {
+        connectors.push(Arc::new(build_jira_connector(jira_config)));
+    }
 
     Ok(connectors)
 }
@@ -430,6 +437,13 @@ fn build_esa_connector(config: EsaConfig) -> Result<EsaConnector, PortError> {
     let post_search_port = build_esa_post_search_port(&config)?;
 
     Ok(EsaConnector::new(config.team_name, post_search_port))
+}
+
+fn build_jira_connector(config: JiraConfig) -> JiraConnector {
+    JiraConnector::new(JiraMcpConfig {
+        site: config.site,
+        service_account_api_token: config.service_account_api_token,
+    })
 }
 
 fn build_esa_post_search_port(config: &EsaConfig) -> Result<Arc<dyn EsaPostSearchPort>, PortError> {
@@ -554,9 +568,12 @@ mod tests {
     use reili_adapters::outbound::github::GitHubMcpConfig;
 
     use super::{BuildConnectorSetInput, build_connector_set, build_slack_signature_verifier};
-    use crate::config::{EsaConfig, SecretString, SlackConnectionMode};
+    use crate::config::{EsaConfig, JiraConfig, SecretString, SlackConnectionMode};
 
-    fn sample_connector_set_input(esa: Option<EsaConfig>) -> BuildConnectorSetInput {
+    fn sample_connector_set_input(
+        esa: Option<EsaConfig>,
+        jira: Option<JiraConfig>,
+    ) -> BuildConnectorSetInput {
         BuildConnectorSetInput {
             datadog: DatadogMcpToolConfig {
                 api_key: SecretString::from("api"),
@@ -571,6 +588,7 @@ mod tests {
             },
             github_scope_org: "example-org".to_string(),
             esa,
+            jira,
         }
     }
 
@@ -605,9 +623,9 @@ mod tests {
     }
 
     #[test]
-    fn connector_set_omits_esa_when_not_configured() {
-        let connectors =
-            build_connector_set(sample_connector_set_input(None)).expect("build connector set");
+    fn connector_set_omits_optional_connectors_when_not_configured() {
+        let connectors = build_connector_set(sample_connector_set_input(None, None))
+            .expect("build connector set");
 
         assert_eq!(connectors.len(), 2);
     }
@@ -618,9 +636,37 @@ mod tests {
             team_name: "docs".to_string(),
             access_token: SecretString::from("esa-token"),
         };
-        let connectors = build_connector_set(sample_connector_set_input(Some(esa)))
+        let connectors = build_connector_set(sample_connector_set_input(Some(esa), None))
             .expect("build connector set");
 
         assert_eq!(connectors.len(), 3);
+    }
+
+    #[test]
+    fn connector_set_includes_jira_when_configured() {
+        let jira = JiraConfig {
+            site: "acme.atlassian.net".to_string(),
+            service_account_api_token: SecretString::from("jira-service-account-token"),
+        };
+        let connectors = build_connector_set(sample_connector_set_input(None, Some(jira)))
+            .expect("build connector set");
+
+        assert_eq!(connectors.len(), 3);
+    }
+
+    #[test]
+    fn connector_set_includes_esa_and_jira_when_both_configured() {
+        let esa = EsaConfig {
+            team_name: "docs".to_string(),
+            access_token: SecretString::from("esa-token"),
+        };
+        let jira = JiraConfig {
+            site: "acme.atlassian.net".to_string(),
+            service_account_api_token: SecretString::from("jira-service-account-token"),
+        };
+        let connectors = build_connector_set(sample_connector_set_input(Some(esa), Some(jira)))
+            .expect("build connector set");
+
+        assert_eq!(connectors.len(), 4);
     }
 }

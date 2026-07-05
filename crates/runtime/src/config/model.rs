@@ -144,6 +144,12 @@ pub struct EsaConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JiraConfig {
+    pub site: String,
+    pub service_account_api_token: SecretString,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub slack_bot_token: SecretString,
     pub slack_signing_secret: Option<SecretString>,
@@ -163,6 +169,7 @@ pub struct AppConfig {
     pub judge_llm: Option<JudgeProviderConfig>,
     pub github: GitHubConfig,
     pub esa: Option<EsaConfig>,
+    pub jira: Option<JiraConfig>,
     pub language: String,
     pub additional_system_prompt: Option<String>,
 }
@@ -189,9 +196,9 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppConfig, EsaConfig, GitHubConfig, JudgeProviderConfig, LlmConfig, LlmProviderConfig,
-        OpenAiLlmConfig, SecretString, SlackChannelConfig, SlackChannelNamePattern,
-        SlackConnectionMode,
+        AppConfig, EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig, LlmConfig,
+        LlmProviderConfig, OpenAiLlmConfig, SecretString, SlackChannelConfig,
+        SlackChannelNamePattern, SlackConnectionMode,
     };
 
     #[test]
@@ -234,6 +241,12 @@ mod tests {
                 team_name: "docs".to_string(),
                 access_token: SecretString::new("esa-token".to_string()),
             }),
+            jira: Some(JiraConfig {
+                site: "acme.atlassian.net".to_string(),
+                service_account_api_token: SecretString::new(
+                    "jira-service-account-token".to_string(),
+                ),
+            }),
             language: "English".to_string(),
             additional_system_prompt: None,
         };
@@ -249,6 +262,7 @@ mod tests {
         assert!(!debug_output.contains("judge-openai-secret"));
         assert!(!debug_output.contains("private-key"));
         assert!(!debug_output.contains("esa-token"));
+        assert!(!debug_output.contains("jira-service-account-token"));
         assert!(debug_output.contains("[REDACTED]"));
     }
 
@@ -300,6 +314,7 @@ mod tests {
                 scope_org: "example-org".to_string(),
             },
             esa: None,
+            jira: None,
             language: "English".to_string(),
             additional_system_prompt: None,
         }

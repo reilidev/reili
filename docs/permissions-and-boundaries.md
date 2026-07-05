@@ -26,10 +26,12 @@ The runtime can expose only the following tool families:
   `search_pull_requests`, `get_file_contents`, `pull_request_read`, `actions_get`,
   `actions_list`, `get_job_logs`, `get_dependabot_alert`, `list_dependabot_alerts`
 - esa sub-agent delegation when `[connector.esa]` is configured: `esa_agent`
+- JIRA MCP reads when `[connector.jira]` is configured: `searchJiraIssuesUsingJql`,
+  `getJiraIssue`, `getJiraIssueRemoteIssueLinks`, `getTransitionsForJiraIssue`
 - External web lookup: `search_web`
 
 In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog
-mutations, esa writes, remediation, or deployments.
+mutations, esa writes, JIRA writes, remediation, or deployments.
 
 ## Slack Permissions and API Usage
 
@@ -313,6 +315,75 @@ esa boundary:
 - Requests are scoped to the single configured esa team
 - Query construction is controlled by the agent through the `q` field and follows esa's post search
   syntax
+
+## JIRA Permissions and Scope
+
+Reili can optionally search and reference JIRA tickets through the Atlassian Rovo MCP server.
+This integration is disabled unless `[connector.jira]` is present in `reili.toml`. When the section
+is omitted, Reili does not read `JIRA_SERVICE_ACCOUNT_API_TOKEN` and does not register any JIRA tools.
+
+Runtime authentication model:
+
+- Reili sends `JIRA_SERVICE_ACCOUNT_API_TOKEN` as a static `Authorization: Bearer` header to the
+  Atlassian Rovo MCP server (`https://mcp.atlassian.com/v1/mcp`)
+- This requires an Atlassian org admin to enable "Authentication via API token" for the Rovo MCP
+  server (Atlassian Administration → Rovo → Rovo MCP server → Authentication), so no interactive
+  OAuth consent flow is needed
+
+Required API token scope for the service account:
+
+The Rovo MCP server requires a *scoped* API token (a classic, unscoped API token does not carry
+the scope information MCP needs, even though the underlying Jira permissions would still apply).
+When an org admin creates the token for the service account
+(`https://id.atlassian.com/manage-profile/security/api-tokens` → **Create API token with scopes**,
+or the equivalent flow in Atlassian Administration for a managed service account):
+
+- App: **Jira**
+- Scope catalog: **Classic scopes** (Atlassian recommends classic scopes over granular scopes
+  where a classic scope covers the need)
+- Scope: `read:jira-work` only
+
+`read:jira-work` covers issue read, JQL search, and comments — everything the runtime's allowlisted
+tools below need. Do not grant `write:jira-work`, `read:jira-user` (Reili never resolves account
+IDs), or any Confluence/Bitbucket/Jira Service Management/Compass scope.
+
+This mirrors the runtime's own allowlist below: even if the service account token is ever granted
+broader access by mistake, Reili itself never requests a write tool or a non-Jira tool.
+
+Required `reili.toml` fields when configured:
+
+- `connector.jira.site`: Atlassian Cloud site hostname, e.g. `acme.atlassian.net`
+- `connector.jira.service_account_api_token_env`: optional env var name; defaults to
+  `JIRA_SERVICE_ACCOUNT_API_TOKEN`
+
+Which JIRA projects Reili can search and reference is governed by the service account token's own
+permissions on the Atlassian side. Reili does not maintain a separate project allow-list.
+
+JIRA capabilities currently used by the runtime:
+
+- Search issues using a JQL query
+- Read an issue's summary, description, status, assignee, comments, and issue links
+- List remote links (e.g. Confluence pages, external URLs) attached to an issue
+- List available workflow transitions and status options for an issue
+
+JIRA MCP boundary:
+
+- The JIRA sub-agent only receives this allowlisted subset of MCP tools:
+  `searchJiraIssuesUsingJql`, `getJiraIssue`, `getJiraIssueRemoteIssueLinks`, and
+  `getTransitionsForJiraIssue`
+- Which JIRA projects are reachable is governed by the service account token's own Atlassian
+  permissions; Reili does not maintain a separate project allow-list
+- The configured `site` is stamped onto every call as the Atlassian `cloudId` argument, so a
+  sub-agent cannot target a different Atlassian site than the one configured
+- Raw MCP write tools (`createJiraIssue`, `editJiraIssue`, `transitionJiraIssue`,
+  `addCommentToJiraIssue`, `addWorklogToJiraIssue`) are not exposed to the JIRA agent in this
+  runtime
+
+JIRA boundary in the current runtime:
+
+- No JIRA write permissions are required today
+- No issue creation, editing, commenting, worklog changes, or workflow transitions are performed
+- Project-level access is bounded by the service account token's Atlassian permissions
 
 ## LLM Boundary
 
