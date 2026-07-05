@@ -5,6 +5,7 @@ pub mod bedrock;
 pub mod datadog;
 pub mod esa;
 pub mod github;
+pub mod jira;
 pub mod openai;
 pub mod slack;
 pub mod vertex_ai;

@@ -150,3 +150,13 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
 # Optional when configured: env var name for an esa access token with the `read` scope.
 # Defaults to `ESA_ACCESS_TOKEN`.
 #access_token_env = "ESA_ACCESS_TOKEN"
+
+# Optional: JIRA ticket search and reference via the Atlassian Rovo MCP server. Omit this section
+# to disable the JIRA sub-agent and its tools. Requires an org admin to enable "Authentication via
+# API token" for the Rovo MCP server and to issue a service account API token.
+#[connector.jira]
+# Required when configured: Atlassian Cloud site hostname, e.g. `acme.atlassian.net`.
+#site = "acme.atlassian.net"
+# Optional when configured: env var name for the Rovo MCP service account API token. Defaults to
+# `JIRA_SERVICE_ACCOUNT_API_TOKEN`.
+#service_account_api_token_env = "JIRA_SERVICE_ACCOUNT_API_TOKEN"

@@ -8,8 +8,8 @@ use super::file::{
     SlackChannelFileConfig, SlackFileConfig, parse_file_config,
 };
 use super::model::{
-    AnthropicLlmConfig, AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, JudgeProviderConfig,
-    LlmConfig, LlmProviderConfig, OpenAiLlmConfig, SlackAuthorizationActors,
+    AnthropicLlmConfig, AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, JiraConfig,
+    JudgeProviderConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig, SlackAuthorizationActors,
     SlackAuthorizationConfig, SlackChannelConfig, SlackConnectionMode, VertexAiLlmConfig,
 };
 use crate::config::SecretString;
@@ -119,6 +119,7 @@ fn resolve_app_config(
     };
     let github = resolve_github_config(&file_config, env)?;
     let esa = resolve_esa_config(&file_config, env)?;
+    let jira = resolve_jira_config(&file_config, env)?;
 
     Ok(AppConfig {
         slack_bot_token,
@@ -147,6 +148,7 @@ fn resolve_app_config(
         judge_llm,
         github,
         esa,
+        jira,
         language: file_config.conversation.language,
         additional_system_prompt: optional_trimmed(
             file_config.conversation.additional_system_prompt.as_deref(),
@@ -517,6 +519,24 @@ fn resolve_esa_config(
     }))
 }
 
+fn resolve_jira_config(
+    file_config: &FileConfig,
+    env: &dyn EnvironmentReader,
+) -> Result<Option<JiraConfig>, ConfigError> {
+    let Some(jira) = file_config.connector.jira.as_ref() else {
+        return Ok(None);
+    };
+
+    Ok(Some(JiraConfig {
+        site: jira.site.clone(),
+        service_account_api_token: read_required_secret(
+            env,
+            &jira.service_account_api_token_env,
+            "connector.jira.service_account_api_token_env",
+        )?,
+    }))
+}
+
 fn normalize_multiline_secret(secret: SecretString) -> SecretString {
     SecretString::new(secret.expose().replace("\\n", "\n"))
 }
@@ -577,6 +597,10 @@ mod tests {
                 (
                     "ESA_ACCESS_TOKEN".to_string(),
                     "esa-access-token".to_string(),
+                ),
+                (
+                    "JIRA_SERVICE_ACCOUNT_API_TOKEN".to_string(),
+                    "jira-service-account-token".to_string(),
                 ),
             ]);
 
@@ -1027,6 +1051,87 @@ team_name = "docs"
             ConfigError::MissingRequiredEnv { env, field } => {
                 assert_eq!(env, "ESA_ACCESS_TOKEN");
                 assert_eq!(field, "connector.esa.access_token_env");
+            }
+            other => panic!("expected missing-env error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn resolves_optional_jira_connector_when_configured() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[connector.jira]
+site = "acme.atlassian.net"
+service_account_api_token_env = "JIRA_SERVICE_ACCOUNT_API_TOKEN"
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+        let jira = config.jira.expect("jira config");
+
+        assert_eq!(jira.site, "acme.atlassian.net");
+        assert_eq!(
+            jira.service_account_api_token.expose(),
+            "jira-service-account-token"
+        );
+    }
+
+    #[test]
+    fn omits_jira_connector_when_not_configured() {
+        let env = FixedEnvironment::with_overrides(&[("JIRA_SERVICE_ACCOUNT_API_TOKEN", "")]);
+        let file_config = parse_runtime_config(&valid_openai_config());
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert!(config.jira.is_none());
+    }
+
+    #[test]
+    fn defaults_jira_service_account_api_token_env_when_omitted() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[connector.jira]
+site = "acme.atlassian.net"
+
+[ai]
+"#,
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert_eq!(
+            config
+                .jira
+                .expect("jira config")
+                .service_account_api_token
+                .expose(),
+            "jira-service-account-token"
+        );
+    }
+
+    #[test]
+    fn rejects_jira_connector_with_missing_service_account_api_token_env() {
+        let env = FixedEnvironment::with_overrides(&[("JIRA_SERVICE_ACCOUNT_API_TOKEN", "")]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "[ai]\n",
+            r#"[connector.jira]
+site = "acme.atlassian.net"
+
+[ai]
+"#,
+        ));
+
+        let error = resolve_app_config(file_config, &env)
+            .expect_err("missing jira service account api token should fail");
+
+        match error {
+            ConfigError::MissingRequiredEnv { env, field } => {
+                assert_eq!(env, "JIRA_SERVICE_ACCOUNT_API_TOKEN");
+                assert_eq!(field, "connector.jira.service_account_api_token_env");
             }
             other => panic!("expected missing-env error, got {other}"),
         }

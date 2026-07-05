@@ -109,6 +109,10 @@ fn default_esa_access_token_env() -> String {
     "ESA_ACCESS_TOKEN".to_string()
 }
 
+fn default_jira_service_account_api_token_env() -> String {
+    "JIRA_SERVICE_ACCOUNT_API_TOKEN".to_string()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub(crate) struct SlackFileConfig {
     #[serde(default = "default_socket_mode")]
@@ -264,6 +268,7 @@ pub(crate) struct ConnectorFileConfig {
     pub datadog: DatadogConnectorFileConfig,
     pub github: GitHubConnectorFileConfig,
     pub esa: Option<EsaConnectorFileConfig>,
+    pub jira: Option<JiraConnectorFileConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -330,6 +335,17 @@ pub(crate) struct EsaConnectorFileConfig {
         deserialize_with = "require_non_empty_string"
     )]
     pub access_token_env: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct JiraConnectorFileConfig {
+    #[serde(deserialize_with = "require_non_empty_string")]
+    pub site: String,
+    #[serde(
+        default = "default_jira_service_account_api_token_env",
+        deserialize_with = "require_non_empty_string"
+    )]
+    pub service_account_api_token_env: String,
 }
 
 pub(crate) fn parse_file_config(path: &Path, contents: &str) -> Result<FileConfig, ConfigError> {

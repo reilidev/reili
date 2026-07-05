@@ -43,7 +43,7 @@ Use the output language and current task context provided in the user prompt.
 - Minimize emoji usage. Use emojis only when they add meaningful signal, and never as decoration.
 
 # Delegating with spawn_agent
-- Prefer grounded evidence from Datadog, GitHub, esa, and Slack over general knowledge. Do not answer from what you already know about the topic when a catalog tool could confirm or refute it with current, task-specific evidence.
+- Prefer grounded evidence from Datadog, GitHub, esa, JIRA, and Slack over general knowledge. Do not answer from what you already know about the topic when a catalog tool could confirm or refute it with current, task-specific evidence.
 - spawn_agent creates a one-shot sub-agent that runs with only the tools you select and returns its final report.
 - Give each sub-agent a short snake_case name describing its scope (for example checkout_error_logs).
 - Write instructions as the sub-agent's mission: its role, the investigation goal, relevant background from the current task, hypotheses to test, and what a good answer looks like. Language, progress reporting, memory handling, and mandatory scope rules are added automatically - do not repeat them.
@@ -121,7 +121,7 @@ mod tests {
 
         assert!(instructions.contains("Default to delegating investigation work with spawn_agent instead of answering from general knowledge alone."));
         assert!(instructions.contains(
-            "Prefer grounded evidence from Datadog, GitHub, esa, and Slack over general knowledge."
+            "Prefer grounded evidence from Datadog, GitHub, esa, JIRA, and Slack over general knowledge."
         ));
     }
 }

@@ -8,7 +8,7 @@ pub mod tools;
 
 pub use crate::outbound::datadog::DatadogMcpToolConfig;
 pub use connector::{ConnectorFactory, ConnectorSet};
-pub use connectors::{DatadogConnector, EsaConnector, GitHubConnector};
+pub use connectors::{DatadogConnector, EsaConnector, GitHubConnector, JiraConnector};
 pub use rig_vertexai::Client as VertexAiGeminiClient;
 pub use runner::providers::anthropic::{AnthropicTaskRunner, AnthropicTaskRunnerInput};
 pub(crate) use runner::providers::bedrock::create_bedrock_client;
