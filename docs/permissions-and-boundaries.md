@@ -341,11 +341,14 @@ or the equivalent flow in Atlassian Administration for a managed service account
 - App: **Jira**
 - Scope catalog: **Classic scopes** (Atlassian recommends classic scopes over granular scopes
   where a classic scope covers the need)
-- Scope: `read:jira-work` only
+- Scopes: `read:jira-work`, `read:jira-user`, `read:account`, `read:me`
 
 `read:jira-work` covers issue read, JQL search, and comments — everything the runtime's allowlisted
-tools below need. Do not grant `write:jira-work`, `read:jira-user` (Reili never resolves account
-IDs), or any Confluence/Bitbucket/Jira Service Management/Compass scope.
+tools below actually call. `read:jira-user`, `read:account`, and `read:me` are additionally required
+by the Rovo MCP server itself (identity/account resolution during the connection handshake) even
+though Reili's tool allowlist never calls a user-lookup tool — omitting any of these four causes the
+Rovo MCP connection to fail. Do not grant `write:jira-work` or any Confluence/Bitbucket/Jira Service
+Management/Compass scope.
 
 This mirrors the runtime's own allowlist below: even if the service account token is ever granted
 broader access by mistake, Reili itself never requests a write tool or a non-Jira tool.

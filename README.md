@@ -54,7 +54,7 @@ Core:
   reference JIRA tickets:
   - An Atlassian org admin must enable "Authentication via API token" for the Rovo MCP server
     (Atlassian Administration → Rovo → Rovo MCP server → Authentication) and issue a service
-    account API token (Jira, classic scopes) scoped to `read:jira-work` only.
+    account API token.
   - Configure the required scope in
     [JIRA Permissions and Scope](./docs/permissions-and-boundaries.md#jira-permissions-and-scope).
 
@@ -247,8 +247,8 @@ At a high level, the current runtime:
   result messages
 - exposes only read-only Datadog MCP tools, including dashboard detail retrieval and Synthetic
   test reads when Datadog returns them
-- exposes only read-only JIRA MCP tools (service account token scoped to `read:jira-work` only);
-  which projects are reachable is governed by the service account token's Atlassian permissions
+- exposes only read-only JIRA MCP tools; which projects are reachable is governed by the service
+  account token's Atlassian permissions
 - does not register tools for Datadog mutations, GitHub writes, esa writes, JIRA writes,
   remediation, or deployments
 - is designed to investigate and report, not to change infrastructure, Datadog state, or repository
