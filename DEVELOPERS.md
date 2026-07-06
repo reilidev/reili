@@ -18,6 +18,9 @@ This document is for contributors and maintainers of `Reili`.
 
 ## Repository Layout
 
+For the crate structure diagram and design overview, see
+[docs/architecture.md](./docs/architecture.md).
+
 Rust code lives in the `crates/` workspace:
 
 - `crates/core`: domain types, errors, and trait-based ports

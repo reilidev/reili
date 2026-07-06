@@ -32,6 +32,49 @@ Core:
 - **Cross-service**: works across Datadog, GitHub, JIRA, Slack, and optional knowledge base search today, with additional services planned over time
 - **Chat-based**: currently works in Slack
 
+## Architecture
+
+Reili ships as a single Rust binary that connects to Slack (Socket Mode or HTTP) and runs
+investigations as queued tasks executed by an AI lead agent.
+
+A Slack mention is parsed, authorized, and enqueued as a task job into an in-memory queue
+(jobs are not durable across restarts). Worker tasks in the same process claim jobs and run
+them: each job loads the Slack thread context plus recent reusable Reili notes, then hands the
+task to a lead agent. The lead agent delegates work through a single `spawn_agent` tool —
+for each delegation it writes the sub-agent's mission and picks a minimal tool set from a
+compact catalog of read-only connector tools. Guardrails such as the GitHub org scope are
+enforced in code, not left to the model.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User as Slack user
+    participant Ingress as Ingress<br/>(router · gates)
+    participant Queue as Job queue
+    participant Worker as Task worker
+    participant Lead as Lead agent
+    participant Sub as Sub-agents<br/>(spawned per delegation)
+    participant Ext as Datadog · GitHub ·<br/>JIRA · esa · Web
+
+    User->>Ingress: "@Reili" mention<br/>(Socket Mode or HTTP)
+    Ingress->>User: 👀 reaction + control message<br/>with Cancel button
+    Ingress->>Queue: enqueue task job
+    Worker->>Queue: claim job
+    Worker->>Lead: run task with thread history<br/>+ memory context
+    loop until the investigation is complete
+        Lead->>Sub: spawn_agent<br/>(mission + minimal tool set)
+        Sub->>Ext: read-only MCP / API calls
+        Sub-->>Lead: evidence-based findings
+        Lead-->>User: progress updates in thread
+    end
+    Lead-->>Worker: final report
+    Worker->>User: evidence-backed reply in thread
+```
+
+For the internal crate structure and design points, see
+[docs/architecture.md](./docs/architecture.md). For contributor workflows, see
+[DEVELOPERS.md](./DEVELOPERS.md).
+
 ## Quick Start
 
 ### 1. Prerequisites
