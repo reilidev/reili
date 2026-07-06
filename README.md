@@ -1,7 +1,7 @@
 <div align="center">
   <h1>Reili</h1>
   <img src="./docs/assets/reili.png" alt="Reili logo" width="240" />
-  <p><strong>An AI teammate for SRE and DevOps, currently focused on investigations</strong></p>
+  <p><strong>An AI teammate for SRE and DevOps, focused on read-only analysis and reporting</strong></p>
   <p>
     Investigate alerts quickly from Slack with Datadog telemetry and GitHub context.
   </p>
@@ -22,8 +22,8 @@ SRE, DevOps, and on-call engineers spend much of their time on alert response â€
 action is needed. Reili takes that work off your plate.
 
 - Let you decide exactly what permissions each connector can request and what authority you delegate to Reili, instead of accepting a fixed permission set chosen by a hosted app provider
-- Investigate in Slack public channels like a teammate, working from the ongoing conversation where your team is already collaborating
-- Connect Datadog telemetry, GitHub repositories and changes, optional JIRA ticket search, optional knowledge base docs, and relevant Slack public-channel history to build investigation context
+- Work in Slack public channels like a teammate, from the ongoing conversation where your team is already collaborating
+- Connect Datadog telemetry, GitHub repositories and changes, optional JIRA ticket search, optional knowledge base docs, and relevant Slack public-channel history to build the context it needs
 - Expand over time to cover additional external services beyond Datadog, GitHub, JIRA, and Slack
 
 Core:
@@ -35,7 +35,7 @@ Core:
 ## Architecture
 
 Reili ships as a single Rust binary that connects to Slack (Socket Mode or HTTP) and runs
-investigations as queued tasks executed by an AI lead agent.
+assigned tasks as queued jobs executed by an AI lead agent.
 
 A Slack mention is parsed, authorized, and enqueued as a task job into an in-memory queue
 (jobs are not durable across restarts). Worker tasks in the same process claim jobs and run
@@ -61,7 +61,7 @@ sequenceDiagram
     Ingress->>Queue: enqueue task job
     Worker->>Queue: claim job
     Worker->>Lead: run task with thread history<br/>+ memory context
-    loop until the investigation is complete
+    loop until the task is complete
         Lead->>Sub: spawn_agent<br/>(mission + minimal tool set)
         Sub->>Ext: read-only MCP / API calls
         Sub-->>Lead: evidence-based findings
@@ -71,9 +71,6 @@ sequenceDiagram
     Worker->>User: evidence-backed reply in thread
 ```
 
-For the internal crate structure and design points, see
-[docs/architecture.md](./docs/architecture.md). For contributor workflows, see
-[DEVELOPERS.md](./DEVELOPERS.md).
 
 ## Quick Start
 
@@ -88,7 +85,7 @@ For the internal crate structure and design points, see
 - Datadog API Key + APP Key for the Datadog MCP server
 - OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call
   Vertex AI Gemini models
-- GitHub App credentials for the repositories Reili investigates
+- GitHub App credentials for the repositories Reili works with
   - Create and install it from <a href="https://reilidev.github.io/reili/create-github-app" target="_blank">Create GitHub App</a>
   - Configure the required permissions and scope in
     [GitHub Permissions and Scope](./docs/permissions-and-boundaries.md#github-permissions-and-scope).
@@ -271,16 +268,16 @@ What happens:
 1. It posts a task control message with a `Cancel` button in the thread
 2. It posts task progress in the thread
 3. It loads current thread context and any recent reusable Reili notes visible through Slack search
-4. It investigates across Datadog, GitHub, optional JIRA, and configured knowledge sources
+4. It works across Datadog, GitHub, optional JIRA, and configured knowledge sources
 5. It replies with an evidence-backed summary
 
-If you need to stop a queued or running investigation, click `Cancel` on that task's control
+If you need to stop a queued or running task, click `Cancel` on that task's control
 message in the same Slack thread.
 
 ## Permissions and Tool Transparency
 
 Reili is intentionally scoped around task execution and decision support. The current runtime is
-investigation-focused. It can post progress and final replies in Slack, but it does not get shell
+read-focused. It can post progress and final replies in Slack, but it does not get shell
 access, cluster access, or deployment credentials in production.
 
 At a high level, the current runtime:
@@ -294,7 +291,7 @@ At a high level, the current runtime:
   account token's Atlassian permissions
 - does not register tools for Datadog mutations, GitHub writes, esa writes, JIRA writes,
   remediation, or deployments
-- is designed to investigate and report, not to change infrastructure, Datadog state, or repository
+- is designed to analyze and report, not to change infrastructure, Datadog state, or repository
   state
 
 For the full tool inventory, required Slack scopes, Datadog RBAC permissions, GitHub backend
@@ -315,4 +312,4 @@ not part of the release flow.
 - Executing operational actions like auto-remediation or auto-deploy
 - Heavy stateful workflow orchestration
 
-This project is intentionally focused on investigation-oriented task execution and decision support.
+This project is intentionally focused on read-only task execution and decision support.
