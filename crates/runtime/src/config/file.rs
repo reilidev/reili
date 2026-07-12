@@ -15,6 +15,24 @@ pub(crate) struct FileConfig {
     pub channel: ChannelFileConfig,
     pub ai: AiFileConfig,
     pub connector: ConnectorFileConfig,
+    #[serde(default)]
+    pub memory: MemoryFileConfig,
+}
+
+/// Optional top-level `[memory]` block. Memory is a cross-channel concern, so it lives at the top
+/// level rather than under `[channel]`. Backends are keyed by sub-table (currently only `slack`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct MemoryFileConfig {
+    pub slack: Option<MemorySlackFileConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MemorySlackFileConfig {
+    #[serde(deserialize_with = "require_non_empty_string")]
+    pub canvas_id: String,
+    pub cap: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -690,6 +708,49 @@ names = ["team-sre"]
 names = ["alerts-*"]
 auto_response = true
 auto_response_policy = "   "
+
+[ai]
+"#,
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("non-empty string"), "{message}");
+    }
+
+    #[test]
+    fn defaults_memory_to_none_when_omitted() {
+        let config =
+            parse_file_config(Path::new(TEST_PATH), &valid_config()).expect("parse should succeed");
+
+        assert!(config.memory.slack.is_none());
+    }
+
+    #[test]
+    fn parses_memory_slack_canvas_block() {
+        let toml = valid_config().replace(
+            "[ai]\n",
+            r#"[memory.slack]
+canvas_id = "F0CANVAS"
+cap = 5
+
+[ai]
+"#,
+        );
+
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+        let slack = config.memory.slack.expect("memory.slack present");
+
+        assert_eq!(slack.canvas_id, "F0CANVAS");
+        assert_eq!(slack.cap, Some(5));
+    }
+
+    #[test]
+    fn rejects_empty_memory_canvas_id_at_parse_time() {
+        let toml = valid_config().replace(
+            "[ai]\n",
+            r#"[memory.slack]
+canvas_id = "  "
 
 [ai]
 "#,

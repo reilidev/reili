@@ -39,7 +39,9 @@ fn classify_soft_error_kind(error: &PortError) -> &'static str {
             | "not_allowed_token_type"
             | "enterprise_is_restricted"
             | "access_denied"
-            | "team_access_not_granted",
+            | "team_access_not_granted"
+            | "not_visible"
+            | "file_not_found",
         ) => "capability_unavailable",
         Some(
             "invalid_action_token"

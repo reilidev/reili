@@ -10,7 +10,8 @@ use super::file::{
 use super::model::{
     AnthropicLlmConfig, AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, JiraConfig,
     JudgeProviderConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig, SlackAuthorizationActors,
-    SlackAuthorizationConfig, SlackChannelConfig, SlackConnectionMode, VertexAiLlmConfig,
+    SlackAuthorizationConfig, SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode,
+    VertexAiLlmConfig,
 };
 use crate::config::SecretString;
 use reili_core::messaging::slack::SlackChannelNamePattern;
@@ -120,6 +121,7 @@ fn resolve_app_config(
     let github = resolve_github_config(&file_config, env)?;
     let esa = resolve_esa_config(&file_config, env)?;
     let jira = resolve_jira_config(&file_config, env)?;
+    let memory = resolve_memory_config(&file_config);
 
     Ok(AppConfig {
         slack_bot_token,
@@ -149,6 +151,7 @@ fn resolve_app_config(
         github,
         esa,
         jira,
+        memory,
         language: file_config.conversation.language,
         additional_system_prompt: optional_trimmed(
             file_config.conversation.additional_system_prompt.as_deref(),
@@ -537,6 +540,19 @@ fn resolve_jira_config(
     }))
 }
 
+const DEFAULT_MEMORY_CAP: u32 = 15;
+
+fn resolve_memory_config(file_config: &FileConfig) -> Option<SlackCanvasMemoryConfig> {
+    file_config
+        .memory
+        .slack
+        .as_ref()
+        .map(|slack| SlackCanvasMemoryConfig {
+            canvas_id: slack.canvas_id.clone(),
+            cap: slack.cap.unwrap_or(DEFAULT_MEMORY_CAP),
+        })
+}
+
 fn normalize_multiline_secret(secret: SecretString) -> SecretString {
     SecretString::new(secret.expose().replace("\\n", "\n"))
 }
@@ -723,6 +739,51 @@ mod tests {
             }
             other => panic!("expected read-file error, got {other}"),
         }
+    }
+
+    #[test]
+    fn resolves_memory_config_when_absent_to_none() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config());
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert!(config.memory.is_none());
+    }
+
+    #[test]
+    fn resolves_memory_slack_canvas_with_cap_default() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml = format!(
+            "{}\n[memory.slack]\ncanvas_id = \"F0CANVAS\"\n",
+            valid_openai_config()
+        );
+        let file_config = parse_runtime_config(&toml);
+
+        let memory = resolve_app_config(file_config, &env)
+            .expect("resolve config")
+            .memory
+            .expect("memory config present");
+
+        assert_eq!(memory.canvas_id, "F0CANVAS");
+        assert_eq!(memory.cap, 15);
+    }
+
+    #[test]
+    fn resolves_memory_slack_canvas_cap_override() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml = format!(
+            "{}\n[memory.slack]\ncanvas_id = \"F0CANVAS\"\ncap = 3\n",
+            valid_openai_config()
+        );
+        let file_config = parse_runtime_config(&toml);
+
+        let memory = resolve_app_config(file_config, &env)
+            .expect("resolve config")
+            .memory
+            .expect("memory config present");
+
+        assert_eq!(memory.cap, 3);
     }
 
     #[test]

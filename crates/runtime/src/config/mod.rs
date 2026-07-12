@@ -13,7 +13,8 @@ pub use loader::{ConfigLoadOptions, load_app_config};
 pub use model::{
     AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig,
     LlmConfig, LlmProviderConfig, OpenAiLlmConfig, SlackAuthorizationActors,
-    SlackAuthorizationConfig, SlackChannelConfig, SlackConnectionMode, VertexAiLlmConfig,
+    SlackAuthorizationConfig, SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode,
+    VertexAiLlmConfig,
 };
 
 #[derive(Debug, Error)]

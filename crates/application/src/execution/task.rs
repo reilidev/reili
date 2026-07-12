@@ -63,7 +63,6 @@ pub async fn execute_task_job(
     let started_at = Instant::now();
     let started_at_utc = Utc::now();
     let started_at_iso = started_at_utc.to_rfc3339_opts(SecondsFormat::Millis, true);
-    let started_at_unix_seconds = started_at_utc.timestamp();
 
     let base_log_meta = string_log_meta([
         ("slackEventId", input.payload.slack_event_id.clone()),
@@ -113,7 +112,6 @@ pub async fn execute_task_job(
         deps: input.deps.clone(),
         thread_ts: thread_ts.clone(),
         started_at_iso: started_at_iso.clone(),
-        started_at_unix_seconds,
         base_log_meta: base_log_meta.clone(),
         progress_session: Arc::clone(&progress_session),
         on_progress_event: Arc::clone(&on_progress_event),
@@ -221,7 +219,6 @@ struct RunTaskStageInput {
     deps: TaskExecutionDeps,
     thread_ts: String,
     started_at_iso: String,
-    started_at_unix_seconds: i64,
     base_log_meta: TaskLogMeta,
     progress_session: Arc<Mutex<Box<dyn TaskProgressStreamSession>>>,
     on_progress_event: Arc<dyn TaskProgressEventPort>,
@@ -238,14 +235,13 @@ async fn run_task(input: RunTaskStageInput) -> Result<TaskExecutionSuccess, Exec
         .await;
 
     let memory_context_loader = SlackMemoryContextLoader::new(SlackMemoryContextLoaderDeps {
-        slack_message_search_port: Arc::clone(&input.deps.task_resources.slack_message_search_port),
+        canvas_memory_port: input.deps.task_resources.canvas_memory_port.clone(),
         logger: Arc::clone(&input.deps.logger),
-        bot_user_id: input.deps.slack_bot_user_id.clone(),
     });
     let memory_items = memory_context_loader
         .load_for_message(SlackMemoryContextLoaderInput {
-            message: input.payload.message.clone(),
-            started_at_unix_seconds: input.started_at_unix_seconds,
+            channel_id: input.payload.message.channel.clone(),
+            channel_name: None,
             base_log_meta: input.base_log_meta.clone(),
         })
         .await;
@@ -408,13 +404,13 @@ mod tests {
     use reili_core::knowledge::{MockWebSearchPort, WebSearchPort};
     use reili_core::logger::LogEntry;
     use reili_core::messaging::slack::{
-        FetchSlackThreadHistoryInput, MockSlackFileDownloadPort, MockSlackMessageSearchPort,
-        MockSlackThreadHistoryPort, MockSlackThreadReplyPort, SlackFileDownloadPort, SlackMessage,
-        SlackMessageSearchContextMessages, SlackMessageSearchInput, SlackMessageSearchPort,
-        SlackMessageSearchResult, SlackMessageSearchResultItem, SlackThreadHistoryPort,
-        SlackThreadMessage, SlackThreadReplyInput, SlackThreadReplyPort, SlackTriggerType,
+        FetchSlackThreadHistoryInput, ListSlackCanvasMemoriesInput, MockSlackCanvasMemoryPort,
+        MockSlackFileDownloadPort, MockSlackMessageSearchPort, MockSlackThreadHistoryPort,
+        MockSlackThreadReplyPort, SlackCanvasMemoryPort, SlackCanvasMemoryRecord,
+        SlackCanvasMemoryVisibility, SlackFileDownloadPort, SlackMessage, SlackMessageSearchPort,
+        SlackThreadHistoryPort, SlackThreadMessage, SlackThreadReplyInput, SlackThreadReplyPort,
+        SlackTriggerType,
     };
-    use reili_core::secret::SecretString;
     use reili_core::task::{
         LlmExecutionMetadata, LlmUsageSnapshot, MockTaskProgressSessionFactoryPort,
         MockTaskProgressSessionPort, MockTaskRunnerPort, RunTaskInput, TaskCancellation,
@@ -455,6 +451,7 @@ mod tests {
             slack_message_search_port,
             slack_file_download_port,
             web_search_port,
+            canvas_memory_port: None,
         }
     }
 
@@ -498,23 +495,23 @@ mod tests {
         deps: TaskExecutionDeps,
         slack_reply_calls: Arc<Mutex<Vec<SlackThreadReplyInput>>>,
         slack_thread_history_calls: Arc<Mutex<Vec<FetchSlackThreadHistoryInput>>>,
-        slack_message_search_calls: Arc<Mutex<Vec<SlackMessageSearchInput>>>,
+        canvas_memory_calls: Arc<Mutex<Vec<ListSlackCanvasMemoriesInput>>>,
         task_runs: Arc<Mutex<Vec<CapturedTaskRunInput>>>,
     }
 
     fn create_execution_fixtures(
         thread_history_response: Option<Result<Vec<SlackThreadMessage>, PortError>>,
     ) -> ExecutionFixtures {
-        create_execution_fixtures_with_memory_search(thread_history_response, None)
+        create_execution_fixtures_with_canvas_memory(thread_history_response, None)
     }
 
-    fn create_execution_fixtures_with_memory_search(
+    fn create_execution_fixtures_with_canvas_memory(
         thread_history_response: Option<Result<Vec<SlackThreadMessage>, PortError>>,
-        memory_search_response: Option<Result<SlackMessageSearchResult, PortError>>,
+        canvas_memory_response: Option<Result<Vec<SlackCanvasMemoryRecord>, PortError>>,
     ) -> ExecutionFixtures {
         let slack_reply_calls = Arc::new(Mutex::new(Vec::new()));
         let slack_thread_history_calls = Arc::new(Mutex::new(Vec::new()));
-        let slack_message_search_calls = Arc::new(Mutex::new(Vec::new()));
+        let canvas_memory_calls = Arc::new(Mutex::new(Vec::new()));
         let task_runs = Arc::new(Mutex::new(Vec::new()));
 
         let mut slack_reply_port = MockSlackThreadReplyPort::new();
@@ -573,22 +570,22 @@ mod tests {
                 }))
             });
 
-        let mut slack_message_search_port = MockSlackMessageSearchPort::new();
-        match memory_search_response {
-            Some(response) => {
-                let search_calls = Arc::clone(&slack_message_search_calls);
-                slack_message_search_port
-                    .expect_search_messages()
-                    .times(1)
-                    .returning(move |input: SlackMessageSearchInput| {
-                        search_calls.lock().expect("lock search calls").push(input);
-                        response.clone()
-                    });
-            }
-            None => {
-                slack_message_search_port.expect_search_messages().times(0);
-            }
-        }
+        let canvas_memory_port: Option<Arc<dyn SlackCanvasMemoryPort>> =
+            match canvas_memory_response {
+                Some(response) => {
+                    let mut canvas_memory_port = MockSlackCanvasMemoryPort::new();
+                    let list_calls = Arc::clone(&canvas_memory_calls);
+                    canvas_memory_port
+                        .expect_list_channel_memories()
+                        .times(1)
+                        .returning(move |input: ListSlackCanvasMemoriesInput| {
+                            list_calls.lock().expect("lock list calls").push(input);
+                            response.clone()
+                        });
+                    Some(Arc::new(canvas_memory_port) as Arc<dyn SlackCanvasMemoryPort>)
+                }
+                None => None,
+            };
 
         let deps = TaskExecutionDeps {
             slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
@@ -596,10 +593,11 @@ mod tests {
             slack_thread_history_port: Arc::new(slack_thread_history_port)
                 as Arc<dyn SlackThreadHistoryPort>,
             task_resources: TaskResources {
-                slack_message_search_port: Arc::new(slack_message_search_port)
+                slack_message_search_port: Arc::new(MockSlackMessageSearchPort::new())
                     as Arc<dyn SlackMessageSearchPort>,
                 slack_file_download_port: create_resources().slack_file_download_port,
                 web_search_port: create_resources().web_search_port,
+                canvas_memory_port,
             },
             task_runner: Arc::new(task_runner) as Arc<dyn TaskRunnerPort>,
             logger: Arc::new(NoopLogger) as Arc<dyn TaskLogger>,
@@ -610,7 +608,7 @@ mod tests {
             deps,
             slack_reply_calls,
             slack_thread_history_calls,
-            slack_message_search_calls,
+            canvas_memory_calls,
             task_runs,
         }
     }
@@ -629,7 +627,7 @@ mod tests {
             deps,
             slack_reply_calls,
             slack_thread_history_calls,
-            slack_message_search_calls,
+            canvas_memory_calls,
             task_runs,
         } = fixtures;
 
@@ -671,9 +669,9 @@ mod tests {
         );
         assert!(captured[0].request.memory_items.is_empty());
         assert!(
-            slack_message_search_calls
+            canvas_memory_calls
                 .lock()
-                .expect("lock search calls")
+                .expect("lock list calls")
                 .is_empty()
         );
         assert_eq!(
@@ -743,38 +741,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn includes_slack_memory_context_when_action_token_is_available() {
-        let fixtures = create_execution_fixtures_with_memory_search(
+    async fn includes_canvas_memory_context_when_configured() {
+        let fixtures = create_execution_fixtures_with_canvas_memory(
             None,
-            Some(Ok(SlackMessageSearchResult {
-                messages: vec![SlackMessageSearchResultItem {
-                    author_name: Some("Reili".to_string()),
-                    author_user_id: Some("UBOT".to_string()),
-                    team_id: Some("T001".to_string()),
-                    channel_id: Some("C001".to_string()),
-                    channel_name: Some("alerts".to_string()),
-                    message_ts: "1760000000.000001".to_string(),
-                    thread_ts: Some("1760000000.000000".to_string()),
-                    content: "*Reusable notes*\nreili_memory_v1\n- service: checkout-api"
-                        .to_string(),
-                    is_author_bot: true,
-                    permalink: Some("https://slack/memory".to_string()),
-                    context_messages: SlackMessageSearchContextMessages {
-                        before: Vec::new(),
-                        after: Vec::new(),
-                    },
-                }],
-                next_cursor: None,
-            })),
+            Some(Ok(vec![SlackCanvasMemoryRecord {
+                visibility: SlackCanvasMemoryVisibility::Channel,
+                fact: "checkout-api owns /checkout".to_string(),
+                evidence: "services/checkout README".to_string(),
+                scope: "checkout production".to_string(),
+                source_url: Some("https://slack/memory".to_string()),
+                created_at: "2026-07-07T09:12:34Z".to_string(),
+            }])),
         );
         let ExecutionFixtures {
             deps,
-            slack_message_search_calls,
+            canvas_memory_calls,
             task_runs,
             ..
         } = fixtures;
-        let mut payload = create_payload("1760000100.000001", None, None);
-        payload.message.action_token = Some(SecretString::from("action-token"));
+        let payload = create_payload("1760000100.000001", None, None);
 
         let result = execute_task_job(ExecuteTaskJobInput {
             job_id: "job-4".to_string(),
@@ -789,17 +774,13 @@ mod tests {
         let captured = task_runs.lock().expect("lock captured runs").clone();
         assert_eq!(captured[0].request.memory_items.len(), 1);
         assert_eq!(
-            captured[0].request.memory_items[0].content,
-            "- service: checkout-api"
+            captured[0].request.memory_items[0].fact,
+            "checkout-api owns /checkout"
         );
 
-        let calls = slack_message_search_calls
-            .lock()
-            .expect("lock search calls")
-            .clone();
+        let calls = canvas_memory_calls.lock().expect("lock list calls").clone();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].query, "reili_memory_v1");
-        assert_eq!(calls[0].context_channel_id, Some("C001".to_string()));
+        assert_eq!(calls[0].channel_id, "C001".to_string());
         assert_eq!(calls[0].limit, 10);
     }
 

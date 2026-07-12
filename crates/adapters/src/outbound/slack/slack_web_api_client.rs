@@ -120,12 +120,43 @@ impl SlackWebApiClient {
     }
 
     /// Fetches the raw bytes of a Slack-hosted file from a full URL (e.g. `url_private_download`),
-    /// authenticating with the bot token. Unlike [`Self::get`]/[`Self::post`], the URL is used as-is
-    /// rather than being resolved against the API base URL.
-    ///
-    /// `max_bytes` caps the download: a file whose advertised or actual size exceeds the limit is
-    /// rejected with an error instead of being buffered into memory.
+    /// authenticating with the bot token. Rejects an HTML body: Slack returns the sign-in page with
+    /// a 200 status when the token cannot access the file, so an HTML content type — despite the
+    /// success status — signals an auth failure rather than file bytes.
     pub async fn download_bytes(&self, url: &str, max_bytes: u64) -> Result<Vec<u8>, PortError> {
+        let (bytes, content_type) = self.download_raw(url, max_bytes).await?;
+        if content_type
+            .as_deref()
+            .is_some_and(|value| value.starts_with("text/html"))
+        {
+            return Err(PortError::invalid_response(
+                "Slack file download returned HTML instead of file bytes (likely missing files:read scope or no access)",
+            ));
+        }
+        Ok(bytes)
+    }
+
+    /// Like [`Self::download_bytes`] but keeps a `text/html` body. Slack serves canvas content as an
+    /// HTML rendering, so a canvas download is legitimately HTML rather than the sign-in-page auth
+    /// failure that [`Self::download_bytes`] rejects.
+    pub async fn download_bytes_allowing_html(
+        &self,
+        url: &str,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, PortError> {
+        Ok(self.download_raw(url, max_bytes).await?.0)
+    }
+
+    /// Downloads a Slack-hosted file, authenticating with the bot token. Unlike [`Self::get`] /
+    /// [`Self::post`] the URL is used as-is rather than resolved against the API base URL.
+    /// `max_bytes` caps the download: a file whose advertised or actual size exceeds the limit is
+    /// rejected instead of being buffered. Returns the body bytes and the response content type;
+    /// deciding what content types are acceptable is left to the caller.
+    async fn download_raw(
+        &self,
+        url: &str,
+        max_bytes: u64,
+    ) -> Result<(Vec<u8>, Option<String>), PortError> {
         let trimmed = url.trim();
         if trimmed.is_empty() {
             return Err(PortError::invalid_input("Slack file URL must not be empty"));
@@ -172,23 +203,12 @@ impl SlackWebApiClient {
             ));
         }
 
-        // Slack returns the HTML sign-in page with a 200 status when the token cannot access the
-        // file, so a HTML content type signals an authentication/authorization failure.
-        if content_type
-            .as_deref()
-            .is_some_and(|value| value.starts_with("text/html"))
-        {
-            return Err(PortError::invalid_response(
-                "Slack file download returned HTML instead of file bytes (likely missing files:read scope or no access)",
-            ));
-        }
-
         // Guard against a missing or dishonest Content-Length header.
         if bytes.len() as u64 > max_bytes {
             return Err(file_too_large_error(bytes.len() as u64, max_bytes));
         }
 
-        Ok(bytes.to_vec())
+        Ok((bytes.to_vec(), content_type))
     }
 
     async fn execute(

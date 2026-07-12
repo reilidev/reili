@@ -21,8 +21,9 @@ use super::connector::PreparedConnector;
 use super::runner::provider_settings::LlmProviderSettings;
 use super::runner::usage_collector::LlmUsageCollector;
 use super::tools::{
-    ReportProgressTool, ReportProgressToolInput, SearchSlackMessagesTool, SearchWebTool,
-    SpawnAgentTool, SpawnAgentToolInput, SpawnedSubAgentSpec,
+    ReportProgressTool, ReportProgressToolInput, SaveMemoryTool, SaveMemoryToolInput,
+    SaveSharedMemoryTool, SearchSlackMessagesTool, SearchWebTool, SpawnAgentTool,
+    SpawnAgentToolInput, SpawnedSubAgentSpec,
 };
 use instructions::{BuildTaskInstructionsInput, build_task_instructions};
 use spawn::{render_spawn_tool_catalog, spawn_catalog_tool_names, spawn_tool_catalog_groups};
@@ -113,7 +114,7 @@ where
             })
         };
 
-        builder
+        let builder = builder
             .tools(lead_tools)
             .tool(ReportProgressTool::new(ReportProgressToolInput {
                 on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
@@ -130,8 +131,28 @@ where
                 on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
                 tool_concurrency: self.config.settings.tool_concurrency,
                 shared_prompt_context: memory_context_section,
-            }))
-            .build()
+            }));
+
+        // save_memory / save_shared_memory are lead-only tools; sub-agents surface facts for the
+        // lead to persist. Both are registered only when a Canvas memory backend is configured.
+        let builder = match &input.run_context.resources.canvas_memory_port {
+            Some(canvas_memory_port) => builder
+                .tool(SaveMemoryTool::new(SaveMemoryToolInput {
+                    canvas_memory_port: Arc::clone(canvas_memory_port),
+                    channel_id: input.run_context.execution.runtime.channel.clone(),
+                    channel_name: None,
+                    source_message_ts: input.run_context.execution.runtime.thread_ts.clone(),
+                }))
+                .tool(SaveSharedMemoryTool::new(SaveMemoryToolInput {
+                    canvas_memory_port: Arc::clone(canvas_memory_port),
+                    channel_id: input.run_context.execution.runtime.channel.clone(),
+                    channel_name: None,
+                    source_message_ts: input.run_context.execution.runtime.thread_ts.clone(),
+                })),
+            None => builder,
+        };
+
+        builder.build()
     }
 
     fn sub_agent_config(&self) -> SubAgentConfig {

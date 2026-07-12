@@ -39,7 +39,8 @@ assigned tasks as queued jobs executed by an AI lead agent.
 
 A Slack mention is parsed, authorized, and enqueued as a task job into an in-memory queue
 (jobs are not durable across restarts). Worker tasks in the same process claim jobs and run
-them: each job loads the Slack thread context plus recent reusable Reili notes, then hands the
+them: each job loads the Slack thread context plus the channel's recent reusable Reili memories
+(when a Slack Canvas memory backend is configured), then hands the
 task to a lead agent. The lead agent delegates work through a single `spawn_agent` tool —
 for each delegation it writes the sub-agent's mission and picks a minimal tool set from a
 compact catalog of read-only connector tools. Guardrails such as the GitHub org scope are
@@ -78,7 +79,7 @@ sequenceDiagram
 
 - Slack App
   - Create and install it from [slack-app-manifest.yml](./slack-app-manifest.yml) or 
-  <a href="https://api.slack.com/apps?new_app=1&amp;manifest_yaml=display_information%3A%0D%0A++name%3A+Reili%0D%0Afeatures%3A%0D%0A++bot_user%3A%0D%0A++++display_name%3A+Reili%0D%0A++++always_online%3A+true%0D%0Aoauth_config%3A%0D%0A++scopes%3A%0D%0A++++bot%3A%0D%0A++++++-+reactions%3Awrite%0D%0A++++++-+app_mentions%3Aread%0D%0A++++++-+channels%3Ahistory%0D%0A++++++-+channels%3Aread%0D%0A++++++-+chat%3Awrite%0D%0A++++++-+files%3Aread%0D%0A++++++-+usergroups%3Aread%0D%0A++++++-+assistant%3Awrite%0D%0A++++++-+search%3Aread.files%0D%0A++++++-+search%3Aread.public%0D%0A++++++-+search%3Aread.users%0D%0A++pkce_enabled%3A+false%0D%0Asettings%3A%0D%0A++event_subscriptions%3A%0D%0A++++request_url%3A+https%3A%2F%2Fexample.com%2Fslack%2Fevents%0D%0A++++bot_events%3A%0D%0A++++++-+app_mention%0D%0A++++++-+file_shared%0D%0A++++++-+message.channels%0D%0A++interactivity%3A%0D%0A++++is_enabled%3A+true%0D%0A++org_deploy_enabled%3A+false%0D%0A++socket_mode_enabled%3A+true%0D%0A++token_rotation_enabled%3A+false%0D%0A" target="_blank">Create App from manifest link</a>
+  <a href="https://api.slack.com/apps?new_app=1&amp;manifest_yaml=display_information%3A%0D%0A++name%3A+Reili%0D%0Afeatures%3A%0D%0A++bot_user%3A%0D%0A++++display_name%3A+Reili%0D%0A++++always_online%3A+true%0D%0Aoauth_config%3A%0D%0A++scopes%3A%0D%0A++++bot%3A%0D%0A++++++-+reactions%3Awrite%0D%0A++++++-+app_mentions%3Aread%0D%0A++++++-+canvases%3Aread%0D%0A++++++-+canvases%3Awrite%0D%0A++++++-+channels%3Ahistory%0D%0A++++++-+channels%3Aread%0D%0A++++++-+chat%3Awrite%0D%0A++++++-+files%3Aread%0D%0A++++++-+usergroups%3Aread%0D%0A++++++-+assistant%3Awrite%0D%0A++++++-+search%3Aread.files%0D%0A++++++-+search%3Aread.public%0D%0A++++++-+search%3Aread.users%0D%0A++pkce_enabled%3A+false%0D%0Asettings%3A%0D%0A++event_subscriptions%3A%0D%0A++++request_url%3A+https%3A%2F%2Fexample.com%2Fslack%2Fevents%0D%0A++++bot_events%3A%0D%0A++++++-+app_mention%0D%0A++++++-+file_shared%0D%0A++++++-+message.channels%0D%0A++interactivity%3A%0D%0A++++is_enabled%3A+true%0D%0A++org_deploy_enabled%3A+false%0D%0A++socket_mode_enabled%3A+true%0D%0A++token_rotation_enabled%3A+false%0D%0A" target="_blank">Create App from manifest link</a>
   - In Slack App settings, open `Agents & AI Apps` and turn on `Agent or Assistant` so Bot Token based Slack search is available
   - Configure the required scopes, events, and Interactivity using
     [Slack Permissions and API Usage](./docs/permissions-and-boundaries.md#slack-permissions-and-api-usage).
@@ -123,6 +124,7 @@ Non-secret settings live in `reili.toml`, including:
 - GitHub MCP URL, GitHub App ID, installation ID, and search scope org
 - optional esa team name and access-token env var
 - optional JIRA site and service-account-API-token env var
+- optional Slack Canvas memory (`[memory.slack]`): `canvas_id` and an optional per-channel `cap`
 
 Runtime config resolution is:
 
@@ -178,6 +180,31 @@ sub-agents. Which JIRA projects Reili can read is governed by the service accoun
 permissions on the Atlassian side, not by Reili configuration. The configured `site` is stamped
 onto every call as the Atlassian `cloudId`, so a sub-agent can never target a different Atlassian
 site. Omit `[connector.jira]` to disable it.
+
+The optional memory feature is enabled only when `[memory.slack]` is present in `reili.toml`. Reili
+stores reusable, durable investigation facts in a single shared Slack Canvas that you create
+manually and reference by `canvas_id`. Each channel occupies its own section (keyed by channel ID),
+plus one shared section for facts that apply across every channel; each memory is a
+Fact/Evidence/Scope note linking back to the originating thread. When a task runs, the lead agent
+recalls that channel's memories plus the shared memories as investigation hints, and persists new
+durable facts through two lead-only tools: `save_memory` (scoped to the current channel) and
+`save_shared_memory` (applies across all channels — for organization-wide conventions, shared
+tooling, or cross-team policies). Set `cap` to bound how many memories are retained per section
+(default 15); older entries are pruned as new ones are saved. Omit `[memory.slack]` to disable
+memory entirely: no context is recalled and neither tool is registered.
+
+**Slack Canvas requires a paid Slack plan**, and the bot needs the `canvases:read` and
+`canvases:write` scopes (plus the existing `files:read`). After creating the canvas, open its
+**share settings** and:
+
+- grant **Reili (the bot) both read and write (can edit)** access — canvases default to "only
+  invited people can access", so without this `files.info` returns `not_visible` and memory is
+  silently skipped;
+- grant access to the **team members who need it**, so people can read and curate the stored
+  memories directly in Slack.
+
+(Equivalently, share the canvas to a channel the bot is a member of with edit access, or call
+`canvases.access.set`.)
 
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`.
 
@@ -267,7 +294,8 @@ What happens:
 
 1. It posts a task control message with a `Cancel` button in the thread
 2. It posts task progress in the thread
-3. It loads current thread context and any recent reusable Reili notes visible through Slack search
+3. It loads current thread context and, when memory is configured, the channel's recent reusable
+   Reili memories from the shared Slack Canvas
 4. It works across Datadog, GitHub, optional JIRA, and configured knowledge sources
 5. It replies with an evidence-backed summary
 
@@ -284,7 +312,7 @@ At a high level, the current runtime:
 
 - reads from Datadog, GitHub, optional esa posts, optional JIRA tickets, Slack thread history,
   Slack public-channel search, and web lookup integrations, and writes only Slack progress and
-  result messages
+  result messages plus, when memory is configured, reusable notes in the shared memory Canvas
 - exposes only read-only Datadog MCP tools, including dashboard detail retrieval and Synthetic
   test reads when Datadog returns them
 - exposes only read-only JIRA MCP tools; which projects are reachable is governed by the service
