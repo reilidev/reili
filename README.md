@@ -191,11 +191,20 @@ durable facts through two lead-only tools: `save_memory` (scoped to the current 
 `save_shared_memory` (applies across all channels — for organization-wide conventions, shared
 tooling, or cross-team policies). Set `cap` to bound how many memories are retained per section
 (default 15); older entries are pruned as new ones are saved. Omit `[memory.slack]` to disable
-memory entirely: no context is recalled and neither tool is registered. **Slack Canvas requires a paid Slack plan**, and the bot needs the `canvases:read` and
-`canvases:write` scopes (plus the existing `files:read`). The canvas must also be **shared with the
-bot** — Slack canvases default to "only invited people can access", so grant the bot access (for
-example, share the canvas to a channel the bot is a member of with edit access, or call
-`canvases.access.set`). Without access, `files.info` returns `not_visible` and memory is skipped.
+memory entirely: no context is recalled and neither tool is registered.
+
+**Slack Canvas requires a paid Slack plan**, and the bot needs the `canvases:read` and
+`canvases:write` scopes (plus the existing `files:read`). After creating the canvas, open its
+**share settings** and:
+
+- grant **Reili (the bot) both read and write (can edit)** access — canvases default to "only
+  invited people can access", so without this `files.info` returns `not_visible` and memory is
+  silently skipped;
+- grant access to the **team members who need it**, so people can read and curate the stored
+  memories directly in Slack.
+
+(Equivalently, share the canvas to a channel the bot is a member of with edit access, or call
+`canvases.access.set`.)
 
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`.
 

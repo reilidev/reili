@@ -116,10 +116,11 @@ Required Bot OAuth scopes:
 - `canvases:write` (only when `[memory.slack]` is configured): append and prune memory entries in the
   shared Canvas via `canvases.edit`
 
-The memory Canvas must also be shared with the bot. Slack canvases default to "only invited people
-can access", so a manually created standalone canvas is invisible to the bot until access is
-granted — share it to a channel the bot is a member of with edit access, or call
-`canvases.access.set`. Without access, `files.info` returns `not_visible`; memory recall and the
+The memory Canvas must also be shared explicitly, because canvases default to "only invited people
+can access". In the canvas share settings, grant Reili (the bot) both **read and write (can edit)**
+access, and grant access to the team members who need to read or curate the stored memories.
+Equivalently, share the canvas to a channel the bot is a member of with edit access, or call
+`canvases.access.set`. Without bot access, `files.info` returns `not_visible`; memory recall and the
 `save_memory` / `save_shared_memory` tools then soft-fail and the task continues without memory.
 
 Required App-Level Token scope for Socket Mode:
