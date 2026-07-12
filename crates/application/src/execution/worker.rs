@@ -660,6 +660,7 @@ mod tests {
             slack_message_search_port,
             slack_file_download_port,
             web_search_port,
+            canvas_memory_port: None,
         }
     }
 

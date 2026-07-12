@@ -10,8 +10,8 @@ use rig::tool::{Tool, ToolDyn};
 
 use crate::outbound::agents::connector::{PreparedConnector, ToolCatalogEntry, ToolCatalogGroup};
 use crate::outbound::agents::instructions_support::{
-    append_configured_additional_system_prompt, reusable_notes_instruction,
-    sub_agent_memory_context_instruction,
+    append_configured_additional_system_prompt, sub_agent_memory_context_instruction,
+    sub_agent_reusable_notes_instruction,
 };
 use crate::outbound::agents::tools::SearchWebTool;
 
@@ -29,7 +29,7 @@ pub(super) fn compose_spawned_sub_agent_preamble(
     input: &ComposeSpawnedPreambleInput<'_>,
 ) -> String {
     let memory_context_instruction = sub_agent_memory_context_instruction();
-    let reusable_notes_instruction = reusable_notes_instruction();
+    let reusable_notes_instruction = sub_agent_reusable_notes_instruction();
     let guardrails_section = if input.guardrails.is_empty() {
         String::new()
     } else {
@@ -248,7 +248,8 @@ mod tests {
         ));
         assert!(preamble.contains("## Mandatory GitHub scope rules\nUse org:acme."));
         assert!(preamble.contains("## Using Memory Context"));
-        assert!(preamble.contains("reili_memory_v1"));
+        assert!(preamble.contains("# Reusable facts"));
+        assert!(preamble.contains("Do not attempt to save memory yourself"));
         assert!(preamble.contains(
             "Configured additional system prompt instructions from reili.toml:\n\nPrefer runbook links first."
         ));

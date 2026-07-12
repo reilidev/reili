@@ -22,11 +22,12 @@ use reili_adapters::outbound::github::GitHubMcpConfig;
 use reili_adapters::outbound::jira::JiraMcpConfig;
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
 use reili_adapters::outbound::slack::{
-    SlackChannelLookupAdapter, SlackEphemeralMessageAdapter, SlackFileDownloadAdapter,
-    SlackFileSharedMessageAdapter, SlackMessageSearchAdapter, SlackProgressReporter,
-    SlackProgressReporterInput, SlackReactionAdapter, SlackTaskControlMessageAdapter,
-    SlackThreadHistoryAdapter, SlackThreadReplyAdapter, SlackUserGroupMembershipAdapter,
-    SlackWebApiClient, SlackWebApiClientConfig,
+    SlackCanvasMemoryAdapter, SlackCanvasMemoryAdapterConfig, SlackChannelLookupAdapter,
+    SlackEphemeralMessageAdapter, SlackFileDownloadAdapter, SlackFileSharedMessageAdapter,
+    SlackMessageSearchAdapter, SlackProgressReporter, SlackProgressReporterInput,
+    SlackReactionAdapter, SlackTaskControlMessageAdapter, SlackThreadHistoryAdapter,
+    SlackThreadReplyAdapter, SlackUserGroupMembershipAdapter, SlackWebApiClient,
+    SlackWebApiClientConfig,
 };
 use reili_adapters::outbound::vertex_ai::{
     VertexAiWebSearchAdapter, VertexAiWebSearchAdapterConfig,
@@ -48,7 +49,8 @@ use reili_core::messaging::slack::{
     SlackUserGroupMembershipPort,
 };
 use reili_core::messaging::slack::{
-    SlackMessageSearchPort, SlackReactionPort, SlackThreadHistoryPort, SlackThreadReplyPort,
+    SlackCanvasMemoryPort, SlackMessageSearchPort, SlackReactionPort, SlackThreadHistoryPort,
+    SlackThreadReplyPort,
 };
 use reili_core::queue::TaskJobQueuePort;
 use reili_core::task::TaskJob;
@@ -133,6 +135,16 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let slack_file_download_port: Arc<dyn SlackFileDownloadPort> = Arc::new(
         SlackFileDownloadAdapter::new(Arc::clone(&slack_web_api_client)),
     );
+    let canvas_memory_port: Option<Arc<dyn SlackCanvasMemoryPort>> =
+        config.memory.as_ref().map(|memory| {
+            Arc::new(SlackCanvasMemoryAdapter::new(
+                Arc::clone(&slack_web_api_client),
+                SlackCanvasMemoryAdapterConfig {
+                    canvas_id: memory.canvas_id.clone(),
+                    cap: Some(memory.cap),
+                },
+            )) as Arc<dyn SlackCanvasMemoryPort>
+        });
     let connectors = build_connector_set(BuildConnectorSetInput {
         datadog: DatadogMcpToolConfig {
             api_key: config.datadog_api_key.clone(),
@@ -163,6 +175,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         slack_message_search_port,
         slack_file_download_port,
         web_search_port: provider_ports.web_search_port,
+        canvas_memory_port,
     };
     let task_runner = provider_ports.task_runner;
     let enqueue_slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(

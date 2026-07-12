@@ -1,5 +1,6 @@
 mod progress_stream;
 
+pub mod slack_canvas_memory_adapter;
 pub mod slack_channel_lookup_adapter;
 pub mod slack_ephemeral_message_adapter;
 pub mod slack_file_download_adapter;
@@ -14,6 +15,7 @@ pub mod slack_user_group_membership_adapter;
 pub mod slack_web_api_client;
 
 pub use progress_stream::{SlackProgressReporter, SlackProgressReporterInput};
+pub use slack_canvas_memory_adapter::{SlackCanvasMemoryAdapter, SlackCanvasMemoryAdapterConfig};
 pub use slack_channel_lookup_adapter::SlackChannelLookupAdapter;
 pub use slack_ephemeral_message_adapter::SlackEphemeralMessageAdapter;
 pub use slack_file_download_adapter::SlackFileDownloadAdapter;

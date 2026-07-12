@@ -149,6 +149,13 @@ pub struct JiraConfig {
     pub service_account_api_token: SecretString,
 }
 
+/// Channel memory backed by a pre-created shared Slack Canvas.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlackCanvasMemoryConfig {
+    pub canvas_id: String,
+    pub cap: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub slack_bot_token: SecretString,
@@ -170,6 +177,8 @@ pub struct AppConfig {
     pub github: GitHubConfig,
     pub esa: Option<EsaConfig>,
     pub jira: Option<JiraConfig>,
+    /// Channel memory backend; `None` disables the memory feature entirely.
+    pub memory: Option<SlackCanvasMemoryConfig>,
     pub language: String,
     pub additional_system_prompt: Option<String>,
 }
@@ -247,6 +256,7 @@ mod tests {
                     "jira-service-account-token".to_string(),
                 ),
             }),
+            memory: None,
             language: "English".to_string(),
             additional_system_prompt: None,
         };
@@ -315,6 +325,7 @@ mod tests {
             },
             esa: None,
             jira: None,
+            memory: None,
             language: "English".to_string(),
             additional_system_prompt: None,
         }

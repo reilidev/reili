@@ -1,5 +1,6 @@
 pub mod authorization;
 pub mod auto_response;
+pub mod canvas_memory;
 pub mod control_message;
 pub mod file;
 pub mod file_download;
@@ -15,6 +16,10 @@ pub mod thread_history;
 pub mod thread_message;
 pub mod thread_reply;
 
+pub use canvas_memory::{
+    AppendSlackCanvasMemoryInput, ListSlackCanvasMemoriesInput, SlackCanvasMemoryPort,
+    SlackCanvasMemoryRecord, SlackCanvasMemoryVisibility,
+};
 pub use control_message::{
     PostTaskControlMessageInput, PostTaskControlMessageOutput, SlackTaskControlMessagePort,
     SlackTaskControlState, UpdateTaskControlMessageInput,
@@ -55,6 +60,8 @@ pub use auto_response::{
     AutoResponseContextMessage, AutoResponseJudgeDecision, AutoResponseJudgeInput,
     AutoResponseJudgePort,
 };
+#[cfg(any(test, feature = "test-support"))]
+pub use canvas_memory::MockSlackCanvasMemoryPort;
 #[cfg(any(test, feature = "test-support"))]
 pub use control_message::MockSlackTaskControlMessagePort;
 #[cfg(any(test, feature = "test-support"))]
