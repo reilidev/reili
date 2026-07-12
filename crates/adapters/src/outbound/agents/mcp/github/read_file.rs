@@ -227,8 +227,8 @@ fn extract_file_text(result: &CallToolResult) -> Option<String> {
     let texts = result
         .content
         .iter()
-        .filter_map(|content| match &content.raw {
-            rmcp::model::RawContent::Resource(resource) => match &resource.resource {
+        .filter_map(|content| match content {
+            rmcp::model::ContentBlock::Resource(resource) => match &resource.resource {
                 rmcp::model::ResourceContents::TextResourceContents { text, .. } => {
                     Some(text.clone())
                 }
@@ -247,7 +247,7 @@ fn extract_file_text(result: &CallToolResult) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use rmcp::model::{CallToolResult, Content};
+    use rmcp::model::{CallToolResult, ContentBlock};
     use serde_json::{Value, json};
 
     use super::{
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn extract_file_text_returns_embedded_text_resource() {
-        let result = CallToolResult::success(vec![Content::embedded_text(
+        let result = CallToolResult::success(vec![ContentBlock::embedded_text(
             "repo://svc/a.rs",
             "line one\nline two",
         )]);
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn extract_file_text_returns_none_for_plain_text_directory_listing() {
-        let result = CallToolResult::success(vec![Content::text("[{\"name\":\"a.rs\"}]")]);
+        let result = CallToolResult::success(vec![ContentBlock::text("[{\"name\":\"a.rs\"}]")]);
 
         assert!(extract_file_text(&result).is_none());
     }

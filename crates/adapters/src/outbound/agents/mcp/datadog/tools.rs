@@ -8,7 +8,7 @@ use reili_core::error::PortError;
 use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
-use rmcp::model::{CallToolResult, Content, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, Tool};
 use tracing::{error, warn};
 
 const DATADOG_SUB_AGENT_TOOLS: &[&str] = &[
@@ -294,23 +294,23 @@ fn format_datadog_mcp_tool_error(tool_name: &str, result: &CallToolResult) -> St
     )
 }
 
-fn render_datadog_mcp_contents(contents: &[Content]) -> String {
+fn render_datadog_mcp_contents(contents: &[ContentBlock]) -> String {
     contents
         .iter()
         .map(render_datadog_mcp_content)
-        .filter(|content| !content.is_empty())
+        .filter(|content: &String| !content.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-fn render_datadog_mcp_content(content: &Content) -> String {
-    match &content.raw {
-        rmcp::model::RawContent::Text(text) => text.text.clone(),
-        rmcp::model::RawContent::Resource(resource) => match &resource.resource {
+fn render_datadog_mcp_content(content: &ContentBlock) -> String {
+    match content {
+        ContentBlock::Text(text) => text.text.clone(),
+        ContentBlock::Resource(resource) => match &resource.resource {
             rmcp::model::ResourceContents::TextResourceContents { text, .. } => text.clone(),
-            _ => serde_json::to_string(&content.raw).unwrap_or_default(),
+            _ => serde_json::to_string(content).unwrap_or_default(),
         },
-        _ => serde_json::to_string(&content.raw).unwrap_or_default(),
+        _ => serde_json::to_string(content).unwrap_or_default(),
     }
 }
 
@@ -481,8 +481,9 @@ mod tests {
 
     #[test]
     fn formats_tool_error_with_text_and_structured_content() {
-        let mut result =
-            rmcp::model::CallToolResult::error(vec![rmcp::model::Content::text("request failed")]);
+        let mut result = rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+            "request failed",
+        )]);
         result.structured_content = Some(serde_json::json!({
                 "error_code": "FORBIDDEN",
                 "details": "permission denied"
@@ -496,10 +497,11 @@ mod tests {
 
     #[test]
     fn formats_tool_error_from_embedded_text_resource() {
-        let result = rmcp::model::CallToolResult::error(vec![rmcp::model::Content::embedded_text(
-            "datadog://error",
-            "resource failure",
-        )]);
+        let result =
+            rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::embedded_text(
+                "datadog://error",
+                "resource failure",
+            )]);
 
         assert_eq!(
             format_datadog_mcp_tool_error("search_datadog_metrics", &result),

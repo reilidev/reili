@@ -6,7 +6,7 @@ use reili_core::source_code::github::GithubScopePolicy;
 use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
-use rmcp::model::{CallToolResult, Content, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, Tool};
 use serde_json::{Map, Value};
 use tracing::error;
 
@@ -398,23 +398,23 @@ fn format_github_mcp_tool_error(tool_name: &str, result: &CallToolResult) -> Str
     )
 }
 
-fn render_contents(contents: &[Content]) -> String {
+fn render_contents(contents: &[ContentBlock]) -> String {
     contents
         .iter()
         .map(render_content)
-        .filter(|content| !content.is_empty())
+        .filter(|content: &String| !content.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-fn render_content(content: &Content) -> String {
-    match &content.raw {
-        rmcp::model::RawContent::Text(text) => text.text.clone(),
-        rmcp::model::RawContent::Resource(resource) => match &resource.resource {
+fn render_content(content: &ContentBlock) -> String {
+    match content {
+        ContentBlock::Text(text) => text.text.clone(),
+        ContentBlock::Resource(resource) => match &resource.resource {
             rmcp::model::ResourceContents::TextResourceContents { text, .. } => text.clone(),
-            _ => serde_json::to_string(&content.raw).unwrap_or_default(),
+            _ => serde_json::to_string(content).unwrap_or_default(),
         },
-        _ => serde_json::to_string(&content.raw).unwrap_or_default(),
+        _ => serde_json::to_string(content).unwrap_or_default(),
     }
 }
 
@@ -430,7 +430,7 @@ mod tests {
         validate_scope,
     };
     use reili_core::source_code::github::GithubScopePolicy;
-    use rmcp::model::{CallToolResult, Content};
+    use rmcp::model::{CallToolResult, ContentBlock};
 
     fn tool(name: &str) -> Tool {
         Tool::new(name.to_string(), "test tool", serde_json::Map::new())
@@ -573,15 +573,16 @@ mod tests {
     #[test]
     fn formats_success_does_not_truncate_oversized_passthrough_content() {
         let oversized = "x".repeat(FILE_CONTENT_CHAR_LIMIT + 1);
-        let result = CallToolResult::success(vec![Content::text(oversized.clone())]);
+        let result = CallToolResult::success(vec![ContentBlock::text(oversized.clone())]);
 
         assert_eq!(format_github_mcp_tool_success(&result), oversized);
     }
 
     #[test]
     fn formats_tool_error_with_text_and_structured_content() {
-        let mut result =
-            rmcp::model::CallToolResult::error(vec![rmcp::model::Content::text("request failed")]);
+        let mut result = rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+            "request failed",
+        )]);
         result.structured_content =
             Some(json!({ "details": "permission denied", "error_code": "FORBIDDEN" }));
 
