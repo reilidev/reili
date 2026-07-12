@@ -14,6 +14,19 @@ language = "English"
 # Useful for team-specific response rules, runbook preferences, or escalation guidance.
 additional_system_prompt = ""
 
+# Optional: reusable channel memory backed by a shared Slack Canvas. Omit this section to disable
+# memory (no context is recalled and the `save_memory` tool is not registered). Requires a paid
+# Slack plan and the `canvases:read` / `canvases:write` bot scopes. Create the Canvas manually in
+# Slack and reference it by ID here. In the canvas share settings, grant the bot read+write (can
+# edit) access and grant the team members who need it access too; otherwise Slack returns
+# `not_visible` and memory is skipped.
+#[memory.slack]
+# Required when configured: the shared Canvas file ID, e.g. `F0XXXXXXX`.
+#canvas_id = "F0XXXXXXX"
+# Optional when configured: how many memories to retain per section (each channel, and the shared
+# cross-channel section). Defaults to 15.
+#cap = 15
+
 # Required: Slack channel integration settings.
 [channel.slack]
 # Optional: `true` uses Socket Mode, `false` uses HTTP endpoints. Defaults to `true`.
@@ -143,10 +156,20 @@ installation_id = "12345678"
 # Optional: env var name for the GitHub App private key. Defaults to `GITHUB_APP_PRIVATE_KEY`.
 private_key_env = "GITHUB_APP_PRIVATE_KEY"
 
-# Optional: esa knowledge base search. Omit this section to disable the `investigate_esa` sub-agent and its tools.
+# Optional: esa knowledge base search. Omit this section to disable the `esa_agent` sub-agent and its tools.
 #[connector.esa]
 # Required when configured: esa team name, e.g. `docs` for https://docs.esa.io/.
 #team_name = "docs"
 # Optional when configured: env var name for an esa access token with the `read` scope.
 # Defaults to `ESA_ACCESS_TOKEN`.
 #access_token_env = "ESA_ACCESS_TOKEN"
+
+# Optional: JIRA ticket search and reference via the Atlassian Rovo MCP server. Omit this section
+# to disable the JIRA sub-agent and its tools. Requires an org admin to enable "Authentication via
+# API token" for the Rovo MCP server and to issue a service account API token.
+#[connector.jira]
+# Required when configured: Atlassian Cloud site hostname, e.g. `acme.atlassian.net`.
+#site = "acme.atlassian.net"
+# Optional when configured: env var name for the Rovo MCP service account API token. Defaults to
+# `JIRA_SERVICE_ACCOUNT_API_TOKEN`.
+#service_account_api_token_env = "JIRA_SERVICE_ACCOUNT_API_TOKEN"

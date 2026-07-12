@@ -12,6 +12,7 @@ pub struct BuildTaskPromptInput {
 }
 
 pub fn build_task_prompt(input: BuildTaskPromptInput) -> String {
+    let trigger_message_user = &input.request.trigger_message.user;
     let trigger_message_text = input.request.trigger_message.rendered_text();
     let thread_transcript = build_thread_transcript(&input.request.thread_messages);
     let memory_context = build_memory_context(&input.request.memory_items);
@@ -32,6 +33,8 @@ Current context:
 {memory_context}
 
 # User message
+posted_by: {trigger_message_user}
+
 {trigger_message_text}",
         language = input.language,
         current_context = current_context,
@@ -79,19 +82,35 @@ pub(super) fn build_memory_context(memory_items: &[reili_core::task::TaskMemoryI
         return "No reusable memories found.".to_string();
     }
 
-    memory_items
+    let (shared, channel): (Vec<_>, Vec<_>) = memory_items.iter().partition(|item| item.shared);
+
+    let mut groups = Vec::new();
+    if !shared.is_empty() {
+        groups.push(format!(
+            "## Shared memories (apply across all channels)\n{}",
+            render_memory_group(&shared)
+        ));
+    }
+    if !channel.is_empty() {
+        groups.push(format!(
+            "## This channel's memories\n{}",
+            render_memory_group(&channel)
+        ));
+    }
+    groups.join("\n\n")
+}
+
+fn render_memory_group(items: &[&reili_core::task::TaskMemoryItem]) -> String {
+    items
         .iter()
         .map(|item| {
-            let source = item
-                .source
-                .permalink
-                .as_deref()
-                .unwrap_or("permalink_unavailable");
+            let source = item.source_url.as_deref().unwrap_or("permalink_unavailable");
             format!(
-                "source: {source}\nchannel: {}\nts: {}\nmemory:\n{}",
-                item.source.channel_id,
-                item.source.message_ts,
-                item.content.trim()
+                "source: {source}\nsaved_at: {}\nmemory:\n**Fact:** {}\n**Evidence:** {}\n**Scope:** {}",
+                item.created_at,
+                item.fact.trim(),
+                item.evidence.trim(),
+                item.scope.trim(),
             )
         })
         .collect::<Vec<String>>()
@@ -104,7 +123,7 @@ mod tests {
     use reili_core::messaging::slack::{
         SlackMessage, SlackMessageFile, SlackThreadMessage, SlackTriggerType,
     };
-    use reili_core::task::{TaskMemoryItem, TaskMemorySource, TaskRequest, TaskRuntime};
+    use reili_core::task::{TaskMemoryItem, TaskRequest, TaskRuntime};
 
     use super::{BuildTaskPromptInput, build_task_prompt};
     use crate::outbound::agents::connector::ConnectorPromptFact;
@@ -192,6 +211,7 @@ mod tests {
         assert!(prompt.contains("U456"));
         assert!(prompt.contains("First message"));
         assert!(prompt.contains("follow-up from bot"));
+        assert!(prompt.contains("# User message\nposted_by: U001"));
     }
 
     #[test]
@@ -203,6 +223,7 @@ mod tests {
             title: Some("AWS Health Event".to_string()),
             plain_text: Some("scheduled upgrade required".to_string()),
             is_binary: false,
+            ..Default::default()
         }];
         let request = TaskRequest {
             trigger_message: trigger,
@@ -230,6 +251,7 @@ mod tests {
                     title: Some("AWS Health Event".to_string()),
                     plain_text: Some("scheduled upgrade required".to_string()),
                     is_binary: false,
+                    ..Default::default()
                 }],
                 metadata: None,
             }],
@@ -248,25 +270,37 @@ mod tests {
         let request = TaskRequest {
             trigger_message: sample_trigger_message(),
             thread_messages: vec![],
-            memory_items: vec![TaskMemoryItem {
-                source: TaskMemorySource {
-                    channel_id: "C001".to_string(),
-                    message_ts: "1760000000.000001".to_string(),
-                    thread_ts: Some("1760000000.000000".to_string()),
-                    permalink: Some(
+            memory_items: vec![
+                TaskMemoryItem {
+                    fact: "checkout-api owns the /checkout route".to_string(),
+                    evidence: "services/checkout README".to_string(),
+                    scope: "checkout production".to_string(),
+                    source_url: Some(
                         "https://example.slack.com/archives/C001/p1760000000000001".to_string(),
                     ),
+                    created_at: "2026-07-07T09:12:34Z".to_string(),
+                    shared: false,
                 },
-                content: "- service: checkout-api".to_string(),
-            }],
+                TaskMemoryItem {
+                    fact: "the org standard CI is GitHub Actions".to_string(),
+                    evidence: "engineering handbook".to_string(),
+                    scope: "all repositories".to_string(),
+                    source_url: None,
+                    created_at: "2026-07-08T10:00:00Z".to_string(),
+                    shared: true,
+                },
+            ],
         };
 
         let prompt = build_sample_task_prompt(&request);
 
         assert!(prompt.contains("https://example.slack.com/archives/C001/p1760000000000001"));
-        assert!(prompt.contains("C001"));
-        assert!(prompt.contains("1760000000.000001"));
-        assert!(prompt.contains("- service: checkout-api"));
+        assert!(prompt.contains("2026-07-07T09:12:34Z"));
+        assert!(prompt.contains("**Fact:** checkout-api owns the /checkout route"));
+        assert!(prompt.contains("**Scope:** checkout production"));
+        assert!(prompt.contains("## Shared memories (apply across all channels)"));
+        assert!(prompt.contains("**Fact:** the org standard CI is GitHub Actions"));
+        assert!(prompt.contains("## This channel's memories"));
     }
 
     #[test]

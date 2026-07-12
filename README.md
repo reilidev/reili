@@ -1,7 +1,7 @@
 <div align="center">
   <h1>Reili</h1>
   <img src="./docs/assets/reili.png" alt="Reili logo" width="240" />
-  <p><strong>An AI teammate for SRE and DevOps, currently focused on investigations</strong></p>
+  <p><strong>An AI teammate for SRE and DevOps, focused on read-only analysis and reporting</strong></p>
   <p>
     Investigate alerts quickly from Slack with Datadog telemetry and GitHub context.
   </p>
@@ -10,7 +10,7 @@
 ## What is Reili?
 Reili works as an AI teammate on your team, handling SRE and DevOps responsibilities.
 
-When you assign a task to Reili, it will gather information from sources such as Datadog, GitHub, Slack, and configured knowledge bases to carry out the work
+When you assign a task to Reili, it will gather information from sources such as Datadog, GitHub, JIRA, Slack, and configured knowledge bases to carry out the work
 As a general rule, Reili does not make changes to the production environment or perform recovery operations; instead,
 it uses the gathered information to investigate issues and generate reports.
 
@@ -22,15 +22,56 @@ SRE, DevOps, and on-call engineers spend much of their time on alert response �
 action is needed. Reili takes that work off your plate.
 
 - Let you decide exactly what permissions each connector can request and what authority you delegate to Reili, instead of accepting a fixed permission set chosen by a hosted app provider
-- Investigate in Slack public channels like a teammate, working from the ongoing conversation where your team is already collaborating
-- Connect Datadog telemetry, GitHub repositories and changes, optional knowledge base docs, and relevant Slack public-channel history to build investigation context
-- Expand over time to cover additional external services beyond Datadog, GitHub, and Slack
+- Work in Slack public channels like a teammate, from the ongoing conversation where your team is already collaborating
+- Connect Datadog telemetry, GitHub repositories and changes, optional JIRA ticket search, optional knowledge base docs, and relevant Slack public-channel history to build the context it needs
+- Expand over time to cover additional external services beyond Datadog, GitHub, JIRA, and Slack
 
 Core:
 
 - **Read-focused**: Reili reads and reports — it never changes your infrastructure
-- **Cross-service**: works across Datadog, GitHub, Slack, and optional knowledge base search today, with additional services planned over time
+- **Cross-service**: works across Datadog, GitHub, JIRA, Slack, and optional knowledge base search today, with additional services planned over time
 - **Chat-based**: currently works in Slack
+
+## Architecture
+
+Reili ships as a single Rust binary that connects to Slack (Socket Mode or HTTP) and runs
+assigned tasks as queued jobs executed by an AI lead agent.
+
+A Slack mention is parsed, authorized, and enqueued as a task job into an in-memory queue
+(jobs are not durable across restarts). Worker tasks in the same process claim jobs and run
+them: each job loads the Slack thread context plus the channel's recent reusable Reili memories
+(when a Slack Canvas memory backend is configured), then hands the
+task to a lead agent. The lead agent delegates work through a single `spawn_agent` tool —
+for each delegation it writes the sub-agent's mission and picks a minimal tool set from a
+compact catalog of read-only connector tools. Guardrails such as the GitHub org scope are
+enforced in code, not left to the model.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User as Slack user
+    participant Ingress as Ingress<br/>(router · gates)
+    participant Queue as Job queue
+    participant Worker as Task worker
+    participant Lead as Lead agent
+    participant Sub as Sub-agents<br/>(spawned per delegation)
+    participant Ext as Datadog · GitHub ·<br/>JIRA · esa · Web
+
+    User->>Ingress: "@Reili" mention<br/>(Socket Mode or HTTP)
+    Ingress->>User: 👀 reaction + control message<br/>with Cancel button
+    Ingress->>Queue: enqueue task job
+    Worker->>Queue: claim job
+    Worker->>Lead: run task with thread history<br/>+ memory context
+    loop until the task is complete
+        Lead->>Sub: spawn_agent<br/>(mission + minimal tool set)
+        Sub->>Ext: read-only MCP / API calls
+        Sub-->>Lead: evidence-based findings
+        Lead-->>User: progress updates in thread
+    end
+    Lead-->>Worker: final report
+    Worker->>User: evidence-backed reply in thread
+```
+
 
 ## Quick Start
 
@@ -38,18 +79,25 @@ Core:
 
 - Slack App
   - Create and install it from [slack-app-manifest.yml](./slack-app-manifest.yml) or 
-  <a href="https://api.slack.com/apps?new_app=1&amp;manifest_yaml=display_information%3A%0D%0A++name%3A+Reili%0D%0Afeatures%3A%0D%0A++bot_user%3A%0D%0A++++display_name%3A+Reili%0D%0A++++always_online%3A+true%0D%0Aoauth_config%3A%0D%0A++scopes%3A%0D%0A++++bot%3A%0D%0A++++++-+reactions%3Awrite%0D%0A++++++-+app_mentions%3Aread%0D%0A++++++-+channels%3Ahistory%0D%0A++++++-+channels%3Aread%0D%0A++++++-+chat%3Awrite%0D%0A++++++-+files%3Aread%0D%0A++++++-+usergroups%3Aread%0D%0A++++++-+assistant%3Awrite%0D%0A++++++-+search%3Aread.files%0D%0A++++++-+search%3Aread.public%0D%0A++++++-+search%3Aread.users%0D%0A++pkce_enabled%3A+false%0D%0Asettings%3A%0D%0A++event_subscriptions%3A%0D%0A++++request_url%3A+https%3A%2F%2Fexample.com%2Fslack%2Fevents%0D%0A++++bot_events%3A%0D%0A++++++-+app_mention%0D%0A++++++-+file_shared%0D%0A++++++-+message.channels%0D%0A++interactivity%3A%0D%0A++++is_enabled%3A+true%0D%0A++org_deploy_enabled%3A+false%0D%0A++socket_mode_enabled%3A+true%0D%0A++token_rotation_enabled%3A+false%0D%0A" target="_blank">Create App from manifest link</a>
+  <a href="https://api.slack.com/apps?new_app=1&amp;manifest_yaml=display_information%3A%0D%0A++name%3A+Reili%0D%0Afeatures%3A%0D%0A++bot_user%3A%0D%0A++++display_name%3A+Reili%0D%0A++++always_online%3A+true%0D%0Aoauth_config%3A%0D%0A++scopes%3A%0D%0A++++bot%3A%0D%0A++++++-+reactions%3Awrite%0D%0A++++++-+app_mentions%3Aread%0D%0A++++++-+canvases%3Aread%0D%0A++++++-+canvases%3Awrite%0D%0A++++++-+channels%3Ahistory%0D%0A++++++-+channels%3Aread%0D%0A++++++-+chat%3Awrite%0D%0A++++++-+files%3Aread%0D%0A++++++-+usergroups%3Aread%0D%0A++++++-+assistant%3Awrite%0D%0A++++++-+search%3Aread.files%0D%0A++++++-+search%3Aread.public%0D%0A++++++-+search%3Aread.users%0D%0A++pkce_enabled%3A+false%0D%0Asettings%3A%0D%0A++event_subscriptions%3A%0D%0A++++request_url%3A+https%3A%2F%2Fexample.com%2Fslack%2Fevents%0D%0A++++bot_events%3A%0D%0A++++++-+app_mention%0D%0A++++++-+file_shared%0D%0A++++++-+message.channels%0D%0A++interactivity%3A%0D%0A++++is_enabled%3A+true%0D%0A++org_deploy_enabled%3A+false%0D%0A++socket_mode_enabled%3A+true%0D%0A++token_rotation_enabled%3A+false%0D%0A" target="_blank">Create App from manifest link</a>
   - In Slack App settings, open `Agents & AI Apps` and turn on `Agent or Assistant` so Bot Token based Slack search is available
   - Configure the required scopes, events, and Interactivity using
     [Slack Permissions and API Usage](./docs/permissions-and-boundaries.md#slack-permissions-and-api-usage).
 - Datadog API Key + APP Key for the Datadog MCP server
 - OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call
   Vertex AI Gemini models
-- GitHub App credentials for the repositories Reili investigates
+- GitHub App credentials for the repositories Reili works with
   - Create and install it from <a href="https://reilidev.github.io/reili/create-github-app" target="_blank">Create GitHub App</a>
   - Configure the required permissions and scope in
     [GitHub Permissions and Scope](./docs/permissions-and-boundaries.md#github-permissions-and-scope).
 - Optional esa access token with `read` scope when you want Reili to search esa posts.
+- Optional JIRA integration via the Atlassian Rovo MCP server, when you want Reili to search and
+  reference JIRA tickets:
+  - An Atlassian org admin must enable "Authentication via API token" for the Rovo MCP server
+    (Atlassian Administration → Rovo → Rovo MCP server → Authentication) and issue a service
+    account API token.
+  - Configure the required scope in
+    [JIRA Permissions and Scope](./docs/permissions-and-boundaries.md#jira-permissions-and-scope).
 
 ### 2. Configure `reili.toml`
 
@@ -75,6 +123,8 @@ Non-secret settings live in `reili.toml`, including:
 - Datadog site
 - GitHub MCP URL, GitHub App ID, installation ID, and search scope org
 - optional esa team name and access-token env var
+- optional JIRA site and service-account-API-token env var
+- optional Slack Canvas memory (`[memory.slack]`): `canvas_id` and an optional per-channel `cap`
 
 Runtime config resolution is:
 
@@ -102,6 +152,7 @@ Required secrets depend on your selected Slack mode and backend:
 - `DATADOG_APP_KEY`
 - `GITHUB_APP_PRIVATE_KEY`
 - `ESA_ACCESS_TOKEN` when `[connector.esa]` is configured
+- `JIRA_SERVICE_ACCOUNT_API_TOKEN` when `[connector.jira]` is configured
 - `LLM_OPENAI_API_KEY` when the selected backend uses `provider = "openai"`
 - `LLM_ANTHROPIC_API_KEY` when the selected backend uses `provider = "anthropic"`
 
@@ -118,19 +169,56 @@ subset of those tools, including dashboard detail retrieval and Synthetic test r
 returns them for your plan and application key permissions.
 
 The optional esa integration is enabled only when `[connector.esa]` is present in `reili.toml`.
-When configured, Reili registers the `investigate_esa` sub-agent. That sub-agent uses
-`search_posts`, which calls `GET /v1/teams/:team_name/posts` with the esa search query syntax in
-`q`. Omit `[connector.esa]` to avoid reading the esa token env var and to keep the sub-agent and
-tool unregistered.
+When configured, `search_posts` (calling `GET /v1/teams/:team_name/posts` with esa's search query
+syntax) becomes available to spawned sub-agents. Omit `[connector.esa]` to disable it.
+
+The optional JIRA integration is enabled only when `[connector.jira]` is present in `reili.toml`.
+When configured, it talks to the Atlassian Rovo MCP server (`https://mcp.atlassian.com/v1/mcp`)
+using a service account API token, and exposes a small allowlisted set of read-only Jira MCP tools —
+JQL search, issue detail, remote issue links, and available workflow transitions — to spawned
+sub-agents. Which JIRA projects Reili can read is governed by the service account token's own
+permissions on the Atlassian side, not by Reili configuration. The configured `site` is stamped
+onto every call as the Atlassian `cloudId`, so a sub-agent can never target a different Atlassian
+site. Omit `[connector.jira]` to disable it.
+
+The optional memory feature is enabled only when `[memory.slack]` is present in `reili.toml`. Reili
+stores reusable, durable investigation facts in a single shared Slack Canvas that you create
+manually and reference by `canvas_id`. Each channel occupies its own section (keyed by channel ID),
+plus one shared section for facts that apply across every channel; each memory is a
+Fact/Evidence/Scope note linking back to the originating thread. When a task runs, the lead agent
+recalls that channel's memories plus the shared memories as investigation hints, and persists new
+durable facts through two lead-only tools: `save_memory` (scoped to the current channel) and
+`save_shared_memory` (applies across all channels — for organization-wide conventions, shared
+tooling, or cross-team policies). Set `cap` to bound how many memories are retained per section
+(default 15); older entries are pruned as new ones are saved. Omit `[memory.slack]` to disable
+memory entirely: no context is recalled and neither tool is registered.
+
+**Slack Canvas requires a paid Slack plan**, and the bot needs the `canvases:read` and
+`canvases:write` scopes (plus the existing `files:read`). After creating the canvas, open its
+**share settings** and:
+
+- grant **Reili (the bot) both read and write (can edit)** access — canvases default to "only
+  invited people can access", so without this `files.info` returns `not_visible` and memory is
+  silently skipped;
+- grant access to the **team members who need it**, so people can read and curate the stored
+  memories directly in Slack.
+
+(Equivalently, share the canvas to a channel the bot is a member of with edit access, or call
+`canvases.access.set`.)
 
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`.
 
-Reili runs a lead agent (the task runner) that delegates to per-connector sub-agents. By default both
-roles use `default_backend`. To run sub-agents on a different model than the lead, point
-`ai.lead_backend` and `ai.sub_agent_backend` at named backends in `[ai.backends]`. The two backends
-must use the same provider; only the model differs between the roles. A common setup is a stronger
-model for the lead and a cheaper, faster model for sub-agents. Either key falls back to
-`default_backend` when omitted.
+Reili runs a lead agent (the task runner) that delegates work to sub-agents spawned on the fly
+through a single `spawn_agent` tool. For each delegation, the lead writes the sub-agent's
+instructions and picks a minimal tool set from a compact catalog, mixing tools from different
+sources (Datadog, GitHub, esa, JIRA) when needed. Guardrails like the GitHub org scope are enforced
+in code, not left to the lead.
+
+By default the lead and spawned sub-agents both use `default_backend`. To run sub-agents on a
+different model than the lead, point `ai.lead_backend` and `ai.sub_agent_backend` at named backends
+in `[ai.backends]`. The two backends must use the same provider; only the model differs between the
+roles. A common setup is a stronger model for the lead and a cheaper, faster model for sub-agents.
+Either key falls back to `default_backend` when omitted.
 
 When the selected backend uses `provider = "anthropic"`, Claude is called through the Anthropic
 API.
@@ -206,27 +294,32 @@ What happens:
 
 1. It posts a task control message with a `Cancel` button in the thread
 2. It posts task progress in the thread
-3. It loads current thread context and any recent reusable Reili notes visible through Slack search
-4. It investigates across Datadog, GitHub, and configured knowledge sources
+3. It loads current thread context and, when memory is configured, the channel's recent reusable
+   Reili memories from the shared Slack Canvas
+4. It works across Datadog, GitHub, optional JIRA, and configured knowledge sources
 5. It replies with an evidence-backed summary
 
-If you need to stop a queued or running investigation, click `Cancel` on that task's control
+If you need to stop a queued or running task, click `Cancel` on that task's control
 message in the same Slack thread.
 
 ## Permissions and Tool Transparency
 
 Reili is intentionally scoped around task execution and decision support. The current runtime is
-investigation-focused. It can post progress and final replies in Slack, but it does not get shell
+read-focused. It can post progress and final replies in Slack, but it does not get shell
 access, cluster access, or deployment credentials in production.
 
 At a high level, the current runtime:
 
-- reads from Datadog, GitHub, optional esa posts, Slack thread history, Slack public-channel search, and web lookup
-  integrations, and writes only Slack progress and result messages
+- reads from Datadog, GitHub, optional esa posts, optional JIRA tickets, Slack thread history,
+  Slack public-channel search, and web lookup integrations, and writes only Slack progress and
+  result messages plus, when memory is configured, reusable notes in the shared memory Canvas
 - exposes only read-only Datadog MCP tools, including dashboard detail retrieval and Synthetic
   test reads when Datadog returns them
-- does not register tools for Datadog mutations, GitHub writes, esa writes, remediation, or deployments
-- is designed to investigate and report, not to change infrastructure, Datadog state, or repository
+- exposes only read-only JIRA MCP tools; which projects are reachable is governed by the service
+  account token's Atlassian permissions
+- does not register tools for Datadog mutations, GitHub writes, esa writes, JIRA writes,
+  remediation, or deployments
+- is designed to analyze and report, not to change infrastructure, Datadog state, or repository
   state
 
 For the full tool inventory, required Slack scopes, Datadog RBAC permissions, GitHub backend
@@ -247,4 +340,4 @@ not part of the release flow.
 - Executing operational actions like auto-remediation or auto-deploy
 - Heavy stateful workflow orchestration
 
-This project is intentionally focused on investigation-oriented task execution and decision support.
+This project is intentionally focused on read-only task execution and decision support.

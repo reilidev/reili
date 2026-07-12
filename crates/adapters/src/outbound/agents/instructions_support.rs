@@ -4,13 +4,25 @@
 
 pub(crate) fn sub_agent_memory_context_instruction() -> &'static str {
     r#"## Using Memory Context
-If the delegated task prompt includes Memory Context, use relevant memories as investigation guidance for likely owners, systems, runbooks, dashboards, repository paths, and search terms. Treat memories as hints, not proof. Verify facts that affect your conclusion, recommendation, or operational action with current evidence from your available tools. Do not copy, paraphrase, or refresh prior memory entries into reusable notes. Only save a memory when the fact was newly learned or independently confirmed during this investigation, and cite current non-memory evidence."#
+If the delegated task prompt includes Memory Context, it has two groups: shared memories that apply across all channels, and memories saved for the current channel (scoped to this channel's systems and context). Use relevant memories as a shortcut for choosing likely owners, systems, runbooks, dashboards, repository paths, and investigation entry points instead of rediscovering everything from scratch. Treat memories as investigation guidance, not proof. Do not repeat broad discovery work just to reconfirm memories, but verify facts that affect your conclusion, recommendation, or operational action with current evidence from your available tools. Do not copy, paraphrase, or refresh prior memory entries into your findings; only surface a reusable fact when it was newly learned or independently confirmed during this investigation, and cite current non-memory evidence."#
+}
+
+/// Sub-agents cannot persist memory themselves; they surface reusable facts in their findings so
+/// the lead can decide what to persist with `save_memory`.
+pub(crate) fn sub_agent_reusable_notes_instruction() -> &'static str {
+    r#"# Reusable facts
+When your investigation newly learns or independently confirms a durable fact worth reusing later (an owner, mapping, runbook, dashboard, log source, code path, domain rule, or operational rule), state it clearly in your findings with its evidence source and scope. Do not attempt to save memory yourself; the lead agent persists memory. Do not restate facts that came from Memory Context.
+
+Only report durable knowledge, not a timeline of this investigation. Do not report ephemeral observations such as time-bounded findings ("last 5 minutes", "currently"), single-window negative evidence (no errors/alerts/deploys), or raw metric/log snapshots, counts, timestamps, or IDs. Never include secrets or sensitive data."#
 }
 
 pub(crate) fn reusable_notes_instruction() -> &'static str {
     r#"# Memory
 
-End the response with a short reusable notes section that includes `reili_memory_v1` only when there are new or independently confirmed facts worth reusing in later investigations. If there are no such facts, omit the `reili_memory_v1` marker entirely.
+Persist a durable, reusable fact whenever the investigation newly learns or independently confirms one worth reusing in later investigations. Two tools are available:
+- `save_memory`: for a fact specific to THIS channel's systems, ownership, or context. Recalled only in this channel.
+- `save_shared_memory`: for a fact that holds across ALL channels this assistant serves, such as organization-wide conventions, shared tooling, or cross-team policies. Recalled in every channel.
+Default to `save_memory`; use `save_shared_memory` only when the fact is genuinely channel-independent. Call the chosen tool once per fact with `fact`, `evidence`, and `scope`; the channel and source thread are attached automatically. If there are no such facts, do not call either tool.
 
 Memory should describe durable knowledge, not a timeline of this investigation.
 Before saving a memory, apply all of these checks:
@@ -63,24 +75,14 @@ For example, save:
 Do not save:
 "process_admin had no errors or alerts in the last 5 minutes."
 
-When saving memories, include `reili_memory_v1` once and use this structure:
-reili_memory_v1
-- Fact: A concise, specific statement of the verified fact.
-- Evidence: Where this was confirmed, such as file path, document name, ticket, runbook, log source, monitoring dashboard, or user instruction.
-- Scope: The project, repository, service, environment, workflow, or operational area where this applies.
+Each call takes three fields:
+- fact: A concise, affirmative statement of the verified fact, phrased as "X is Y." Record only what is true.
+- evidence: Where this was confirmed, such as file path, document name, ticket, runbook, log source, monitoring dashboard, or user instruction.
+- scope: The project, repository, service, environment, workflow, or operational area where this applies.
 
-When saving multiple memories, separate each fact block with `---`. Do not use `Memory:` labels.
+Call `save_memory` once for each distinct durable fact. Do not batch multiple facts into a single call, and do not re-save facts that came from Memory Context.
 
-Example:
-
-reili_memory_v1
-- Fact: Production feature flag changes require approval from the on-call engineer before rollout.
-- Evidence: Confirmed in the release runbook.
-- Scope: Production release and feature rollout workflow.
----
-- Fact: API latency investigations should start from the service latency dashboard.
-- Evidence: Confirmed in the incident response runbook.
-- Scope: API production incident triage.
+Example call: fact "Production feature flag changes require approval from the on-call engineer before rollout.", evidence "Confirmed in the release runbook.", scope "Production release and feature rollout workflow."
 
 Security and privacy rule:
 Never save secrets or sensitive data in memory.

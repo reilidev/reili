@@ -13,8 +13,12 @@ are the integrations and tools wired in this runtime.
 The runtime can expose only the following tool families:
 
 - Slack progress reporting: `report_progress` (primarily used to post progress messages back to Slack)
-- Slack workspace lookup and lightweight memory: `search_slack_messages` plus startup memory loading
-  (searches prior Slack public-channel messages visible to the current invocation context)
+- Slack workspace lookup: `search_slack_messages` (searches prior Slack public-channel messages
+  visible to the current invocation context)
+- Memory when `[memory.slack]` is configured: startup recall of the channel's recent memories plus
+  shared cross-channel memories from the Slack Canvas, plus two lead-only tools that persist new
+  durable Fact/Evidence/Scope notes to that Canvas — `save_memory` (current channel) and
+  `save_shared_memory` (shared across all channels)
 - Datadog MCP reads: `search_datadog_services`, `search_datadog_logs`, `analyze_datadog_logs`,
   `search_datadog_metrics`, `get_datadog_metric`, `get_datadog_metric_context`,
   `search_datadog_events`, `search_datadog_monitors`, `search_datadog_dashboards`,
@@ -25,11 +29,13 @@ The runtime can expose only the following tool families:
 - GitHub MCP reads: `search_code`, `search_repositories`, `search_issues`,
   `search_pull_requests`, `get_file_contents`, `pull_request_read`, `actions_get`,
   `actions_list`, `get_job_logs`, `get_dependabot_alert`, `list_dependabot_alerts`
-- esa sub-agent delegation when `[connector.esa]` is configured: `investigate_esa`
+- esa sub-agent delegation when `[connector.esa]` is configured: `esa_agent`
+- JIRA MCP reads when `[connector.jira]` is configured: `searchJiraIssuesUsingJql`,
+  `getJiraIssue`, `getJiraIssueRemoteIssueLinks`, `getTransitionsForJiraIssue`
 - External web lookup: `search_web`
 
 In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog
-mutations, esa writes, remediation, or deployments.
+mutations, esa writes, JIRA writes, remediation, or deployments.
 
 ## Slack Permissions and API Usage
 
@@ -69,7 +75,7 @@ Common settings for both modes:
 | Slack screen                          | Required setting                                                                                                   | Why                                                                                                              |
 |---------------------------------------|--------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
 | `Agents & AI Apps`                    | Turn on `Agent or Assistant`                                                                                       | Enables Slack agent search capabilities such as `assistant.search.context`                                       |
-| `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history`, `channels:read`, `files:read`, `usergroups:read`, `search:read.public` | Receive `app_mention`, mark accepted requests, reply in threads, read channel thread context, receive file share events, resolve authorization allowlists, reject private-channel mentions, and search Slack public-channel messages |
+| `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history`, `channels:read`, `files:read`, `usergroups:read`, `search:read.public`, and (when `[memory.slack]` is configured) `canvases:read`, `canvases:write` | Receive `app_mention`, mark accepted requests, reply in threads, read channel thread context, receive file share events, resolve authorization allowlists, reject private-channel mentions, search Slack public-channel messages, and read/write the shared memory Canvas |
 | `Event Subscriptions`                 | Turn on events and add the bot events `app_mention`, `file_shared`, and `message.channels`                       | `app_mention` is the mention intake trigger; `file_shared` feeds shared-file content to the auto-response path; `message.channels` feeds the auto-response judge |
 | `Interactivity & Shortcuts`           | Turn on interactivity                                                                                              | Receive `block_actions` when a user clicks a task `Cancel` button                                                |
 | `Install App` / `OAuth & Permissions` | Install or reinstall the app after any scope change                                                                | Slack does not apply updated scopes until reinstall                                                              |
@@ -105,6 +111,17 @@ Required Bot OAuth scopes:
 - `files:read`: receive and inspect Slack file share events, including forwarded emails represented as files
 - `usergroups:read`: resolve user group membership for mention and auto-response authorization
 - `search:read.public`: call `assistant.search.context` for public-channel Slack message search with a Bot Token
+- `canvases:read` (only when `[memory.slack]` is configured): read the shared memory Canvas via
+  `files.info` and `canvases.sections.lookup`
+- `canvases:write` (only when `[memory.slack]` is configured): append and prune memory entries in the
+  shared Canvas via `canvases.edit`
+
+The memory Canvas must also be shared explicitly, because canvases default to "only invited people
+can access". In the canvas share settings, grant Reili (the bot) both **read and write (can edit)**
+access, and grant access to the team members who need to read or curate the stored memories.
+Equivalently, share the canvas to a channel the bot is a member of with edit access, or call
+`canvases.access.set`. Without bot access, `files.info` returns `not_visible`; memory recall and the
+`save_memory` / `save_shared_memory` tools then soft-fail and the task continues without memory.
 
 Required App-Level Token scope for Socket Mode:
 
@@ -119,11 +136,16 @@ Not in scope for Slack:
 Slack API methods currently used by the runtime:
 
 - `apps.connections.open`: obtains a temporary WebSocket URL when Socket Mode is enabled
-- `assistant.search.context`: searches Slack public-channel message history using the triggering event's `action_token`;
-  Reili uses this both for the `search_slack_messages` tool and for startup loading of recent
-  Reili reusable notes marked with `reili_memory_v1`
+- `assistant.search.context`: searches Slack public-channel message history using the triggering
+  event's `action_token`, backing the `search_slack_messages` tool
 - `auth.test`: resolves the bot user ID at startup
-- `conversations.info`: resolves originating public channel metadata to evaluate channel name patterns for mentions and auto-responses; private-channel lookup fails without `groups:read` and is denied before enqueue
+- `files.info`: resolves shared file content and, when `[memory.slack]` is configured, the memory
+  Canvas's private download URL
+- `chat.getPermalink`: resolves the originating thread permalink recorded as a memory's Source
+  (only when `[memory.slack]` is configured)
+- `canvases.sections.lookup`, `canvases.edit`: locate the channel section and append/prune memory
+  entries in the shared Canvas (only when `[memory.slack]` is configured)
+- `conversations.info`: resolves originating public channel metadata to evaluate channel name patterns for mentions and auto-responses, and (when `[memory.slack]` is configured) the channel display name used to label a newly created memory canvas section; private-channel lookup fails without `groups:read` and is denied before enqueue
 - `conversations.replies`: loads thread context when the triggering message is a thread reply, including auto-response judge context
 - `chat.postMessage`: posts queue failures, the final task summary, and the task control message
 - `chat.postEphemeral`: posts a private deny notice to the mentioning user when mention authorization rejects a request
@@ -140,8 +162,8 @@ Slack boundary:
 - Evaluates `message.channels` events only for channels matching an `auto_response = true` entry; everything else is discarded silently, and posts the judge declines produce no Slack-visible action
 - Reads only the thread where the request was made, and only when additional thread context is needed
 - Searches only Slack public-channel messages permitted by the current app install, bot token scope, and `action_token` context
-- Loads lightweight memory only from Reili bot-authored Slack replies in the current public channel
-  when they contain the `reili_memory_v1` marker
+- Loads channel memory only from the configured shared Slack Canvas (`[memory.slack]`), reading only
+  the current channel's section; memory is disabled entirely when no Canvas is configured
 - Posts only into the originating thread
 - Intended for public channel conversations where the app is present; private channels, DM, and group DM usage are out of scope
 - Does not search private channels or DMs with the current Bot Token configuration
@@ -284,7 +306,7 @@ GitHub boundary in the current runtime:
 Reili can optionally search an esa team's posts as an internal documentation source.
 This integration is disabled unless `[connector.esa]` is present in `reili.toml`.
 When the section is omitted, Reili does not read `ESA_ACCESS_TOKEN` and does not register
-`investigate_esa` or `search_posts`.
+`esa_agent` or `search_posts`.
 
 Required esa credential when configured:
 
@@ -301,7 +323,7 @@ esa API endpoint currently used by the runtime:
 
 esa capabilities currently used by the runtime:
 
-- Delegate documentation investigation to the `investigate_esa` sub-agent
+- Delegate documentation investigation to the `esa_agent` sub-agent
 - Search posts through the sub-agent's `search_posts` tool using esa's `q` search syntax
 - Return post metadata, links, tags, authors, pagination metadata, and Markdown body content from
   the search response
@@ -313,6 +335,78 @@ esa boundary:
 - Requests are scoped to the single configured esa team
 - Query construction is controlled by the agent through the `q` field and follows esa's post search
   syntax
+
+## JIRA Permissions and Scope
+
+Reili can optionally search and reference JIRA tickets through the Atlassian Rovo MCP server.
+This integration is disabled unless `[connector.jira]` is present in `reili.toml`. When the section
+is omitted, Reili does not read `JIRA_SERVICE_ACCOUNT_API_TOKEN` and does not register any JIRA tools.
+
+Runtime authentication model:
+
+- Reili sends `JIRA_SERVICE_ACCOUNT_API_TOKEN` as a static `Authorization: Bearer` header to the
+  Atlassian Rovo MCP server (`https://mcp.atlassian.com/v1/mcp`)
+- This requires an Atlassian org admin to enable "Authentication via API token" for the Rovo MCP
+  server (Atlassian Administration → Rovo → Rovo MCP server → Authentication), so no interactive
+  OAuth consent flow is needed
+
+Required API token scope for the service account:
+
+The Rovo MCP server requires a *scoped* API token (a classic, unscoped API token does not carry
+the scope information MCP needs, even though the underlying Jira permissions would still apply).
+When an org admin creates the token for the service account
+(`https://id.atlassian.com/manage-profile/security/api-tokens` → **Create API token with scopes**,
+or the equivalent flow in Atlassian Administration for a managed service account):
+
+- App: **Jira**
+- Scope catalog: **Classic scopes** (Atlassian recommends classic scopes over granular scopes
+  where a classic scope covers the need)
+- Scopes: `read:jira-work`, `read:jira-user`, `read:account`, `read:me`
+
+`read:jira-work` covers issue read, JQL search, and comments — everything the runtime's allowlisted
+tools below actually call. `read:jira-user`, `read:account`, and `read:me` are additionally required
+by the Rovo MCP server itself (identity/account resolution during the connection handshake) even
+though Reili's tool allowlist never calls a user-lookup tool — omitting any of these four causes the
+Rovo MCP connection to fail. Do not grant `write:jira-work` or any Confluence/Bitbucket/Jira Service
+Management/Compass scope.
+
+This mirrors the runtime's own allowlist below: even if the service account token is ever granted
+broader access by mistake, Reili itself never requests a write tool or a non-Jira tool.
+
+Required `reili.toml` fields when configured:
+
+- `connector.jira.site`: Atlassian Cloud site hostname, e.g. `acme.atlassian.net`
+- `connector.jira.service_account_api_token_env`: optional env var name; defaults to
+  `JIRA_SERVICE_ACCOUNT_API_TOKEN`
+
+Which JIRA projects Reili can search and reference is governed by the service account token's own
+permissions on the Atlassian side. Reili does not maintain a separate project allow-list.
+
+JIRA capabilities currently used by the runtime:
+
+- Search issues using a JQL query
+- Read an issue's summary, description, status, assignee, comments, and issue links
+- List remote links (e.g. Confluence pages, external URLs) attached to an issue
+- List available workflow transitions and status options for an issue
+
+JIRA MCP boundary:
+
+- The JIRA sub-agent only receives this allowlisted subset of MCP tools:
+  `searchJiraIssuesUsingJql`, `getJiraIssue`, `getJiraIssueRemoteIssueLinks`, and
+  `getTransitionsForJiraIssue`
+- Which JIRA projects are reachable is governed by the service account token's own Atlassian
+  permissions; Reili does not maintain a separate project allow-list
+- The configured `site` is stamped onto every call as the Atlassian `cloudId` argument, so a
+  sub-agent cannot target a different Atlassian site than the one configured
+- Raw MCP write tools (`createJiraIssue`, `editJiraIssue`, `transitionJiraIssue`,
+  `addCommentToJiraIssue`, `addWorklogToJiraIssue`) are not exposed to the JIRA agent in this
+  runtime
+
+JIRA boundary in the current runtime:
+
+- No JIRA write permissions are required today
+- No issue creation, editing, commenting, worklog changes, or workflow transitions are performed
+- Project-level access is bounded by the service account token's Atlassian permissions
 
 ## LLM Boundary
 

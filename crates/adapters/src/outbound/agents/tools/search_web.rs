@@ -142,7 +142,8 @@ mod tests {
 
     fn build_test_resources(web_search_port: Arc<dyn WebSearchPort>) -> TaskResources {
         use reili_core::messaging::slack::{
-            SlackMessageSearchInput, SlackMessageSearchPort, SlackMessageSearchResult,
+            MockSlackFileDownloadPort, SlackMessageSearchInput, SlackMessageSearchPort,
+            SlackMessageSearchResult,
         };
 
         struct StubSlackMessageSearch;
@@ -158,7 +159,9 @@ mod tests {
 
         TaskResources {
             slack_message_search_port: Arc::new(StubSlackMessageSearch),
+            slack_file_download_port: Arc::new(MockSlackFileDownloadPort::new()),
             web_search_port,
+            canvas_memory_port: None,
         }
     }
 

@@ -5,7 +5,9 @@
 mod datadog;
 mod esa;
 mod github;
+mod jira;
 
 pub use datadog::DatadogConnector;
 pub use esa::EsaConnector;
 pub use github::GitHubConnector;
+pub use jira::JiraConnector;

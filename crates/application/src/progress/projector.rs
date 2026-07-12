@@ -370,16 +370,16 @@ mod tests {
     fn invocation_scoped_owners_do_not_reuse_previous_sub_agent_scope() {
         let mut projector = ProgressUpdateProjector::new();
         projector.project_progress_summary(RecordProgressSummary {
-            owner_id: "investigate_github:first".to_string(),
+            owner_id: "github_agent:first".to_string(),
             title: "Inspect pull requests".to_string(),
             summary: String::new(),
         });
         projector.project_message_output_created(RecordMessageOutputCreated {
-            owner_id: "investigate_github:first".to_string(),
+            owner_id: "github_agent:first".to_string(),
         });
 
         let started = projector.project_tool_started(RecordToolCallStarted {
-            owner_id: "investigate_github:second".to_string(),
+            owner_id: "github_agent:second".to_string(),
             task_id: "task-1".to_string(),
             title: "search_pull_requests".to_string(),
         });
@@ -388,7 +388,7 @@ mod tests {
             started.updates,
             vec![TaskProgressUpdate::ScopeUpdated {
                 step_id: "progress-step-2".to_string(),
-                owner_id: "investigate_github:second".to_string(),
+                owner_id: "github_agent:second".to_string(),
                 title: "Tool executions".to_string(),
                 status: TaskProgressScopeStatus::InProgress,
                 detail: Some("search_pull_requests\n".to_string()),

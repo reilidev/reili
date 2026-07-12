@@ -1,10 +1,10 @@
-mod descriptor;
+mod catalog;
 mod error;
 mod factory;
 mod prompt_fact;
 mod set;
 
-pub use descriptor::{ConnectorDescriptor, SubAgentPromptContext};
+pub use catalog::{ToolCatalogEntry, ToolCatalogGroup};
 pub use error::ConnectorPrepareError;
 pub use factory::{ConnectorFactory, PreparedConnector};
 pub use prompt_fact::ConnectorPromptFact;

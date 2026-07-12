@@ -4,58 +4,44 @@ use async_trait::async_trait;
 use rig::tool::ToolDyn;
 
 use crate::outbound::agents::connector::{
-    ConnectorDescriptor, ConnectorFactory, ConnectorPrepareError, ConnectorPromptFact,
-    PreparedConnector, SubAgentPromptContext,
-};
-use crate::outbound::agents::instructions_support::{
-    append_configured_additional_system_prompt, reusable_notes_instruction,
-    sub_agent_memory_context_instruction,
+    ConnectorFactory, ConnectorPrepareError, ConnectorPromptFact, PreparedConnector,
+    ToolCatalogGroup,
 };
 use crate::outbound::agents::mcp::datadog::tools::{
     DatadogMcpToolset, connect_datadog_mcp_toolset,
 };
 use crate::outbound::datadog::DatadogMcpToolConfig;
 
-const DATADOG_AGENT_NAME: &str = "investigate_datadog";
-const DATADOG_AGENT_DESCRIPTION: &str =
-    "Delegates Datadog observability and security investigation tasks.
-This tool is designed to be split into scopes and used in parallel.
-When instructing this sub-agent, include the relevant background, context, and why the investigation matters, not just the immediate question.";
-
 const DEFAULT_DATADOG_SITE: &str = "datadoghq.com";
+
+const DATADOG_SPAWN_GUARDRAILS: &str = "## Datadog usage notes
+Work in a hypothesis-driven way: narrow the service, timeframe, and working
+hypothesis first, then use only the Datadog tools needed to test it. Prefer
+focused queries over broad data collection. Prioritize the most operationally
+relevant questions first: customer impact, affected scope, onset time, likely
+trigger, severity, and whether the issue is ongoing. Include clickable Datadog
+links for referenced evidence whenever available.";
 
 /// Connector for Datadog telemetry, exposed over the Datadog MCP server.
 pub struct DatadogConnector {
-    descriptor: ConnectorDescriptor,
     config: DatadogMcpToolConfig,
 }
 
 impl DatadogConnector {
     #[must_use]
     pub fn new(config: DatadogMcpToolConfig) -> Self {
-        Self {
-            descriptor: ConnectorDescriptor {
-                agent_name: DATADOG_AGENT_NAME.to_string(),
-                agent_description: DATADOG_AGENT_DESCRIPTION.to_string(),
-            },
-            config,
-        }
+        Self { config }
     }
 }
 
 #[async_trait]
 impl ConnectorFactory for DatadogConnector {
-    fn descriptor(&self) -> &ConnectorDescriptor {
-        &self.descriptor
-    }
-
     async fn prepare(&self) -> Result<Arc<dyn PreparedConnector>, ConnectorPrepareError> {
         let toolset = connect_datadog_mcp_toolset(&self.config)
             .await
             .map_err(ConnectorPrepareError::from_port_error)?;
 
         Ok(Arc::new(PreparedDatadogConnector {
-            descriptor: self.descriptor.clone(),
             toolset,
             site: self.config.site.clone(),
         }))
@@ -63,16 +49,11 @@ impl ConnectorFactory for DatadogConnector {
 }
 
 struct PreparedDatadogConnector {
-    descriptor: ConnectorDescriptor,
     toolset: DatadogMcpToolset,
     site: String,
 }
 
 impl PreparedConnector for PreparedDatadogConnector {
-    fn descriptor(&self) -> &ConnectorDescriptor {
-        &self.descriptor
-    }
-
     fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
         self.toolset.sub_agent_tools()
     }
@@ -81,8 +62,15 @@ impl PreparedConnector for PreparedDatadogConnector {
         self.toolset.lead_tools()
     }
 
-    fn sub_agent_preamble(&self, context: &SubAgentPromptContext) -> String {
-        build_datadog_instructions(context)
+    fn spawn_tool_catalog(&self) -> ToolCatalogGroup {
+        ToolCatalogGroup {
+            source: "Datadog".to_string(),
+            entries: self.toolset.sub_agent_catalog_entries(),
+        }
+    }
+
+    fn spawn_guardrails(&self) -> Option<String> {
+        Some(DATADOG_SPAWN_GUARDRAILS.to_string())
     }
 
     fn prompt_facts(&self) -> Vec<ConnectorPromptFact> {
@@ -99,72 +87,18 @@ impl PreparedConnector for PreparedDatadogConnector {
     }
 }
 
-fn build_datadog_instructions(context: &SubAgentPromptContext) -> String {
-    let reusable_notes_instruction = reusable_notes_instruction();
-    let memory_context_instruction = sub_agent_memory_context_instruction();
-
-    append_configured_additional_system_prompt(
-        format!(
-        "You are a Datadog investigation sub-agent with deep expertise in production reliability, observability, failure analysis, operational diagnostics, and security investigation.
-Your role is to investigate Datadog evidence across logs, metrics, events, dashboards, Synthetic tests, and any available Datadog security tools, and return concise, evidence-based findings that support safe and reliable operational decisions.
-
-Use {language} for all responses.
-
-## Investigation approach
-Work in a hypothesis-driven way. Start by narrowing the service, timeframe, and current working hypothesis, then use only the Datadog tools needed to test that hypothesis or answer the current question. Prefer focused investigation over broad data collection.
-Run tool calls in parallel whenever possible to reduce investigation latency.
-Before entering a new major investigation step, call report_progress. The payload must be short and use the title and summary fields.
-
-{memory_context_instruction}
-
-## Output expectations
-Prioritize the most operationally relevant questions first: customer impact, affected scope, onset time, likely trigger, severity, and whether the issue is ongoing.
-Return concise, high-signal findings rather than raw tool output. Clearly distinguish confirmed facts, plausible explanations, and remaining unknowns. Avoid overstating conclusions, and state uncertainty explicitly when evidence is partial, indirect, or conflicting.
-Include clickable Datadog links for all referenced evidence whenever available. Briefly summarize the investigation trail so another engineer can follow what you checked, why you checked it, and what each step established, without dumping raw tool arguments or raw tool output.
-
-{reusable_notes_instruction}"
-            ,
-            language = context.language,
-            memory_context_instruction = memory_context_instruction,
-            reusable_notes_instruction = reusable_notes_instruction,
-        ),
-        context.additional_system_prompt.as_deref(),
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_DATADOG_SITE, build_datadog_instructions};
-    use crate::outbound::agents::connector::SubAgentPromptContext;
-
-    fn context(additional_system_prompt: Option<String>) -> SubAgentPromptContext {
-        SubAgentPromptContext {
-            language: "Japanese".to_string(),
-            additional_system_prompt,
-        }
-    }
-
-    #[test]
-    fn appends_configured_additional_system_prompt() {
-        let instructions = build_datadog_instructions(&context(Some(
-            "Prefer runbook links first.\nState uncertainty explicitly.".to_string(),
-        )));
-
-        assert!(instructions.contains(
-            "Configured additional system prompt instructions from reili.toml:\n\nPrefer runbook links first."
-        ));
-        assert!(instructions.contains("State uncertainty explicitly."));
-    }
-
-    #[test]
-    fn instructions_use_configured_language() {
-        let instructions = build_datadog_instructions(&context(None));
-
-        assert!(instructions.contains("Use Japanese for all responses."));
-    }
+    use super::{DATADOG_SPAWN_GUARDRAILS, DEFAULT_DATADOG_SITE};
 
     #[test]
     fn default_site_is_datadoghq() {
         assert_eq!(DEFAULT_DATADOG_SITE, "datadoghq.com");
+    }
+
+    #[test]
+    fn guardrails_mention_hypothesis_driven_investigation_and_operational_priorities() {
+        assert!(DATADOG_SPAWN_GUARDRAILS.contains("hypothesis-driven"));
+        assert!(DATADOG_SPAWN_GUARDRAILS.contains("customer impact"));
     }
 }

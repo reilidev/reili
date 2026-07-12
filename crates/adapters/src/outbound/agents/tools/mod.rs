@@ -1,12 +1,17 @@
 mod report_progress;
+mod save_memory;
 mod search_posts;
 mod search_slack_messages;
 mod search_web;
-mod sub_agent;
+mod spawn_agent;
 mod support;
 
 pub use report_progress::{ReportProgressTool, ReportProgressToolInput};
+pub use save_memory::{SaveMemoryTool, SaveMemoryToolInput, SaveSharedMemoryTool};
 pub use search_posts::SearchPostsTool;
 pub use search_slack_messages::SearchSlackMessagesTool;
 pub use search_web::SearchWebTool;
-pub use sub_agent::{ProgressReportingSubAgentTool, ProgressReportingSubAgentToolInput};
+pub use spawn_agent::{
+    SpawnAgentTool, SpawnAgentToolArgs, SpawnAgentToolError, SpawnAgentToolInput,
+    SpawnedSubAgentSpec,
+};
