@@ -14,7 +14,7 @@ pub use model::{
     AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig,
     LlmConfig, LlmProviderConfig, OpenAiLlmConfig, SlackAuthorizationActors,
     SlackAuthorizationConfig, SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode,
-    VertexAiLlmConfig,
+    VertexAiLlmConfig, WebSearchProviderConfig,
 };
 
 #[derive(Debug, Error)]

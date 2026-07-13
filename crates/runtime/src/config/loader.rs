@@ -11,7 +11,7 @@ use super::model::{
     AnthropicLlmConfig, AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, JiraConfig,
     JudgeProviderConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig, SlackAuthorizationActors,
     SlackAuthorizationConfig, SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode,
-    VertexAiLlmConfig,
+    VertexAiLlmConfig, WebSearchProviderConfig,
 };
 use crate::config::SecretString;
 use reili_core::messaging::slack::SlackChannelNamePattern;
@@ -112,12 +112,14 @@ fn resolve_app_config(
     let slack_authorization =
         resolve_slack_authorization(file_config.channel.slack.authorization.as_ref());
     let slack_channels = resolve_slack_channels(&file_config.channel.slack.channels)?;
-    let llm_provider = resolve_llm_provider(&file_config.ai, env)?;
+    let (llm_provider, lead_id, lead_field) = resolve_llm_provider(&file_config.ai, env)?;
     let judge_llm = if slack_channels.iter().any(|channel| channel.auto_response) {
         Some(resolve_judge_llm_provider(&file_config.ai, env)?)
     } else {
         None
     };
+    let web_search_llm =
+        resolve_web_search_llm_provider(&file_config.ai, lead_id, lead_field, env)?;
     let github = resolve_github_config(&file_config, env)?;
     let esa = resolve_esa_config(&file_config, env)?;
     let jira = resolve_jira_config(&file_config, env)?;
@@ -148,6 +150,7 @@ fn resolve_app_config(
             provider: llm_provider,
         },
         judge_llm,
+        web_search_llm,
         github,
         esa,
         jira,
@@ -260,10 +263,13 @@ fn resolve_slack_channels(
         .collect()
 }
 
-fn resolve_llm_provider(
-    ai: &AiFileConfig,
+/// Resolve the lead/sub-agent provider pair. Also returns the lead backend id
+/// and the config field that named it, so callers that fall back to the lead
+/// backend (e.g. web search) can attribute errors to the right field.
+fn resolve_llm_provider<'a>(
+    ai: &'a AiFileConfig,
     env: &dyn EnvironmentReader,
-) -> Result<LlmProviderConfig, ConfigError> {
+) -> Result<(LlmProviderConfig, &'a str, &'static str), ConfigError> {
     let (lead_id, lead_field) = select_backend_id(
         ai.lead_backend.as_deref(),
         &ai.default_backend,
@@ -292,7 +298,7 @@ fn resolve_llm_provider(
     let sub_agent_model = backend_model(sub_backend).to_string();
     let backend_field_prefix = format!("ai.backends.{lead_id}");
 
-    match lead_backend {
+    let provider = match lead_backend {
         AiBackendFileConfig::OpenAi {
             model,
             api_key_env,
@@ -336,6 +342,49 @@ fn resolve_llm_provider(
             model_id: model_id.to_string(),
             sub_agent_model_id: sub_agent_model,
         })),
+    }?;
+
+    Ok((provider, lead_id, lead_field))
+}
+
+/// Resolve the backend used by the `search_web` tool. Falls back to the lead
+/// backend so behavior is unchanged when `ai.web_search_backend` is omitted.
+/// Only `openai` and `anthropic` backends are supported for web search; the
+/// lead backend can use any provider, but if it (or the explicit override)
+/// resolves to `bedrock` or `vertexai`, this returns an error asking for
+/// `ai.web_search_backend` to be set to an openai or anthropic backend.
+fn resolve_web_search_llm_provider(
+    ai: &AiFileConfig,
+    lead_id: &str,
+    lead_field: &'static str,
+    env: &dyn EnvironmentReader,
+) -> Result<WebSearchProviderConfig, ConfigError> {
+    let (web_search_id, web_search_field) = match ai.web_search_backend.as_deref() {
+        Some(id) => (id, "ai.web_search_backend"),
+        None => (lead_id, lead_field),
+    };
+    let web_search_backend = lookup_backend(ai, web_search_id, web_search_field)?;
+    let prefix = format!("ai.backends.{web_search_id}");
+
+    match web_search_backend {
+        AiBackendFileConfig::OpenAi { api_key_env, .. } => Ok(WebSearchProviderConfig::OpenAi {
+            api_key: resolve_openai_api_key(env, api_key_env.as_deref(), &prefix)?,
+        }),
+        AiBackendFileConfig::Anthropic { model, api_key_env } => {
+            Ok(WebSearchProviderConfig::Anthropic {
+                api_key: resolve_anthropic_api_key(env, api_key_env.as_deref(), &prefix)?,
+                model: model.to_string(),
+            })
+        }
+        AiBackendFileConfig::Bedrock { .. } | AiBackendFileConfig::VertexAi { .. } => {
+            Err(ConfigError::InvalidValue {
+                field: web_search_field.to_string(),
+                message: format!(
+                    "backend `{web_search_id}` uses provider `{}`, but web search only supports `openai` and `anthropic`; point `ai.web_search_backend` at an openai or anthropic backend",
+                    backend_provider_name(web_search_backend)
+                ),
+            })
+        }
     }
 }
 
@@ -577,7 +626,9 @@ mod tests {
     use crate::config::ConfigError;
     use crate::config::env::EnvironmentReader;
     use crate::config::file::parse_file_config;
-    use crate::config::model::{JudgeProviderConfig, LlmProviderConfig, SlackConnectionMode};
+    use crate::config::model::{
+        JudgeProviderConfig, LlmProviderConfig, SlackConnectionMode, WebSearchProviderConfig,
+    };
 
     const TEST_PATH: &str = "/test/reili.toml";
 
@@ -1802,6 +1853,118 @@ api_key_env = "LLM_OPENAI_API_KEY"
         }
     }
 
+    #[test]
+    fn defaults_web_search_backend_to_lead_backend_when_omitted() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config());
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.web_search_llm {
+            WebSearchProviderConfig::OpenAi { api_key } => {
+                assert_eq!(api_key.expose(), "openai-api-key");
+            }
+            other => panic!("expected openai web search provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolves_web_search_backend_with_provider_different_from_lead() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "default_backend = \"primary\"",
+            "default_backend = \"primary\"\nweb_search_backend = \"fast\"",
+        ));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.llm.provider {
+            LlmProviderConfig::OpenAi(_) => {}
+            other => panic!("expected openai lead provider, got {other:?}"),
+        }
+        match config.web_search_llm {
+            WebSearchProviderConfig::Anthropic { model, api_key } => {
+                assert_eq!(model, "claude-haiku-4-5");
+                assert_eq!(api_key.expose(), "anthropic-api-key");
+            }
+            other => panic!("expected anthropic web search provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_web_search_backend() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config().replace(
+            "default_backend = \"primary\"",
+            "default_backend = \"primary\"\nweb_search_backend = \"missing\"",
+        ));
+
+        let error = resolve_app_config(file_config, &env).expect_err("invalid web search backend");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "ai.web_search_backend");
+                assert!(message.contains("unknown backend `missing`"), "{message}");
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn rejects_explicit_web_search_backend_using_unsupported_provider() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(
+            &valid_openai_config()
+                .replace(
+                    "[ai.backends.fast]\nprovider = \"anthropic\"",
+                    "[ai.backends.fast]\nprovider = \"bedrock\"\nmodel_id = \"anthropic.claude-3-7-sonnet-20250219-v1:0\"",
+                )
+                .replace(
+                    "model = \"claude-haiku-4-5\"\napi_key_env = \"LLM_ANTHROPIC_API_KEY\"\n",
+                    "",
+                )
+                .replace(
+                    "default_backend = \"primary\"",
+                    "default_backend = \"primary\"\nweb_search_backend = \"fast\"",
+                ),
+        );
+
+        let error =
+            resolve_app_config(file_config, &env).expect_err("unsupported web search provider");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "ai.web_search_backend");
+                assert!(message.contains("provider `bedrock`"), "{message}");
+                assert!(
+                    message.contains("only supports `openai` and `anthropic`"),
+                    "{message}"
+                );
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn rejects_web_search_fallback_to_lead_backend_using_unsupported_provider() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(
+            &valid_bedrock_config().replace("web_search_backend = \"web_search\"\n", ""),
+        );
+
+        let error =
+            resolve_app_config(file_config, &env).expect_err("unsupported web search provider");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "ai.default_backend");
+                assert!(message.contains("provider `bedrock`"), "{message}");
+                assert!(message.contains("ai.web_search_backend"), "{message}");
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
+    }
+
     fn parse_runtime_config(toml: &str) -> crate::config::file::FileConfig {
         parse_file_config(Path::new(TEST_PATH), toml).expect("parse runtime config")
     }
@@ -1916,12 +2079,18 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
         base_config_with_ai_block(
             r#"[ai]
 default_backend = "bedrock"
+web_search_backend = "web_search"
 
 [ai.backends.bedrock]
 provider = "bedrock"
 model_id = "anthropic.claude-3-7-sonnet-20250219-v1:0"
 aws_profile = "prod-sso"
 aws_region = "ap-northeast-1"
+
+[ai.backends.web_search]
+provider = "openai"
+model = "gpt-5.4"
+api_key_env = "LLM_OPENAI_API_KEY"
 
 "#,
         )
@@ -1931,12 +2100,18 @@ aws_region = "ap-northeast-1"
         base_config_with_ai_block(
             r#"[ai]
 default_backend = "vertex"
+web_search_backend = "web_search"
 
 [ai.backends.vertex]
 provider = "vertexai"
 project_id = "example-project"
 location = "global"
 model_id = "gemini-2.5-pro"
+
+[ai.backends.web_search]
+provider = "openai"
+model = "gpt-5.4"
+api_key_env = "LLM_OPENAI_API_KEY"
 
 "#,
         )

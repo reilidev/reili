@@ -119,7 +119,7 @@ Non-secret settings live in `reili.toml`, including:
 - Slack channel table (`[[channel.slack.channels]]`) opting channels in to mention responses
   and LLM-judged auto-responses, plus optional Slack actor authorization
 - selected AI backend and backend-specific non-secret settings, including optional separate
-  backends for the lead agent and sub-agents
+  backends for the lead agent, sub-agents, and the `search_web` tool
 - Datadog site
 - GitHub MCP URL, GitHub App ID, installation ID, and search scope org
 - optional esa team name and access-token env var
@@ -220,6 +220,13 @@ in `[ai.backends]`. The two backends must use the same provider; only the model 
 roles. A common setup is a stronger model for the lead and a cheaper, faster model for sub-agents.
 Either key falls back to `default_backend` when omitted.
 
+The `search_web` tool's provider is configured independently through `ai.web_search_backend`,
+which falls back to the lead backend when omitted. It must resolve to an `openai` or `anthropic`
+backend — those are the only providers with a supported web search integration; Reili refuses to
+start otherwise. This matters because Bedrock and Vertex AI backends cannot be used for web search
+(see below); set `ai.web_search_backend` to an `openai` or `anthropic` backend to give a
+Bedrock- or Vertex-AI-backed Reili working web search.
+
 When the selected backend uses `provider = "anthropic"`, Claude is called through the Anthropic
 API.
 
@@ -234,16 +241,17 @@ When the selected backend uses `provider = "bedrock"`, AWS credentials are loade
 AWS SDK chain. Set `aws_profile` and `aws_region` in `reili.toml` when you want to force a named
 profile or region for that backend. The underlying AWS credentials still come from the normal AWS
 environment or profile chain.
-- Web search is currently unavailable with the Bedrock provider. If Reili issues a web search while
-  the selected backend uses `provider = "bedrock"`, it returns a `capability_unavailable` result
-  instead of live search results.
+- Bedrock has no supported web search integration. If `ai.web_search_backend` is left unset and the
+  lead backend uses `provider = "bedrock"`, Reili fails to start; point `ai.web_search_backend` at
+  an `openai` or `anthropic` backend to enable `search_web`.
 
 When the selected backend uses `provider = "vertexai"`, Google credentials are loaded from
 Application Default Credentials.
 
 - Set `project_id`, `location`, and `model_id` in `reili.toml`.
 - For Gemini on Vertex AI, `location = "global"` is usually the best default.
-- Web search uses Vertex AI Gemini Grounding with Google Search.
+- Vertex AI has no supported web search integration either; point `ai.web_search_backend` at an
+  `openai` or `anthropic` backend to enable `search_web`.
 - If Vertex AI returns `RESOURCE_EXHAUSTED`, verify your project quotas in Google Cloud Quotas (
   `https://console.cloud.google.com/iam-admin/quotas`) and adjust them if needed.
 

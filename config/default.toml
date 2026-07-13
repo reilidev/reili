@@ -96,6 +96,13 @@ default_backend = "primary"
 # A cheap, fast model is recommended; it may use a different provider than the lead backend.
 # judge_backend = "fast"
 
+# Optional: backend ID for the `search_web` tool. Defaults to `lead_backend`. Must point at an
+# `openai` or `anthropic` backend — those are the only providers with a supported web search
+# integration. Set this when the lead backend uses a different, unsupported provider (`bedrock` or
+# `vertexai`); startup fails with a clear error if the resolved web search backend isn't openai or
+# anthropic.
+# web_search_backend = "anthropic"
+
 # "primary" is an arbitrary backend ID chosen by the config author.
 [ai.backends.primary]
 # Required: AI provider for this backend.

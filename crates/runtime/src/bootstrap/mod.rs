@@ -16,7 +16,6 @@ use reili_adapters::outbound::auto_response_judge::{
     create_bedrock_auto_response_judge_port, create_openai_auto_response_judge_port,
     create_vertex_ai_auto_response_judge_port,
 };
-use reili_adapters::outbound::bedrock::{BedrockWebSearchAdapter, BedrockWebSearchAdapterConfig};
 use reili_adapters::outbound::esa::{EsaClient, EsaClientConfig, EsaPostSearchPort};
 use reili_adapters::outbound::github::GitHubMcpConfig;
 use reili_adapters::outbound::jira::JiraMcpConfig;
@@ -28,9 +27,6 @@ use reili_adapters::outbound::slack::{
     SlackReactionAdapter, SlackTaskControlMessageAdapter, SlackThreadHistoryAdapter,
     SlackThreadReplyAdapter, SlackUserGroupMembershipAdapter, SlackWebApiClient,
     SlackWebApiClientConfig,
-};
-use reili_adapters::outbound::vertex_ai::{
-    VertexAiWebSearchAdapter, VertexAiWebSearchAdapterConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
 use reili_application::{
@@ -60,7 +56,7 @@ use thiserror::Error;
 
 use crate::config::{
     AppConfig, EsaConfig, JiraConfig, JudgeProviderConfig, LlmProviderConfig, SecretString,
-    SlackConnectionMode,
+    SlackConnectionMode, WebSearchProviderConfig,
 };
 
 pub struct RuntimeDeps {
@@ -83,12 +79,7 @@ pub enum RuntimeBootstrapError {
     ProviderClientInitialization { provider: String, message: String },
 }
 
-struct ProviderPorts {
-    web_search_port: Arc<dyn WebSearchPort>,
-    task_runner: Arc<dyn TaskRunnerPort>,
-}
-
-struct CreateProviderPortsInput<'a> {
+struct CreateTaskRunnerInput<'a> {
     llm_provider: &'a LlmProviderConfig,
     connectors: ConnectorSet,
     language: String,
@@ -163,21 +154,21 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     })?;
     let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
     let in_flight_job_registry = InFlightJobRegistry::new();
-    let provider_ports = create_provider_ports(CreateProviderPortsInput {
+    let task_runner = create_task_runner(CreateTaskRunnerInput {
         llm_provider: &config.llm.provider,
         connectors,
         language: config.language.clone(),
         additional_system_prompt: config.additional_system_prompt.clone(),
     })
     .await?;
+    let web_search_port = create_web_search_port(&config.web_search_llm);
 
     let task_resources = TaskResources {
         slack_message_search_port,
         slack_file_download_port,
-        web_search_port: provider_ports.web_search_port,
+        web_search_port,
         canvas_memory_port,
     };
-    let task_runner = provider_ports.task_runner;
     let enqueue_slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
@@ -468,15 +459,12 @@ fn build_esa_post_search_port(config: &EsaConfig) -> Result<Arc<dyn EsaPostSearc
     Ok(Arc::new(client))
 }
 
-async fn create_provider_ports(
-    input: CreateProviderPortsInput<'_>,
-) -> Result<ProviderPorts, RuntimeBootstrapError> {
+async fn create_task_runner(
+    input: CreateTaskRunnerInput<'_>,
+) -> Result<Arc<dyn TaskRunnerPort>, RuntimeBootstrapError> {
     match input.llm_provider {
-        LlmProviderConfig::OpenAi(config) => Ok(ProviderPorts {
-            web_search_port: Arc::new(OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
-                api_key: config.api_key.clone(),
-            })),
-            task_runner: Arc::new(OpenAiTaskRunner::new(OpenAiTaskRunnerInput {
+        LlmProviderConfig::OpenAi(config) => {
+            Ok(Arc::new(OpenAiTaskRunner::new(OpenAiTaskRunnerInput {
                 api_key: config.api_key.clone(),
                 model: config.model.clone(),
                 sub_agent_model: config.sub_agent_model.clone(),
@@ -484,31 +472,20 @@ async fn create_provider_ports(
                 connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
-            })),
-        }),
-        LlmProviderConfig::Anthropic(config) => Ok(ProviderPorts {
-            web_search_port: Arc::new(AnthropicWebSearchAdapter::new(
-                AnthropicWebSearchAdapterConfig {
-                    api_key: config.api_key.clone(),
-                    model: config.model.clone(),
-                },
-            )),
-            task_runner: Arc::new(AnthropicTaskRunner::new(AnthropicTaskRunnerInput {
+            })))
+        }
+        LlmProviderConfig::Anthropic(config) => Ok(Arc::new(AnthropicTaskRunner::new(
+            AnthropicTaskRunnerInput {
                 api_key: config.api_key.clone(),
                 model: config.model.clone(),
                 sub_agent_model: config.sub_agent_model.clone(),
                 connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
-            })),
-        }),
-        LlmProviderConfig::Bedrock(config) => Ok(ProviderPorts {
-            web_search_port: Arc::new(BedrockWebSearchAdapter::new(
-                BedrockWebSearchAdapterConfig {
-                    model_id: config.model_id.clone(),
-                },
-            )),
-            task_runner: Arc::new(BedrockTaskRunner::new(BedrockTaskRunnerInput {
+            },
+        ))),
+        LlmProviderConfig::Bedrock(config) => {
+            Ok(Arc::new(BedrockTaskRunner::new(BedrockTaskRunnerInput {
                 model_id: config.model_id.clone(),
                 sub_agent_model_id: config.sub_agent_model_id.clone(),
                 aws_profile: config.aws_profile.clone(),
@@ -516,28 +493,38 @@ async fn create_provider_ports(
                 connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
-            })),
-        }),
+            })))
+        }
         LlmProviderConfig::VertexAi(config) => {
             let client = build_vertex_ai_client(&config.project_id, &config.location)?;
 
-            Ok(ProviderPorts {
-                web_search_port: Arc::new(VertexAiWebSearchAdapter::new(
-                    VertexAiWebSearchAdapterConfig {
-                        client: client.clone(),
-                        model_id: config.model_id.clone(),
-                    },
-                )),
-                task_runner: Arc::new(VertexAiTaskRunner::new(VertexAiTaskRunnerInput {
-                    client,
-                    model_id: config.model_id.clone(),
-                    sub_agent_model_id: config.sub_agent_model_id.clone(),
-                    connectors: input.connectors,
-                    language: input.language,
-                    additional_system_prompt: input.additional_system_prompt,
-                })),
-            })
+            Ok(Arc::new(VertexAiTaskRunner::new(VertexAiTaskRunnerInput {
+                client,
+                model_id: config.model_id.clone(),
+                sub_agent_model_id: config.sub_agent_model_id.clone(),
+                connectors: input.connectors,
+                language: input.language,
+                additional_system_prompt: input.additional_system_prompt,
+            })))
         }
+    }
+}
+
+/// Builds the `search_web` port from its own provider config, which is
+/// independent of the task runner's provider (see [`WebSearchProviderConfig`]).
+fn create_web_search_port(web_search_llm: &WebSearchProviderConfig) -> Arc<dyn WebSearchPort> {
+    match web_search_llm {
+        WebSearchProviderConfig::OpenAi { api_key } => {
+            Arc::new(OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
+                api_key: api_key.clone(),
+            }))
+        }
+        WebSearchProviderConfig::Anthropic { api_key, model } => Arc::new(
+            AnthropicWebSearchAdapter::new(AnthropicWebSearchAdapterConfig {
+                api_key: api_key.clone(),
+                model: model.clone(),
+            }),
+        ),
     }
 }
 
