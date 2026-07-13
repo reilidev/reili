@@ -240,6 +240,8 @@ pub(crate) struct AiFileConfig {
     pub sub_agent_backend: Option<String>,
     #[serde(default, deserialize_with = "optional_non_empty_string")]
     pub judge_backend: Option<String>,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
+    pub web_search_backend: Option<String>,
     pub backends: BTreeMap<String, AiBackendFileConfig>,
 }
 

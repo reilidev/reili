@@ -90,6 +90,23 @@ pub enum JudgeProviderConfig {
     },
 }
 
+/// Provider configuration for the `search_web` tool. Independent of
+/// [`LlmProviderConfig`] so web search can use a different provider than the
+/// task runner — e.g. Bedrock backends, which cannot perform web search
+/// natively, can point web search at an Anthropic or OpenAI backend instead.
+/// Restricted to these two providers because they are the only ones with a
+/// supported web search integration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebSearchProviderConfig {
+    OpenAi {
+        api_key: SecretString,
+    },
+    Anthropic {
+        api_key: SecretString,
+        model: String,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenAiLlmConfig {
     pub api_key: SecretString,
@@ -174,6 +191,9 @@ pub struct AppConfig {
     /// Provider used by the auto-response judge; resolved only when at least
     /// one channel enables `auto_response`.
     pub judge_llm: Option<JudgeProviderConfig>,
+    /// Provider used by the `search_web` tool; falls back to the lead backend
+    /// when `ai.web_search_backend` is not set.
+    pub web_search_llm: WebSearchProviderConfig,
     pub github: GitHubConfig,
     pub esa: Option<EsaConfig>,
     pub jira: Option<JiraConfig>,
@@ -207,7 +227,7 @@ mod tests {
     use super::{
         AppConfig, EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig, LlmConfig,
         LlmProviderConfig, OpenAiLlmConfig, SecretString, SlackChannelConfig,
-        SlackChannelNamePattern, SlackConnectionMode,
+        SlackChannelNamePattern, SlackConnectionMode, WebSearchProviderConfig,
     };
 
     #[test]
@@ -239,6 +259,9 @@ mod tests {
                 api_key: SecretString::new("judge-openai-secret".to_string()),
                 model: "gpt-5.4-mini".to_string(),
             }),
+            web_search_llm: WebSearchProviderConfig::OpenAi {
+                api_key: SecretString::new("web-search-openai-secret".to_string()),
+            },
             github: GitHubConfig {
                 url: "https://api.githubcopilot.com/mcp/".to_string(),
                 app_id: "12345".to_string(),
@@ -270,6 +293,7 @@ mod tests {
         assert!(!debug_output.contains("dd-app"));
         assert!(!debug_output.contains("openai-secret"));
         assert!(!debug_output.contains("judge-openai-secret"));
+        assert!(!debug_output.contains("web-search-openai-secret"));
         assert!(!debug_output.contains("private-key"));
         assert!(!debug_output.contains("esa-token"));
         assert!(!debug_output.contains("jira-service-account-token"));
@@ -316,6 +340,9 @@ mod tests {
                 }),
             },
             judge_llm: None,
+            web_search_llm: WebSearchProviderConfig::OpenAi {
+                api_key: SecretString::new("openai-secret".to_string()),
+            },
             github: GitHubConfig {
                 url: "https://api.githubcopilot.com/mcp/".to_string(),
                 app_id: "12345".to_string(),
