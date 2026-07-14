@@ -34,7 +34,7 @@ Top-level runtime assets:
 - `config/minimum.toml`: minimal runtime config example
 - `.env.example`: secret environment variable template
 - `slack-app-manifest.yml`: Slack App manifest
-- `docs/permissions-and-boundaries.md`: current integration permissions and runtime boundaries
+- `docs/capabilities-and-permissions.md`: current integration capabilities and required permissions
 
 ## Setup
 
