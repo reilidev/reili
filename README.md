@@ -82,14 +82,14 @@ sequenceDiagram
   <a href="https://api.slack.com/apps?new_app=1&amp;manifest_yaml=display_information%3A%0D%0A++name%3A+Reili%0D%0Afeatures%3A%0D%0A++bot_user%3A%0D%0A++++display_name%3A+Reili%0D%0A++++always_online%3A+true%0D%0Aoauth_config%3A%0D%0A++scopes%3A%0D%0A++++bot%3A%0D%0A++++++-+reactions%3Awrite%0D%0A++++++-+app_mentions%3Aread%0D%0A++++++-+canvases%3Aread%0D%0A++++++-+canvases%3Awrite%0D%0A++++++-+channels%3Ahistory%0D%0A++++++-+channels%3Aread%0D%0A++++++-+chat%3Awrite%0D%0A++++++-+files%3Aread%0D%0A++++++-+usergroups%3Aread%0D%0A++++++-+assistant%3Awrite%0D%0A++++++-+search%3Aread.files%0D%0A++++++-+search%3Aread.public%0D%0A++++++-+search%3Aread.users%0D%0A++pkce_enabled%3A+false%0D%0Asettings%3A%0D%0A++event_subscriptions%3A%0D%0A++++request_url%3A+https%3A%2F%2Fexample.com%2Fslack%2Fevents%0D%0A++++bot_events%3A%0D%0A++++++-+app_mention%0D%0A++++++-+file_shared%0D%0A++++++-+message.channels%0D%0A++interactivity%3A%0D%0A++++is_enabled%3A+true%0D%0A++org_deploy_enabled%3A+false%0D%0A++socket_mode_enabled%3A+true%0D%0A++token_rotation_enabled%3A+false%0D%0A" target="_blank">Create App from manifest link</a>
   - In Slack App settings, open `Agents & AI Apps` and turn on `Agent or Assistant` so Bot Token based Slack search is available
   - Configure the required scopes, events, and Interactivity using
-    [Slack Permissions and API Usage](./docs/permissions-and-boundaries.md#slack-permissions-and-api-usage).
+    [Slack Permissions and API Usage](./docs/capabilities-and-permissions.md#slack-permissions-and-api-usage).
 - Datadog API Key + APP Key for the Datadog MCP server
 - OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call
   Vertex AI Gemini models
 - GitHub App credentials for the repositories Reili works with
   - Create and install it from <a href="https://reilidev.github.io/reili/create-github-app" target="_blank">Create GitHub App</a>
   - Configure the required permissions and scope in
-    [GitHub Permissions and Scope](./docs/permissions-and-boundaries.md#github-permissions-and-scope).
+    [GitHub Permissions and Scope](./docs/capabilities-and-permissions.md#github-permissions-and-scope).
 - Optional esa access token with `read` scope when you want Reili to search esa posts.
 - Optional JIRA integration via the Atlassian Rovo MCP server, when you want Reili to search and
   reference JIRA tickets:
@@ -97,7 +97,9 @@ sequenceDiagram
     (Atlassian Administration → Rovo → Rovo MCP server → Authentication) and issue a service
     account API token.
   - Configure the required scope in
-    [JIRA Permissions and Scope](./docs/permissions-and-boundaries.md#jira-permissions-and-scope).
+    [JIRA Permissions and Scope](./docs/capabilities-and-permissions.md#jira-permissions-and-scope).
+  - A Jira project admin must also grant the service account `Browse Projects` in each project's
+    permission scheme; the API token scope alone doesn't grant issue visibility.
 
 ### 2. Configure `reili.toml`
 
@@ -331,8 +333,8 @@ At a high level, the current runtime:
   state
 
 For the full tool inventory, required Slack scopes, Datadog RBAC permissions, GitHub backend
-permissions, and LLM data boundary, see
-[docs/permissions-and-boundaries.md](./docs/permissions-and-boundaries.md).
+permissions, and LLM data exposure, see
+[docs/capabilities-and-permissions.md](./docs/capabilities-and-permissions.md).
 
 ## Development
 

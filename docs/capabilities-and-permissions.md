@@ -1,7 +1,7 @@
-# Permissions and Boundaries
+# Capabilities and Permissions
 
 This document lists the current runtime's tool inventory, required integration permissions, and
-behavioral boundaries.
+behavioral restrictions.
 
 Reili is intentionally scoped around task execution and decision support. The current runtime
 is investigation-focused. It can post progress and final replies in Slack, but it does not get
@@ -47,14 +47,11 @@ Required Slack credentials:
 - `SLACK_SIGNING_SECRET`: verifies incoming requests on `/slack/events` in HTTP mode
 - `SLACK_APP_TOKEN`: opens the Socket Mode WebSocket in Socket Mode (`xapp-...` App-Level Token)
 
-Additional Slack platform requirement:
-
-- `assistant.search.context` is currently available only to internal Slack apps or apps distributed
-  through Slack Marketplace/App Directory
-- In Slack App settings, open `Agents & AI Apps` and enable `Agent or Assistant` so Slack agent
-  search capabilities are available to the app
-- The current runtime uses the Bot Token + `action_token` flow, which supports public-channel
-  message search through `search:read.public`
+Additional Slack platform requirement: `assistant.search.context` is available only to internal
+Slack apps or apps distributed through the Slack Marketplace/App Directory. The runtime uses the
+Bot Token + `action_token` flow, which supports public-channel message search through
+`search:read.public`. Enabling this capability is one of the common settings below (`Agents & AI
+Apps` → `Agent or Assistant`).
 
 Required Event Subscriptions:
 
@@ -73,11 +70,11 @@ Configure the Slack app in two steps:
 Common settings for both modes:
 
 | Slack screen                          | Required setting                                                                                                   | Why                                                                                                              |
-|---------------------------------------|--------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------|
-| `Agents & AI Apps`                    | Turn on `Agent or Assistant`                                                                                       | Enables Slack agent search capabilities such as `assistant.search.context`                                       |
-| `OAuth & Permissions`                 | Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `reactions:write`, `channels:history`, `channels:read`, `files:read`, `usergroups:read`, `search:read.public`, and (when `[memory.slack]` is configured) `canvases:read`, `canvases:write` | Receive `app_mention`, mark accepted requests, reply in threads, read channel thread context, receive file share events, resolve authorization allowlists, reject private-channel mentions, search Slack public-channel messages, and read/write the shared memory Canvas |
-| `Event Subscriptions`                 | Turn on events and add the bot events `app_mention`, `file_shared`, and `message.channels`                       | `app_mention` is the mention intake trigger; `file_shared` feeds shared-file content to the auto-response path; `message.channels` feeds the auto-response judge |
-| `Interactivity & Shortcuts`           | Turn on interactivity                                                                                              | Receive `block_actions` when a user clicks a task `Cancel` button                                                |
+|---------------------------------------|--------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| `Agents & AI Apps`                    | Turn on `Agent or Assistant`                                                                                       | Enables `assistant.search.context` (see platform requirement above)                                             |
+| `OAuth & Permissions`                 | Add the Bot Token Scopes listed under "Bot OAuth scopes" below                                                     | Grants the permissions each capability below needs                                                              |
+| `Event Subscriptions`                 | Turn on events and add the bot events `app_mention`, `file_shared`, and `message.channels`                        | See "Required Event Subscriptions" above                                                                        |
+| `Interactivity & Shortcuts`           | Turn on interactivity                                                                                              | Receive `block_actions` when a user clicks a task's `Cancel` button                                              |
 | `Install App` / `OAuth & Permissions` | Install or reinstall the app after any scope change                                                                | Slack does not apply updated scopes until reinstall                                                              |
 | Slack workspace                       | Invite the app to every public channel where it should respond, including auto-response channels                   | The app must be present in the conversation to receive mentions, receive channel posts, and post replies         |
 
@@ -101,7 +98,7 @@ Required Slack app settings for HTTP mode:
 - Do not create or set `SLACK_APP_TOKEN`
 - Do not enable Socket Mode
 
-Required Bot OAuth scopes:
+Bot OAuth scopes:
 
 - `app_mentions:read`: receive `app_mention` events
 - `chat:write`: post progress and final replies into the originating thread, post/update the task control message, and post authorization deny notices as ephemeral messages
@@ -116,57 +113,29 @@ Required Bot OAuth scopes:
 - `canvases:write` (only when `[memory.slack]` is configured): append and prune memory entries in the
   shared Canvas via `canvases.edit`
 
-The memory Canvas must also be shared explicitly, because canvases default to "only invited people
-can access". In the canvas share settings, grant Reili (the bot) both **read and write (can edit)**
-access, and grant access to the team members who need to read or curate the stored memories.
-Equivalently, share the canvas to a channel the bot is a member of with edit access, or call
-`canvases.access.set`. Without bot access, `files.info` returns `not_visible`; memory recall and the
-`save_memory` / `save_shared_memory` tools then soft-fail and the task continues without memory.
-
 Required App-Level Token scope for Socket Mode:
 
 - `connections:write`: call `apps.connections.open` to obtain the temporary WebSocket URL
 
-Not in scope for Slack:
+The memory Canvas must also be shared explicitly, because canvases default to "only invited people
+can access". In the canvas share settings, grant Reili (the bot) both **read and write (can edit)**
+access, and grant access to the team members who need to read or curate the stored memories.
 
-- Direct messages (`im`)
-- Group direct messages (`mpim`)
-- Their related event subscriptions and history scopes
+Slack restrictions:
 
-Slack API methods currently used by the runtime:
-
-- `apps.connections.open`: obtains a temporary WebSocket URL when Socket Mode is enabled
-- `assistant.search.context`: searches Slack public-channel message history using the triggering
-  event's `action_token`, backing the `search_slack_messages` tool
-- `auth.test`: resolves the bot user ID at startup
-- `files.info`: resolves shared file content and, when `[memory.slack]` is configured, the memory
-  Canvas's private download URL
-- `chat.getPermalink`: resolves the originating thread permalink recorded as a memory's Source
-  (only when `[memory.slack]` is configured)
-- `canvases.sections.lookup`, `canvases.edit`: locate the channel section and append/prune memory
-  entries in the shared Canvas (only when `[memory.slack]` is configured)
-- `conversations.info`: resolves originating public channel metadata to evaluate channel name patterns for mentions and auto-responses, and (when `[memory.slack]` is configured) the channel display name used to label a newly created memory canvas section; private-channel lookup fails without `groups:read` and is denied before enqueue
-- `conversations.replies`: loads thread context when the triggering message is a thread reply, including auto-response judge context
-- `chat.postMessage`: posts queue failures, the final task summary, and the task control message
-- `chat.postEphemeral`: posts a private deny notice to the mentioning user when mention authorization rejects a request
-- `chat.update`: updates the task control message as tasks move through running/cancelled/completed/failed states
-- `usergroups.users.list`: resolves configured user group membership for mention authorization
-- `reactions.add`: adds an `:eyes:` reaction to the triggering message after enqueue succeeds
-- `chat.startStream`, `chat.appendStream`, `chat.stopStream`: posts incremental task progress in the same thread
-
-Slack boundary:
-
-- Private channels are not supported; `app_mention` and `message.channels` events from private channels are denied before enqueue
-- `groups:read` is intentionally not requested; private channel metadata is not read
-- Handles only `app_mention` events from channels matching a `mention = true` entry in `[[channel.slack.channels]]`, combined with the user ID, user group, or bot actor authorization settings
-- Evaluates `message.channels` events only for channels matching an `auto_response = true` entry; everything else is discarded silently, and posts the judge declines produce no Slack-visible action
+- Public channels only: direct messages, group direct messages, and private channels — including
+  their related event subscriptions and history scopes — are entirely out of scope; `groups:read`
+  is intentionally not requested, so private channel metadata is never read, and `app_mention` /
+  `message.channels` events from private channels are denied before enqueue
+- Handles only `app_mention` events from channels matching a `mention = true` entry in
+  `[[channel.slack.channels]]`, combined with the user ID, user group, or bot actor authorization settings
+- Evaluates `message.channels` events only for channels matching an `auto_response = true` entry;
+  everything else is discarded silently, and judge declines produce no Slack-visible action
 - Reads only the thread where the request was made, and only when additional thread context is needed
 - Searches only Slack public-channel messages permitted by the current app install, bot token scope, and `action_token` context
 - Loads channel memory only from the configured shared Slack Canvas (`[memory.slack]`), reading only
   the current channel's section; memory is disabled entirely when no Canvas is configured
 - Posts only into the originating thread
-- Intended for public channel conversations where the app is present; private channels, DM, and group DM usage are out of scope
-- Does not search private channels or DMs with the current Bot Token configuration
 - Does not delete messages, edit arbitrary messages, read files, manage channels, or administer the workspace
 
 ## Datadog Permissions and API Usage
@@ -214,10 +183,6 @@ In practice, the API key authenticates the Datadog organization, while the appli
 determines which MCP-backed read operations Reili can perform. Create the application key from a
 dedicated Datadog service account and grant that account only the minimum read permissions above.
 
-Reili always requests Datadog MCP with `toolsets=core,security,dashboards,synthetics`
-internally. This does not add a new runtime config setting. Datadog still decides which tools are
-returned based on your plan, org configuration, and application key permissions.
-
 Datadog capabilities currently used by the runtime:
 
 - Connect to the remote Datadog MCP Server over Streamable HTTP
@@ -231,19 +196,22 @@ Datadog MCP endpoint currently used by the runtime:
 
 - `https://mcp.<DATADOG_SITE>/api/unstable/mcp-server/mcp?toolsets=core,security,dashboards,synthetics`
 
+This `toolsets` value is fixed internally and is not a runtime config setting. Datadog still
+decides which tools it actually returns for this request, based on your plan, org configuration,
+and application key permissions.
+
 Recommended Datadog access policy:
 
-- Create a dedicated Datadog service account for Reili
-- Issue the API key and application key for that service account rather than reusing human operator credentials
+- Create a dedicated Datadog service account for Reili, and issue its API key and application key
+  rather than reusing human operator credentials
 - Prefer restricted application keys when your Datadog plan supports them
 - Allow only the minimum Datadog product access Reili needs across the allowlisted `core`,
   `security`, `dashboards`, and `synthetics` read tools
 - Reili exposes only the intersection of its allowlisted Datadog tools and the tools Datadog
-  actually returns for your credentials
-- If Datadog omits allowlisted tools, Reili logs a warning and continues with the remaining
-  available Datadog tools
+  actually returns for your credentials; if Datadog omits an allowlisted tool, Reili logs a warning
+  and continues with the remaining available tools
 
-Datadog boundary:
+Datadog restrictions:
 
 - No Datadog write endpoints are called by this runtime
 - From the Datadog `security`, `dashboards`, and `synthetics` toolsets, Reili allowlists only
@@ -283,30 +251,24 @@ GitHub capabilities currently used by the runtime:
 - Inspect GitHub Actions workflows, runs, jobs, and job logs
 - Read Dependabot alert summaries and alert details
 
-GitHub MCP boundary:
+GitHub restrictions:
 
 - The GitHub sub-agent only receives this allowlisted subset of MCP tools:
   `search_code`, `search_repositories`, `search_issues`, `search_pull_requests`,
   `get_file_contents`, `pull_request_read`, `actions_get`, `actions_list`, `get_job_logs`,
   `get_dependabot_alert`, and `list_dependabot_alerts`
+- Raw MCP write tools are not exposed to the GitHub agent in this runtime: no commenting, merging,
+  labeling, reviewing, or workflow dispatch is performed
 - It does not mint or refresh GitHub MCP tokens; any short-lived token rotation must happen outside the runtime
-- Reili still enforces `GITHUB_SEARCH_SCOPE_ORG` before allowlisted GitHub MCP tool calls are made
-- Raw MCP write tools are not exposed to the GitHub agent in this runtime
-
-GitHub boundary in the current runtime:
-
-- No GitHub write permissions are required today
-- No commenting, merging, labeling, reviewing, or workflow dispatch is performed
-- All GitHub search queries must stay inside `GITHUB_SEARCH_SCOPE_ORG`
-- Repository content, pull request, Actions, and Dependabot reads are rejected when the owner is
-  outside `GITHUB_SEARCH_SCOPE_ORG`
+- All GitHub search and reads are scoped to `GITHUB_SEARCH_SCOPE_ORG`: Reili enforces it before every
+  allowlisted call, so queries must stay inside it and repository content, pull request, Actions,
+  and Dependabot reads are rejected when the owner is outside it
 
 ## esa Permissions and Scope
 
 Reili can optionally search an esa team's posts as an internal documentation source.
-This integration is disabled unless `[connector.esa]` is present in `reili.toml`.
-When the section is omitted, Reili does not read `ESA_ACCESS_TOKEN` and does not register
-`esa_agent` or `search_posts`.
+This integration is disabled unless `[connector.esa]` is present in `reili.toml`. When the section
+is omitted, Reili does not read `ESA_ACCESS_TOKEN` and does not register `esa_agent` or `search_posts`.
 
 Required esa credential when configured:
 
@@ -328,7 +290,7 @@ esa capabilities currently used by the runtime:
 - Return post metadata, links, tags, authors, pagination metadata, and Markdown body content from
   the search response
 
-esa boundary:
+esa restrictions:
 
 - No esa write endpoints are called by this runtime
 - Reili does not create, edit, delete, star, watch, archive, share, or comment on esa posts
@@ -352,11 +314,11 @@ Runtime authentication model:
 
 Required API token scope for the service account:
 
-The Rovo MCP server requires a *scoped* API token (a classic, unscoped API token does not carry
-the scope information MCP needs, even though the underlying Jira permissions would still apply).
+The Rovo MCP server requires a *scoped* API token — a classic, unscoped API token does not carry
+the scope information MCP needs, even though the underlying Jira permissions would still apply.
 When an org admin creates the token for the service account
 (`https://id.atlassian.com/manage-profile/security/api-tokens` → **Create API token with scopes**,
-or the equivalent flow in Atlassian Administration for a managed service account):
+or the equivalent flow in Atlassian Administration for a managed service account), use:
 
 - App: **Jira**
 - Scope catalog: **Classic scopes** (Atlassian recommends classic scopes over granular scopes
@@ -364,23 +326,25 @@ or the equivalent flow in Atlassian Administration for a managed service account
 - Scopes: `read:jira-work`, `read:jira-user`, `read:account`, `read:me`
 
 `read:jira-work` covers issue read, JQL search, and comments — everything the runtime's allowlisted
-tools below actually call. `read:jira-user`, `read:account`, and `read:me` are additionally required
-by the Rovo MCP server itself (identity/account resolution during the connection handshake) even
-though Reili's tool allowlist never calls a user-lookup tool — omitting any of these four causes the
-Rovo MCP connection to fail. Do not grant `write:jira-work` or any Confluence/Bitbucket/Jira Service
-Management/Compass scope.
+tools actually call. The other three scopes are required by the Rovo MCP server itself for
+identity/account resolution during the connection handshake, even though no allowlisted tool
+performs a user lookup; omitting any of these four scopes causes the Rovo MCP connection to fail.
+Do not grant `write:jira-work` or any Confluence/Bitbucket/Jira Service Management/Compass scope —
+even if the service account token is ever granted broader access by mistake, Reili itself never
+requests a write tool or a non-Jira tool.
 
-This mirrors the runtime's own allowlist below: even if the service account token is ever granted
-broader access by mistake, Reili itself never requests a write tool or a non-Jira tool.
+Required Jira project access for the service account:
+
+The API token scope only controls what the Rovo MCP server may request; it does not grant issue
+visibility by itself. A Jira project admin must also grant the service account the `Browse
+Projects` permission in each project's permission scheme, or reads for that project return empty
+results.
 
 Required `reili.toml` fields when configured:
 
 - `connector.jira.site`: Atlassian Cloud site hostname, e.g. `acme.atlassian.net`
 - `connector.jira.service_account_api_token_env`: optional env var name; defaults to
   `JIRA_SERVICE_ACCOUNT_API_TOKEN`
-
-Which JIRA projects Reili can search and reference is governed by the service account token's own
-permissions on the Atlassian side. Reili does not maintain a separate project allow-list.
 
 JIRA capabilities currently used by the runtime:
 
@@ -389,26 +353,18 @@ JIRA capabilities currently used by the runtime:
 - List remote links (e.g. Confluence pages, external URLs) attached to an issue
 - List available workflow transitions and status options for an issue
 
-JIRA MCP boundary:
+JIRA restrictions:
 
 - The JIRA sub-agent only receives this allowlisted subset of MCP tools:
   `searchJiraIssuesUsingJql`, `getJiraIssue`, `getJiraIssueRemoteIssueLinks`, and
   `getTransitionsForJiraIssue`
-- Which JIRA projects are reachable is governed by the service account token's own Atlassian
-  permissions; Reili does not maintain a separate project allow-list
-- The configured `site` is stamped onto every call as the Atlassian `cloudId` argument, so a
-  sub-agent cannot target a different Atlassian site than the one configured
 - Raw MCP write tools (`createJiraIssue`, `editJiraIssue`, `transitionJiraIssue`,
   `addCommentToJiraIssue`, `addWorklogToJiraIssue`) are not exposed to the JIRA agent in this
-  runtime
+  runtime: no issue creation, editing, commenting, worklog changes, or workflow transitions are performed
+- The configured `site` is stamped onto every call as the Atlassian `cloudId` argument, so a
+  sub-agent cannot target a different Atlassian site than the one configured
 
-JIRA boundary in the current runtime:
-
-- No JIRA write permissions are required today
-- No issue creation, editing, commenting, worklog changes, or workflow transitions are performed
-- Project-level access is bounded by the service account token's Atlassian permissions
-
-## LLM Boundary
+## LLM Data Exposure
 
 The configured LLM provider receives the Slack request, any loaded thread context, and the evidence
 returned by the enabled tools so it can synthesize a report. When `search_web` is used, the query
