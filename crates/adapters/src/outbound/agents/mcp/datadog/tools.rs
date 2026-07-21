@@ -22,8 +22,7 @@ const DATADOG_SUB_AGENT_TOOLS: &[&str] = &[
     "get_datadog_dashboard",
     "get_synthetics_tests",
     "search_datadog_security_signals",
-    "security_findings_schema",
-    "search_security_findings",
+    "search_datadog_security_findings",
     "analyze_security_findings",
 ];
 /// One-line catalog summaries for the tools a spawned sub-agent can request, keyed by tool name.
