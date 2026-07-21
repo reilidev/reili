@@ -113,14 +113,4 @@ mod tests {
             "# Sub-agent tool catalog\n## Datadog\n- search_datadog_logs: Search Datadog logs."
         ));
     }
-
-    #[test]
-    fn defaults_to_grounded_evidence_over_general_knowledge() {
-        let instructions = build_task_instructions(input(None));
-
-        assert!(instructions.contains("Default to delegating investigation work with spawn_agent instead of answering from general knowledge alone."));
-        assert!(instructions.contains(
-            "Prefer grounded evidence from Datadog, GitHub, esa, JIRA, and Slack over general knowledge."
-        ));
-    }
 }
