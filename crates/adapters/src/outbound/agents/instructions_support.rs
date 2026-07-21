@@ -11,25 +11,18 @@ If the delegated task prompt includes Memory Context, it has two groups: shared 
 /// the lead can decide what to persist with `save_memory`.
 pub(crate) fn sub_agent_reusable_notes_instruction() -> &'static str {
     r#"# Reusable facts
-When your investigation newly learns or independently confirms a durable fact worth reusing later (an owner, mapping, runbook, dashboard, log source, code path, domain rule, or operational rule), state it clearly in your findings with its evidence source and scope. Do not attempt to save memory yourself; the lead agent persists memory. Do not restate facts that came from Memory Context.
-
-Only report durable knowledge, not a timeline of this investigation. Do not report ephemeral observations such as time-bounded findings ("last 5 minutes", "currently"), single-window negative evidence (no errors/alerts/deploys), or raw metric/log snapshots, counts, timestamps, or IDs. Never include secrets or sensitive data."#
+When your investigation newly learns or independently confirms a durable fact worth reusing later (an owner, mapping, runbook, dashboard, log source, code path, domain rule, or operational rule), state it clearly in your findings with its evidence source and scope.
+Never include secrets or sensitive data."#
 }
 
 pub(crate) fn reusable_notes_instruction() -> &'static str {
     r#"# Memory
+Persist a reusable fact whenever the investigation newly learns or independently confirms something that would help a future agent complete a similar task faster by shortening information gathering or providing a useful investigation shortcut.
+Two tools are available:
+* save_memory: for a fact specific to THIS channel's systems, ownership, or context. Recalled only in this channel.
+* save_shared_memory: for a fact that holds across ALL channels this assistant serves, such as organization-wide conventions, shared tooling, or cross-team policies. Recalled in every channel.
 
-Persist a durable, reusable fact whenever the investigation newly learns or independently confirms one worth reusing in later investigations. Two tools are available:
-- `save_memory`: for a fact specific to THIS channel's systems, ownership, or context. Recalled only in this channel.
-- `save_shared_memory`: for a fact that holds across ALL channels this assistant serves, such as organization-wide conventions, shared tooling, or cross-team policies. Recalled in every channel.
-Default to `save_memory`; use `save_shared_memory` only when the fact is genuinely channel-independent. Call the chosen tool once per fact with `fact`, `evidence`, and `scope`; the channel and source thread are attached automatically. If there are no such facts, do not call either tool.
-
-Memory should describe durable knowledge, not a timeline of this investigation.
-Before saving a memory, apply all of these checks:
-- Would this still help a future investigation if read weeks later?
-- Is it a durable mapping, owner, runbook, dashboard, log source, code path, domain rule, operational rule, or repeatable investigation entry point?
-- Is the evidence source clear enough that a future agent can verify it?
-- Was this fact newly learned or independently confirmed during this investigation, rather than copied from Memory Context?
+Call the appropriate tool separately for each fact, with fact, evidence, and scope.
 
 Useful categories of facts to remember include:
 
@@ -48,32 +41,30 @@ Product and Domain Facts:
 Engineering Practice Facts:
 - Team conventions for testing, reviewing, releasing, documenting, or triaging work.
 - Preferred investigation workflows.
-- Expected evidence before recommending an action.
 - PR, ticket, or escalation practices.
-- Known areas where humans prefer extra caution or manual review.
 
 Operations Facts:
 - Deployment, release, rollback, and feature flag processes.
 - Operational constraints for production systems.
-- Monitoring, alerting, dashboards, SLOs, SLIs, and important metrics.
-- Runbook guidance for common incidents or failure modes.
+- Where to find runbook guidance for common incidents or failure modes.
 - Known operational risks, recurring failure patterns, and recommended investigation entry points.
 - Ownership, escalation paths, approval requirements, and on-call responsibilities.
-- Data retention, logging, audit, privacy, or security handling rules.
+- Where to find data retention, logging, audit, privacy, or security handling rules.
 
 Do not save ephemeral investigation observations, including:
 - Time-bounded findings such as "last 5 minutes", "today", "currently", "during this run", or one-off incident state.
 - Negative evidence from a single time window, such as no errors, no alerts, no deploys, or no matching logs.
 - Raw metric/log snapshots, counts, timestamps, trace IDs, request IDs, or temporary thresholds unless they define durable instrumentation or runbook guidance.
 - Hypotheses, likely causes, partial conclusions, or action items that were not confirmed as durable team knowledge.
+- Information that can be readily recovered by reading the relevant Slack thread.
 
 If a log or metric check produces reusable guidance, save the durable source or investigation entry point, not the observed result from the current time window.
 
 For example, save:
-"process_admin investigations should check backend SessionService/Session logs and frontend middleware logs as initial log sources."
+"service-a investigations should check backend SessionService/Session logs and frontend middleware logs as initial log sources."
 
 Do not save:
-"process_admin had no errors or alerts in the last 5 minutes."
+"service-a had no errors or alerts in the last 5 minutes."
 
 Each call takes three fields:
 - fact: A concise, affirmative statement of the verified fact, phrased as "X is Y." Record only what is true.
