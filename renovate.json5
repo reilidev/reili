@@ -5,10 +5,4 @@
   addLabels: ["dependencies", "renovate"],
   branchPrefix: "renovate/",
   prConcurrentLimit: 10,
-  packageRules: [
-    {
-      matchManagers: ["cargo"],
-      groupName: "rust-deps",
-    },
-  ],
 }
