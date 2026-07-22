@@ -340,7 +340,9 @@ mod tests {
         assert!(prompt.contains("- Datadog Site: datadoghq.com"));
         assert!(prompt.contains("- esa Team: docs"));
         assert!(prompt.contains("- esa Team: docs\n\n# Thread Context"));
-        assert!(prompt.contains("# Memory Context\nNo reusable memories found.\n\n# Message that triggered this task"));
+        assert!(prompt.contains(
+            "# Memory Context\nNo reusable memories found.\n\n# Message that triggered this task"
+        ));
     }
 
     fn fixed_now() -> DateTime<Utc> {
