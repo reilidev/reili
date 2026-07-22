@@ -70,11 +70,7 @@ const DATADOG_SUB_AGENT_TOOL_SUMMARIES: &[(&str, &str)] = &[
         "Search Datadog security signals over a time range.",
     ),
     (
-        "security_findings_schema",
-        "Get the schema used to query Datadog security findings.",
-    ),
-    (
-        "search_security_findings",
+        "search_datadog_security_findings",
         "Search Datadog security findings.",
     ),
     (
@@ -381,8 +377,7 @@ mod tests {
             tool("get_datadog_dashboard"),
             tool("get_synthetics_tests"),
             tool("search_datadog_security_signals"),
-            tool("security_findings_schema"),
-            tool("search_security_findings"),
+            tool("search_datadog_security_findings"),
             tool("analyze_security_findings"),
         ];
 
@@ -405,8 +400,7 @@ mod tests {
                 "get_datadog_dashboard",
                 "get_synthetics_tests",
                 "search_datadog_security_signals",
-                "security_findings_schema",
-                "search_security_findings",
+                "search_datadog_security_findings",
                 "analyze_security_findings",
             ]
         );
@@ -448,7 +442,7 @@ mod tests {
         let tools = vec![
             tool("search_datadog_logs"),
             tool("search_datadog_security_signals"),
-            tool("security_findings_schema"),
+            tool("search_datadog_security_findings"),
         ];
 
         let filtered = filter_tools(&tools, DATADOG_SUB_AGENT_TOOLS, "sub_agent");
@@ -462,7 +456,7 @@ mod tests {
             vec![
                 "search_datadog_logs",
                 "search_datadog_security_signals",
-                "security_findings_schema",
+                "search_datadog_security_findings",
             ]
         );
     }
