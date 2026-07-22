@@ -32,7 +32,7 @@ Current context:
 # Memory Context
 {memory_context}
 
-# User message
+# Message that triggered this task
 posted_by: {trigger_message_user}
 
 {trigger_message_text}",
