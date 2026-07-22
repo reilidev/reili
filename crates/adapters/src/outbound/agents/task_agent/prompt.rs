@@ -211,7 +211,7 @@ mod tests {
         assert!(prompt.contains("U456"));
         assert!(prompt.contains("First message"));
         assert!(prompt.contains("follow-up from bot"));
-        assert!(prompt.contains("# User message\nposted_by: U001"));
+        assert!(prompt.contains("# Message that triggered this task\nposted_by: U001"));
     }
 
     #[test]
@@ -340,7 +340,7 @@ mod tests {
         assert!(prompt.contains("- Datadog Site: datadoghq.com"));
         assert!(prompt.contains("- esa Team: docs"));
         assert!(prompt.contains("- esa Team: docs\n\n# Thread Context"));
-        assert!(prompt.contains("# Memory Context\nNo reusable memories found.\n\n# User message"));
+        assert!(prompt.contains("# Memory Context\nNo reusable memories found.\n\n# Message that triggered this task"));
     }
 
     fn fixed_now() -> DateTime<Utc> {
