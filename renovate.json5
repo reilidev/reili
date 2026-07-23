@@ -1,6 +1,7 @@
 {
   $schema: "https://docs.renovatebot.com/renovate-schema.json",
   extends: ["config:best-practices"],
+  ignorePresets: [":preserveSemverRanges"],
   dependencyDashboard: false,
   addLabels: ["dependencies", "renovate"],
   branchPrefix: "renovate/",

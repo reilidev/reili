@@ -16,7 +16,9 @@ use reili_adapters::outbound::auto_response_judge::{
     create_bedrock_auto_response_judge_port, create_openai_auto_response_judge_port,
     create_vertex_ai_auto_response_judge_port,
 };
-use reili_adapters::outbound::esa::{EsaClient, EsaClientConfig, EsaPostSearchPort};
+use reili_adapters::outbound::esa::{
+    EsaClient, EsaClientConfig, EsaPostGetPort, EsaPostSearchPort,
+};
 use reili_adapters::outbound::github::GitHubMcpConfig;
 use reili_adapters::outbound::jira::JiraMcpConfig;
 use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAdapterConfig};
@@ -438,9 +440,18 @@ fn build_connector_set(input: BuildConnectorSetInput) -> Result<ConnectorSet, Po
 }
 
 fn build_esa_connector(config: EsaConfig) -> Result<EsaConnector, PortError> {
-    let post_search_port = build_esa_post_search_port(&config)?;
+    let client = Arc::new(EsaClient::new(EsaClientConfig {
+        access_token: config.access_token.clone(),
+        team_name: config.team_name.clone(),
+    })?);
+    let post_search_port = Arc::clone(&client) as Arc<dyn EsaPostSearchPort>;
+    let post_get_port = client as Arc<dyn EsaPostGetPort>;
 
-    Ok(EsaConnector::new(config.team_name, post_search_port))
+    Ok(EsaConnector::new(
+        config.team_name,
+        post_search_port,
+        post_get_port,
+    ))
 }
 
 fn build_jira_connector(config: JiraConfig) -> JiraConnector {
@@ -448,15 +459,6 @@ fn build_jira_connector(config: JiraConfig) -> JiraConnector {
         site: config.site,
         service_account_api_token: config.service_account_api_token,
     })
-}
-
-fn build_esa_post_search_port(config: &EsaConfig) -> Result<Arc<dyn EsaPostSearchPort>, PortError> {
-    let client = EsaClient::new(EsaClientConfig {
-        access_token: config.access_token.clone(),
-        team_name: config.team_name.clone(),
-    })?;
-
-    Ok(Arc::new(client))
 }
 
 async fn create_task_runner(

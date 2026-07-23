@@ -6,8 +6,8 @@ use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    EsaPost, EsaPostSearchInput, EsaPostSearchOrder, EsaPostSearchPort, EsaPostSearchResult,
-    EsaPostSearchSort, EsaUser,
+    EsaPost, EsaPostGetInput, EsaPostGetPort, EsaPostSearchInput, EsaPostSearchOrder,
+    EsaPostSearchPort, EsaPostSearchResult, EsaPostSearchSort, EsaUser,
 };
 use crate::json_utils::truncate_for_error;
 
@@ -150,12 +150,58 @@ impl EsaPostSearchPort for EsaClient {
         })?;
 
         if !status.is_success() {
-            return Err(map_esa_error_response(status, &headers, &bytes));
+            return Err(map_esa_error_response(
+                "search_posts",
+                status,
+                &headers,
+                &bytes,
+            ));
         }
 
         let parsed: SearchPostsResponseDto = serde_json::from_slice(&bytes).map_err(|error| {
             PortError::invalid_response(format!(
                 "Failed to parse esa search_posts response JSON: {error}"
+            ))
+        })?;
+
+        Ok(parsed.into())
+    }
+}
+
+#[async_trait]
+impl EsaPostGetPort for EsaClient {
+    async fn get_post(&self, input: EsaPostGetInput) -> Result<EsaPost, PortError> {
+        let url = format!(
+            "{}/v1/teams/{}/posts/{}",
+            self.base_url, self.team_name, input.number
+        );
+        let response = self
+            .client
+            .get(&url)
+            .bearer_auth(self.access_token.expose())
+            .send()
+            .await
+            .map_err(|error| {
+                PortError::connection_failed(format!(
+                    "esa API request failed: endpoint=get_post error={error}"
+                ))
+            })?;
+
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = response.bytes().await.map_err(|error| {
+            PortError::invalid_response(format!(
+                "Failed to read esa API response body: endpoint=get_post error={error}"
+            ))
+        })?;
+
+        if !status.is_success() {
+            return Err(map_esa_error_response("get_post", status, &headers, &bytes));
+        }
+
+        let parsed: EsaPostDto = serde_json::from_slice(&bytes).map_err(|error| {
+            PortError::invalid_response(format!(
+                "Failed to parse esa get_post response JSON: {error}"
             ))
         })?;
 
@@ -206,7 +252,12 @@ impl From<EsaUserDto> for EsaUser {
     }
 }
 
-fn map_esa_error_response(status: StatusCode, headers: &HeaderMap, bytes: &[u8]) -> PortError {
+fn map_esa_error_response(
+    endpoint: &str,
+    status: StatusCode,
+    headers: &HeaderMap,
+    bytes: &[u8],
+) -> PortError {
     let api_error = serde_json::from_slice::<EsaErrorResponseDto>(bytes).ok();
     let error_code = api_error
         .as_ref()
@@ -216,7 +267,7 @@ fn map_esa_error_response(status: StatusCode, headers: &HeaderMap, bytes: &[u8])
         .as_ref()
         .and_then(|error| trim_optional_string(error.message.clone()));
     let mut message = format!(
-        "esa API request failed: endpoint=search_posts status={} error={error_code}",
+        "esa API request failed: endpoint={endpoint} status={} error={error_code}",
         status.as_u16()
     );
 
@@ -272,8 +323,8 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::{
-        EsaClient, EsaClientConfig, EsaPostSearchInput, EsaPostSearchOrder, EsaPostSearchPort,
-        EsaPostSearchSort,
+        EsaClient, EsaClientConfig, EsaPostGetInput, EsaPostGetPort, EsaPostSearchInput,
+        EsaPostSearchOrder, EsaPostSearchPort, EsaPostSearchSort,
     };
 
     #[tokio::test]
@@ -390,6 +441,78 @@ mod tests {
         assert!(error.message.contains("rate_limit_exceeded"));
         assert!(error.message.contains("retryAfter=30"));
         assert!(error.message.contains("rateLimitRemaining=0"));
+    }
+
+    #[tokio::test]
+    async fn gets_single_post_by_number_with_bearer_token() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/teams/docs/posts/102"))
+            .and(header("Authorization", "Bearer esa-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "number": 102,
+                "name": "Runbook",
+                "wip": false,
+                "body_md": "# Runbook\nCheck dashboards.",
+                "url": "https://docs.esa.io/posts/102",
+                "category": "SRE",
+                "tags": ["alert"],
+                "created_at": "2026-01-01T00:00:00+09:00",
+                "updated_at": "2026-01-02T00:00:00+09:00",
+                "created_by": {
+                    "name": "Jane",
+                    "screen_name": "jane"
+                },
+                "updated_by": {
+                    "screen_name": "john"
+                },
+                "comments_count": 1,
+                "watchers_count": 5
+            })))
+            .mount(&server)
+            .await;
+
+        let client = create_client(&server.uri());
+        let post = client
+            .get_post(EsaPostGetInput { number: 102 })
+            .await
+            .expect("get post");
+
+        assert_eq!(post.number, 102);
+        assert_eq!(post.name, "Runbook");
+        assert_eq!(post.body_md, "# Runbook\nCheck dashboards.");
+        assert_eq!(post.url.as_deref(), Some("https://docs.esa.io/posts/102"));
+        assert_eq!(
+            post.created_by
+                .as_ref()
+                .and_then(|user| user.screen_name.as_deref()),
+            Some("jane")
+        );
+    }
+
+    #[tokio::test]
+    async fn maps_not_found_error_when_post_does_not_exist() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/v1/teams/docs/posts/999"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+                "error": "not_found",
+                "message": "Not found"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = create_client(&server.uri());
+        let error = client
+            .get_post(EsaPostGetInput { number: 999 })
+            .await
+            .expect_err("missing post should fail");
+
+        assert_eq!(error.kind, PortErrorKind::HttpStatus { status_code: 404 });
+        assert!(error.message.contains("endpoint=get_post"));
+        assert!(error.message.contains("not_found"));
     }
 
     #[test]

@@ -10,6 +10,7 @@ use crate::outbound::esa::{
     EsaPostSearchInput, EsaPostSearchOrder, EsaPostSearchPort, EsaPostSearchSort,
 };
 
+use super::support::esa_soft_error::to_esa_tool_soft_error;
 use super::support::json::to_json_string;
 
 #[derive(Clone)]
@@ -37,18 +38,6 @@ pub struct SearchPostsArgs {
     pub sort: EsaPostSearchSort,
     #[serde(default = "default_order")]
     pub order: EsaPostSearchOrder,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EsaToolSoftError {
-    error_type: String,
-    message: String,
-    retryable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    status_code: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    service_error_code: Option<String>,
 }
 
 fn default_page() -> u32 {
@@ -132,27 +121,6 @@ impl Tool for SearchPostsTool {
             Ok(result) => to_json_string(&result),
             Err(error) => to_json_string(&to_esa_tool_soft_error(&error)),
         }
-    }
-}
-
-fn to_esa_tool_soft_error(error: &PortError) -> EsaToolSoftError {
-    let status_code = error.status_code();
-    let (error_type, retryable) = match status_code {
-        Some(401 | 403) => ("authorization_error", false),
-        Some(429) => ("rate_limited", true),
-        Some(status) if status >= 500 => ("upstream_error", true),
-        Some(status) if status >= 400 => ("request_error", false),
-        _ if error.is_invalid_input() => ("invalid_input", false),
-        _ if error.is_connection_failed() => ("temporary_error", true),
-        _ => ("tool_error", false),
-    };
-
-    EsaToolSoftError {
-        error_type: error_type.to_string(),
-        message: error.message.clone(),
-        retryable,
-        status_code,
-        service_error_code: error.service_error_code().map(ToString::to_string),
     }
 }
 

@@ -8,21 +8,27 @@ use crate::outbound::agents::connector::{
     ConnectorFactory, ConnectorPrepareError, ConnectorPromptFact, PreparedConnector,
     ToolCatalogEntry, ToolCatalogGroup,
 };
-use crate::outbound::agents::tools::SearchPostsTool;
-use crate::outbound::esa::EsaPostSearchPort;
+use crate::outbound::agents::tools::{GetPostTool, SearchPostsTool};
+use crate::outbound::esa::{EsaPostGetPort, EsaPostSearchPort};
 
-/// Connector for the esa knowledge base, exposed through the domain port + hand-written tool.
+/// Connector for the esa knowledge base, exposed through the domain ports + hand-written tools.
 pub struct EsaConnector {
     team_name: String,
     post_search_port: Arc<dyn EsaPostSearchPort>,
+    post_get_port: Arc<dyn EsaPostGetPort>,
 }
 
 impl EsaConnector {
     #[must_use]
-    pub fn new(team_name: String, post_search_port: Arc<dyn EsaPostSearchPort>) -> Self {
+    pub fn new(
+        team_name: String,
+        post_search_port: Arc<dyn EsaPostSearchPort>,
+        post_get_port: Arc<dyn EsaPostGetPort>,
+    ) -> Self {
         Self {
             team_name,
             post_search_port,
+            post_get_port,
         }
     }
 }
@@ -33,6 +39,7 @@ impl ConnectorFactory for EsaConnector {
         Ok(Arc::new(PreparedEsaConnector {
             team_name: self.team_name.clone(),
             post_search_port: Arc::clone(&self.post_search_port),
+            post_get_port: Arc::clone(&self.post_get_port),
         }))
     }
 }
@@ -40,20 +47,30 @@ impl ConnectorFactory for EsaConnector {
 struct PreparedEsaConnector {
     team_name: String,
     post_search_port: Arc<dyn EsaPostSearchPort>,
+    post_get_port: Arc<dyn EsaPostGetPort>,
 }
 
 impl PreparedConnector for PreparedEsaConnector {
     fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        vec![Box::new(SearchPostsTool::new(Arc::clone(&self.post_search_port))) as Box<dyn ToolDyn>]
+        vec![
+            Box::new(SearchPostsTool::new(Arc::clone(&self.post_search_port))) as Box<dyn ToolDyn>,
+            Box::new(GetPostTool::new(Arc::clone(&self.post_get_port))) as Box<dyn ToolDyn>,
+        ]
     }
 
     fn spawn_tool_catalog(&self) -> ToolCatalogGroup {
         ToolCatalogGroup {
             source: "esa".to_string(),
-            entries: vec![ToolCatalogEntry::new(
-                SearchPostsTool::NAME,
-                "Search esa internal documentation posts using esa query syntax.",
-            )],
+            entries: vec![
+                ToolCatalogEntry::new(
+                    SearchPostsTool::NAME,
+                    "Search esa internal documentation posts using esa query syntax.",
+                ),
+                ToolCatalogEntry::new(
+                    GetPostTool::NAME,
+                    "Fetch a single esa post by its post number.",
+                ),
+            ],
         }
     }
 
@@ -81,8 +98,10 @@ fn esa_spawn_guardrails(team_name: &str) -> String {
 Prefer precise queries based on service names, alert names, incident
 identifiers, repository names, categories, tags, and other domain keywords. Do
 not narrow your search to operational or investigation terms when the request
-is asking for broader internal knowledge. Include clickable esa URLs for
-referenced posts whenever available.",
+is asking for broader internal knowledge. Use `get_post` to fetch the full
+content of a specific post when you already know its post number, such as one
+found in search results or referenced by an esa URL. Include clickable esa
+URLs for referenced posts whenever available.",
         team_name = team_name,
     )
 }
@@ -96,6 +115,13 @@ mod tests {
         let guardrails = esa_spawn_guardrails("docs");
 
         assert!(guardrails.contains("esa team `docs`"));
+    }
+
+    #[test]
+    fn guardrails_mention_get_post_for_fetching_by_number() {
+        let guardrails = esa_spawn_guardrails("docs");
+
+        assert!(guardrails.contains("`get_post`"));
     }
 
     #[test]

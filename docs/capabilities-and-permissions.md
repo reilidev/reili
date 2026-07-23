@@ -266,9 +266,10 @@ GitHub restrictions:
 
 ## esa Permissions and Scope
 
-Reili can optionally search an esa team's posts as an internal documentation source.
+Reili can optionally search and read an esa team's posts as an internal documentation source.
 This integration is disabled unless `[connector.esa]` is present in `reili.toml`. When the section
-is omitted, Reili does not read `ESA_ACCESS_TOKEN` and does not register `esa_agent` or `search_posts`.
+is omitted, Reili does not read `ESA_ACCESS_TOKEN` and does not register `esa_agent`,
+`search_posts`, or `get_post`.
 
 Required esa credential when configured:
 
@@ -279,16 +280,18 @@ Required `reili.toml` fields when configured:
 - `connector.esa.team_name`: esa team name, e.g. `docs` for `https://docs.esa.io/`
 - `connector.esa.access_token_env`: optional env var name; defaults to `ESA_ACCESS_TOKEN`
 
-esa API endpoint currently used by the runtime:
+esa API endpoints currently used by the runtime:
 
 - `GET /v1/teams/:team_name/posts`
+- `GET /v1/teams/:team_name/posts/:post_number`
 
 esa capabilities currently used by the runtime:
 
 - Delegate documentation investigation to the `esa_agent` sub-agent
 - Search posts through the sub-agent's `search_posts` tool using esa's `q` search syntax
+- Fetch a single post's full content by its post number through the sub-agent's `get_post` tool
 - Return post metadata, links, tags, authors, pagination metadata, and Markdown body content from
-  the search response
+  the search and single-post responses
 
 esa restrictions:
 

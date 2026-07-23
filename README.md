@@ -90,7 +90,7 @@ sequenceDiagram
   - Create and install it from <a href="https://reilidev.github.io/reili/create-github-app" target="_blank">Create GitHub App</a>
   - Configure the required permissions and scope in
     [GitHub Permissions and Scope](./docs/capabilities-and-permissions.md#github-permissions-and-scope).
-- Optional esa access token with `read` scope when you want Reili to search esa posts.
+- Optional esa access token with `read` scope when you want Reili to search and read esa posts.
 - Optional JIRA integration via the Atlassian Rovo MCP server, when you want Reili to search and
   reference JIRA tickets:
   - An Atlassian org admin must enable "Authentication via API token" for the Rovo MCP server
@@ -173,8 +173,7 @@ subset of those tools, including dashboard detail retrieval and Synthetic test r
 returns them for your plan and application key permissions.
 
 The optional esa integration is enabled only when `[connector.esa]` is present in `reili.toml`.
-When configured, `search_posts` (calling `GET /v1/teams/:team_name/posts` with esa's search query
-syntax) becomes available to spawned sub-agents. Omit `[connector.esa]` to disable it.
+Omit `[connector.esa]` to disable both.
 
 The optional JIRA integration is enabled only when `[connector.jira]` is present in `reili.toml`.
 When configured, it talks to the Atlassian Rovo MCP server (`https://mcp.atlassian.com/v1/mcp`)
