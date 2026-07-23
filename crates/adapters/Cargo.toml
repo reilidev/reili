@@ -19,6 +19,9 @@ google-cloud-aiplatform-v1 = { version = "1.9.0", default-features = false, feat
 http = "1.4.0"
 jsonwebtoken = { version = "10.0.0", features = ["rust_crypto"] }
 octocrab = { version = "0.49.9", default-features = false, features = ["jwt-rust-crypto"] }
+opentelemetry = { version = "0.32.0", default-features = false, features = ["trace", "internal-logs"] }
+opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["grpc-tonic", "trace", "internal-logs"] }
+opentelemetry_sdk = { version = "0.32.1", default-features = false, features = ["trace", "internal-logs"] }
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "query", "rustls"] }
 rig-core = { version = "0.34.0", features = ["rmcp"] }
 rig-vertexai = "0.3.3"
@@ -31,6 +34,7 @@ serde_urlencoded = "0.7.1"
 reili_core = { path = "../core" }
 tokio = { version = "1.50.0", features = ["macros", "rt", "sync", "test-util", "time"] }
 tracing = "0.1.44"
+tracing-opentelemetry = { version = "0.33.0", default-features = false }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
 rig-bedrock = "0.4.3"
 uuid = { version = "1.23.0", features = ["v4"] }

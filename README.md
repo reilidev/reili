@@ -127,6 +127,8 @@ Non-secret settings live in `reili.toml`, including:
 - optional esa team name and access-token env var
 - optional JIRA site and service-account-API-token env var
 - optional Slack Canvas memory (`[memory.slack]`): `canvas_id` and an optional per-channel `cap`
+- optional OpenTelemetry trace export (`[tracing.otlp]`): OTLP/gRPC `endpoint` and an optional
+  `service_name`
 
 Runtime config resolution is:
 
@@ -207,6 +209,11 @@ memory entirely: no context is recalled and neither tool is registered.
 
 (Equivalently, share the canvas to a channel the bot is a member of with edit access, or call
 `canvases.access.set`.)
+
+The optional OpenTelemetry trace export is enabled only when `[tracing.otlp]` is present in
+`reili.toml`. When configured, Reili exports agent- and LLM-call-level spans (per-agent-turn spans,
+per-completion-call spans with token usage, model, and response metadata) over OTLP/gRPC to the
+configured `endpoint`. 
 
 `SLACK_APP_TOKEN` must be a Slack App-Level Token that starts with `xapp-`.
 

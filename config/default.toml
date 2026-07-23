@@ -180,3 +180,14 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
 # Optional when configured: env var name for the Rovo MCP service account API token. Defaults to
 # `JIRA_SERVICE_ACCOUNT_API_TOKEN`.
 #service_account_api_token_env = "JIRA_SERVICE_ACCOUNT_API_TOKEN"
+
+# Optional: export OpenTelemetry traces over OTLP/gRPC (e.g. to a locally running Jaeger). Omit
+# this section to disable tracing entirely — no exporter, batch processor, or background export
+# thread is created, and startup behavior is unchanged.
+#[tracing.otlp]
+# Required when configured: OTLP/gRPC endpoint traces are exported to. For a local Jaeger, run
+# `docker run --rm -p 16686:16686 -p 4317:4317 jaegertracing/all-in-one:latest` and open
+# http://localhost:16686 to view traces.
+#endpoint = "http://localhost:4317"
+# Optional when configured: service name attached to exported spans/traces. Defaults to `reili`.
+#service_name = "reili"
