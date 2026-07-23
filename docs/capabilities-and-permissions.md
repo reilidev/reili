@@ -24,7 +24,7 @@ The runtime can expose only the following tool families:
   `search_datadog_events`, `search_datadog_monitors`, `search_datadog_dashboards`,
   `get_datadog_dashboard`, `get_synthetics_tests`
 - Datadog MCP security reads when exposed by Datadog for the configured credentials:
-  `search_datadog_security_signals`, `security_findings_schema`, `search_security_findings`,
+  `search_datadog_security_signals`, `search_datadog_security_findings`,
   `analyze_security_findings`
 - GitHub MCP reads: `search_code`, `search_repositories`, `search_issues`,
   `search_pull_requests`, `get_file_contents`, `pull_request_read`, `actions_get`,
@@ -176,7 +176,7 @@ Required Datadog permissions:
 - `Synthetics Read`: needed when Reili uses `get_synthetics_tests`
 - `security_monitoring_signals_read`: needed when Reili uses `search_datadog_security_signals`
 - `security_monitoring_findings_read`: needed when Reili uses
-  `security_findings_schema`, `search_security_findings`, or `analyze_security_findings`
+  `search_datadog_security_findings` or `analyze_security_findings`
 - `timeseries_query`: also needed when Reili uses `analyze_security_findings`
 
 In practice, the API key authenticates the Datadog organization, while the application key
