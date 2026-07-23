@@ -1,16 +1,30 @@
 use std::fmt as std_fmt;
 
 use chrono::{SecondsFormat, Utc};
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_otlp::{ExporterBuildError, SpanExporter, WithExportConfig};
+use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider};
 use reili_core::logger::{LogEntry, LogFieldValue, LogFields, LogLevel, Logger};
 use serde_json::{Map, Number, Value};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
+use tracing_subscriber::Layer;
+use tracing_subscriber::filter::Targets;
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::fmt::writer::MakeWriter;
 use tracing_subscriber::fmt::{self as tracing_fmt, FmtContext};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{EnvFilter, Registry};
+
+/// Instrumentation scope name attached to spans exported to the OTLP collector.
+const OTEL_TRACER_SCOPE: &str = "reili";
+/// `rig`'s own GenAI-semantic-convention spans (`rig::agent_chat`, `rig::completions`, ...).
+const OTEL_SPAN_TARGET: &str = "rig";
+/// [`TracingLogger::log`]'s target — `tracing` tags every event with its call site's module
+/// regardless of caller, so all `TracingLogger` output shares this one target.
+const OTEL_APP_LOG_TARGET: &str = "reili_adapters::logger";
 
 #[derive(Debug, Default)]
 pub struct TracingLogger;
@@ -48,20 +62,134 @@ impl Logger for TracingLogger {
     }
 }
 
-pub fn init_json_logger() -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
-    let subscriber = build_json_subscriber(std::io::stdout);
-    tracing::subscriber::set_global_default(subscriber)
+#[derive(Debug, Clone)]
+pub struct OtlpTracingConfig {
+    pub endpoint: String,
+    pub service_name: String,
 }
 
-pub fn build_json_subscriber<W>(make_writer: W) -> impl tracing::Subscriber + Send + Sync
+#[derive(Debug)]
+pub enum TracingInitError {
+    ExporterBuild(ExporterBuildError),
+    SetGlobalDefault(tracing::subscriber::SetGlobalDefaultError),
+}
+
+impl std_fmt::Display for TracingInitError {
+    fn fmt(&self, f: &mut std_fmt::Formatter<'_>) -> std_fmt::Result {
+        match self {
+            Self::ExporterBuild(error) => write!(f, "Failed to build OTLP span exporter: {error}"),
+            Self::SetGlobalDefault(error) => {
+                write!(f, "Failed to install global tracing subscriber: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TracingInitError {}
+
+impl From<ExporterBuildError> for TracingInitError {
+    fn from(error: ExporterBuildError) -> Self {
+        Self::ExporterBuild(error)
+    }
+}
+
+impl From<tracing::subscriber::SetGlobalDefaultError> for TracingInitError {
+    fn from(error: tracing::subscriber::SetGlobalDefaultError) -> Self {
+        Self::SetGlobalDefault(error)
+    }
+}
+
+/// Flushes buffered spans to the OTLP collector on shutdown. A no-op when OTLP export was not
+/// configured, so callers can unconditionally hold and call [`TracingShutdown::shutdown`].
+#[must_use]
+pub struct TracingShutdown {
+    tracer_provider: Option<SdkTracerProvider>,
+}
+
+impl TracingShutdown {
+    pub fn shutdown(self) {
+        let Some(tracer_provider) = self.tracer_provider else {
+            return;
+        };
+
+        if let Err(error) = tracer_provider.shutdown() {
+            tracing::warn!(
+                error = %error,
+                "Failed to shut down OpenTelemetry tracer provider"
+            );
+        }
+    }
+}
+
+pub fn init_json_logger(
+    otlp: Option<OtlpTracingConfig>,
+) -> Result<TracingShutdown, TracingInitError> {
+    let (tracer, tracer_provider) = match &otlp {
+        Some(config) => {
+            let (provider, tracer) = build_otel_tracer(config)?;
+            (Some(tracer), Some(provider))
+        }
+        None => (None, None),
+    };
+
+    let otel_layer = tracer.map(|tracer| {
+        tracing_opentelemetry::layer()
+            .with_tracer(tracer)
+            .with_filter(otel_span_filter())
+    });
+
+    let subscriber = build_json_subscriber(std::io::stdout).with(otel_layer);
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    Ok(TracingShutdown { tracer_provider })
+}
+
+/// Targets exported to the OTLP collector, each at `INFO`, independent of `RUST_LOG` — quieting
+/// stdout must never silently drop trace data. `tracing-opentelemetry` only attaches an event to a
+/// currently active span, so `TracingLogger` events export only while a `rig` span is open, which
+/// is what keeps this from becoming a firehose of every stdout log line. Reili's own target keeps
+/// the `reili_` prefix so it still passes stdout's default `reili_=info` directive (see
+/// `default_env_filter`).
+fn otel_span_filter() -> Targets {
+    Targets::new()
+        .with_target(OTEL_SPAN_TARGET, tracing::Level::INFO)
+        .with_target(OTEL_APP_LOG_TARGET, tracing::Level::INFO)
+}
+
+fn build_otel_tracer(
+    config: &OtlpTracingConfig,
+) -> Result<(SdkTracerProvider, SdkTracer), ExporterBuildError> {
+    let exporter = SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(config.endpoint.clone())
+        .build()?;
+
+    let resource = Resource::builder()
+        .with_service_name(config.service_name.clone())
+        .build();
+
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_resource(resource)
+        .with_batch_exporter(exporter)
+        .build();
+
+    let tracer = tracer_provider.tracer(OTEL_TRACER_SCOPE);
+
+    Ok((tracer_provider, tracer))
+}
+
+pub fn build_json_subscriber<W>(
+    make_writer: W,
+) -> impl tracing::Subscriber + for<'span> LookupSpan<'span> + Send + Sync
 where
     W: for<'writer> MakeWriter<'writer> + Send + Sync + 'static,
 {
-    Registry::default().with(default_env_filter()).with(
+    Registry::default().with(
         tracing_fmt::layer()
             .event_format(JsonEventFormatter)
             .with_ansi(false)
-            .with_writer(make_writer),
+            .with_writer(make_writer)
+            .with_filter(default_env_filter()),
     )
 }
 
@@ -191,8 +319,13 @@ mod tests {
     use reili_core::logger::{LogFieldValue, Logger, log_fields};
     use serde_json::Value;
     use tracing_subscriber::fmt::writer::MakeWriter;
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::{Layer, Registry};
 
-    use super::{TracingLogger, build_json_subscriber};
+    use super::{
+        OTEL_APP_LOG_TARGET, OTEL_SPAN_TARGET, TracingLogger, build_json_subscriber,
+        otel_span_filter,
+    };
 
     #[derive(Clone, Default)]
     struct SharedBuffer(Arc<Mutex<Vec<u8>>>);
@@ -298,5 +431,57 @@ mod tests {
         assert_eq!(log["meta"]["channel"], "C123");
         assert_eq!(log["meta"]["attempt"], 2);
         assert_eq!(log["meta"]["success"], true);
+    }
+
+    #[derive(Clone, Default)]
+    struct TargetCapture(Arc<Mutex<Vec<&'static str>>>);
+
+    impl<S> Layer<S> for TargetCapture
+    where
+        S: tracing::Subscriber,
+    {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            self.0
+                .lock()
+                .expect("lock captured targets")
+                .push(event.metadata().target());
+        }
+    }
+
+    #[test]
+    fn tracing_logger_events_share_the_otel_app_log_target() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = Registry::default().with(TargetCapture(Arc::clone(&captured)));
+        let logger = TracingLogger;
+
+        tracing::subscriber::with_default(subscriber, || {
+            logger.info(
+                "test_event",
+                log_fields([("key", LogFieldValue::from("value"))]),
+            );
+        });
+
+        assert_eq!(
+            captured.lock().expect("lock captured targets").as_slice(),
+            [OTEL_APP_LOG_TARGET]
+        );
+    }
+
+    #[test]
+    fn otel_span_filter_enables_rig_spans_and_tracing_logger_events_at_info() {
+        let filter = otel_span_filter();
+
+        assert!(filter.would_enable("rig::completions", &tracing::Level::INFO));
+        assert!(filter.would_enable("rig::agent::completion", &tracing::Level::INFO));
+        assert!(filter.would_enable(OTEL_APP_LOG_TARGET, &tracing::Level::INFO));
+    }
+
+    #[test]
+    fn otel_span_filter_rejects_unrelated_targets_and_below_info_level() {
+        let filter = otel_span_filter();
+
+        assert!(!filter.would_enable("reili_adapters::inbound::slack", &tracing::Level::INFO));
+        assert!(!filter.would_enable(OTEL_SPAN_TARGET, &tracing::Level::DEBUG));
+        assert!(!filter.would_enable(OTEL_APP_LOG_TARGET, &tracing::Level::DEBUG));
     }
 }

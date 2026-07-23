@@ -13,7 +13,7 @@ use reili_adapters::inbound::slack::{
     ParsedSlackEvent, ParsedSlackInteraction, SlackInteractionForm, parse_slack_event,
     verify_slack_signature_middleware,
 };
-use reili_adapters::logger::init_json_logger;
+use reili_adapters::logger::{OtlpTracingConfig as AdapterOtlpTracingConfig, init_json_logger};
 use reili_application::{TaskLogger, string_log_meta};
 use reili_core::messaging::slack::{
     SlackFileSharedEvent, SlackFileSharedMessagePort, SlackInteractionHandlerPort,
@@ -39,7 +39,7 @@ pub enum AppRunError {
     #[error("{0}")]
     Bootstrap(#[from] RuntimeBootstrapError),
     #[error("Failed to initialize logger: {0}")]
-    Logger(#[from] tracing::subscriber::SetGlobalDefaultError),
+    Logger(#[from] reili_adapters::logger::TracingInitError),
     #[error("Failed to bind app server: {0}")]
     Bind(std::io::Error),
     #[error("App server failed: {0}")]
@@ -64,11 +64,21 @@ pub async fn run_app() -> Result<(), AppRunError> {
 }
 
 pub async fn run_app_with_options(options: AppStartupOptions) -> Result<(), AppRunError> {
-    init_json_logger()?;
-
     let config = load_app_config(&ConfigLoadOptions {
         explicit_path: options.config_path,
     })?;
+
+    let tracing_shutdown =
+        init_json_logger(
+            config
+                .otlp_tracing
+                .as_ref()
+                .map(|otlp| AdapterOtlpTracingConfig {
+                    endpoint: otlp.endpoint.clone(),
+                    service_name: otlp.service_name.clone(),
+                }),
+        )?;
+
     let deps = build_runtime_deps(&config).await?;
     deps.worker_runner.start();
 
@@ -80,6 +90,7 @@ pub async fn run_app_with_options(options: AppStartupOptions) -> Result<(), AppR
     };
 
     deps.worker_runner.stop();
+    tracing_shutdown.shutdown();
     serve_result
 }
 

@@ -17,6 +17,8 @@ pub(crate) struct FileConfig {
     pub connector: ConnectorFileConfig,
     #[serde(default)]
     pub memory: MemoryFileConfig,
+    #[serde(default)]
+    pub tracing: TracingFileConfig,
 }
 
 /// Optional top-level `[memory]` block. Memory is a cross-channel concern, so it lives at the top
@@ -33,6 +35,22 @@ pub(crate) struct MemorySlackFileConfig {
     #[serde(deserialize_with = "require_non_empty_string")]
     pub canvas_id: String,
     pub cap: Option<u32>,
+}
+
+/// Optional top-level `[tracing]` block. Tracing export is a cross-cutting concern independent of
+/// any single connector, so it lives at the top level like `[memory]`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct TracingFileConfig {
+    pub otlp: Option<TracingOtlpFileConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TracingOtlpFileConfig {
+    #[serde(deserialize_with = "require_non_empty_string")]
+    pub endpoint: String,
+    pub service_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -753,6 +771,49 @@ cap = 5
             "[ai]\n",
             r#"[memory.slack]
 canvas_id = "  "
+
+[ai]
+"#,
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("non-empty string"), "{message}");
+    }
+
+    #[test]
+    fn defaults_tracing_otlp_to_none_when_omitted() {
+        let config =
+            parse_file_config(Path::new(TEST_PATH), &valid_config()).expect("parse should succeed");
+
+        assert!(config.tracing.otlp.is_none());
+    }
+
+    #[test]
+    fn parses_tracing_otlp_block() {
+        let toml = valid_config().replace(
+            "[ai]\n",
+            r#"[tracing.otlp]
+endpoint = "http://localhost:4317"
+service_name = "reili-dev"
+
+[ai]
+"#,
+        );
+
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+        let otlp = config.tracing.otlp.expect("tracing.otlp present");
+
+        assert_eq!(otlp.endpoint, "http://localhost:4317");
+        assert_eq!(otlp.service_name, Some("reili-dev".to_string()));
+    }
+
+    #[test]
+    fn rejects_empty_tracing_otlp_endpoint_at_parse_time() {
+        let toml = valid_config().replace(
+            "[ai]\n",
+            r#"[tracing.otlp]
+endpoint = "  "
 
 [ai]
 "#,

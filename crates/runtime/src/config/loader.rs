@@ -9,9 +9,9 @@ use super::file::{
 };
 use super::model::{
     AnthropicLlmConfig, AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, JiraConfig,
-    JudgeProviderConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig, SlackAuthorizationActors,
-    SlackAuthorizationConfig, SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode,
-    VertexAiLlmConfig, WebSearchProviderConfig,
+    JudgeProviderConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig, OtlpTracingConfig,
+    SlackAuthorizationActors, SlackAuthorizationConfig, SlackCanvasMemoryConfig,
+    SlackChannelConfig, SlackConnectionMode, VertexAiLlmConfig, WebSearchProviderConfig,
 };
 use crate::config::SecretString;
 use reili_core::messaging::slack::SlackChannelNamePattern;
@@ -23,6 +23,7 @@ const SUPPORTED_CONFIG_VERSION: u32 = 1;
 const DEFAULT_OPENAI_API_KEY_ENV: &str = "LLM_OPENAI_API_KEY";
 const DEFAULT_ANTHROPIC_API_KEY_ENV: &str = "LLM_ANTHROPIC_API_KEY";
 const DEFAULT_OPENAI_REASONING_EFFORT: &str = "medium";
+const DEFAULT_OTEL_SERVICE_NAME: &str = "reili";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConfigLoadOptions {
@@ -124,6 +125,7 @@ fn resolve_app_config(
     let esa = resolve_esa_config(&file_config, env)?;
     let jira = resolve_jira_config(&file_config, env)?;
     let memory = resolve_memory_config(&file_config);
+    let otlp_tracing = resolve_otlp_tracing_config(&file_config);
 
     Ok(AppConfig {
         slack_bot_token,
@@ -159,6 +161,7 @@ fn resolve_app_config(
         additional_system_prompt: optional_trimmed(
             file_config.conversation.additional_system_prompt.as_deref(),
         ),
+        otlp_tracing,
     })
 }
 
@@ -602,6 +605,20 @@ fn resolve_memory_config(file_config: &FileConfig) -> Option<SlackCanvasMemoryCo
         })
 }
 
+fn resolve_otlp_tracing_config(file_config: &FileConfig) -> Option<OtlpTracingConfig> {
+    file_config
+        .tracing
+        .otlp
+        .as_ref()
+        .map(|otlp| OtlpTracingConfig {
+            endpoint: otlp.endpoint.clone(),
+            service_name: otlp
+                .service_name
+                .clone()
+                .unwrap_or_else(|| DEFAULT_OTEL_SERVICE_NAME.to_string()),
+        })
+}
+
 fn normalize_multiline_secret(secret: SecretString) -> SecretString {
     SecretString::new(secret.expose().replace("\\n", "\n"))
 }
@@ -835,6 +852,51 @@ mod tests {
             .expect("memory config present");
 
         assert_eq!(memory.cap, 3);
+    }
+
+    #[test]
+    fn resolves_otlp_tracing_config_when_absent_to_none() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_openai_config());
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert!(config.otlp_tracing.is_none());
+    }
+
+    #[test]
+    fn resolves_otlp_tracing_service_name_default() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml = format!(
+            "{}\n[tracing.otlp]\nendpoint = \"http://localhost:4317\"\n",
+            valid_openai_config()
+        );
+        let file_config = parse_runtime_config(&toml);
+
+        let otlp_tracing = resolve_app_config(file_config, &env)
+            .expect("resolve config")
+            .otlp_tracing
+            .expect("otlp tracing config present");
+
+        assert_eq!(otlp_tracing.endpoint, "http://localhost:4317");
+        assert_eq!(otlp_tracing.service_name, "reili");
+    }
+
+    #[test]
+    fn resolves_otlp_tracing_service_name_override() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml = format!(
+            "{}\n[tracing.otlp]\nendpoint = \"http://localhost:4317\"\nservice_name = \"reili-staging\"\n",
+            valid_openai_config()
+        );
+        let file_config = parse_runtime_config(&toml);
+
+        let otlp_tracing = resolve_app_config(file_config, &env)
+            .expect("resolve config")
+            .otlp_tracing
+            .expect("otlp tracing config present");
+
+        assert_eq!(otlp_tracing.service_name, "reili-staging");
     }
 
     #[test]

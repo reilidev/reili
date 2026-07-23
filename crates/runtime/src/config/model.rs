@@ -173,6 +173,13 @@ pub struct SlackCanvasMemoryConfig {
     pub cap: u32,
 }
 
+/// OpenTelemetry trace export destination over OTLP/gRPC, e.g. a locally running Jaeger.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtlpTracingConfig {
+    pub endpoint: String,
+    pub service_name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub slack_bot_token: SecretString,
@@ -201,6 +208,8 @@ pub struct AppConfig {
     pub memory: Option<SlackCanvasMemoryConfig>,
     pub language: String,
     pub additional_system_prompt: Option<String>,
+    /// OTLP trace export destination; `None` disables tracing entirely.
+    pub otlp_tracing: Option<OtlpTracingConfig>,
 }
 
 impl AppConfig {
@@ -282,6 +291,7 @@ mod tests {
             memory: None,
             language: "English".to_string(),
             additional_system_prompt: None,
+            otlp_tracing: None,
         };
 
         let debug_output = format!("{config:?}");
@@ -355,6 +365,7 @@ mod tests {
             memory: None,
             language: "English".to_string(),
             additional_system_prompt: None,
+            otlp_tracing: None,
         }
     }
 

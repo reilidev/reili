@@ -124,6 +124,34 @@ validating it. Anthropic backends tune the max-token budget for `claude-opus-4-6
 `claude-sonnet-4-6`, and `claude-haiku-4-5`; other model ids are accepted and fall back to a default
 budget. Bedrock and Vertex AI backends use `model_id`.
 
+### Debugging agent behavior
+
+Reili logs structured JSON to stdout; set `RUST_LOG` to change verbosity (defaults to
+`warn,reili_=info`). Reili's `rig`-based agent runner already reports tool-call lifecycle events at
+`info` (see `AgentExecutionHook` in `crates/adapters/src/outbound/agents/runner/execution_hook.rs`).
+To also see raw LLM request/response payloads from `rig`'s providers, bump the `rig::completions`
+target, e.g. `RUST_LOG="warn,reili_=info,rig::completions=trace"`.
+
+For a queryable, span-level view of agent turns and LLM calls (token usage, model, latency), add
+`[tracing.otlp]` to `reili.toml` (see [`config/default.toml`](./config/default.toml)) to export
+traces over OTLP/gRPC. For local Jaeger:
+
+```bash
+docker run --rm -p 16686:16686 -p 4317:4317 jaegertracing/jaeger:latest
+```
+
+then set `endpoint = "http://localhost:4317"` and browse http://localhost:16686. Omitting
+`[tracing.otlp]` disables tracing entirely — no exporter or background export thread is created.
+
+The `AgentExecutionHook` tool-call lifecycle events mentioned above are exported too: any
+`TracingLogger` event logged while a `rig` span is active (i.e. during an agent turn) is attached to
+that span as a span event, so tool-call start/completion shows up alongside the LLM completion spans
+in Jaeger. Events logged with no `rig` span active are not exported — see `OTEL_APP_LOG_TARGET` in
+`crates/adapters/src/logger.rs` for the exact scope. Per-completion span detail (token usage, model,
+response metadata) also depends on how instrumented the configured `rig` LLM provider is: Anthropic
+and Vertex AI report it in full; OpenAI and Bedrock currently only produce the outer per-agent-turn
+span.
+
 ## Local Run
 
 Run from the repository root and pass the root `reili.toml` explicitly:
