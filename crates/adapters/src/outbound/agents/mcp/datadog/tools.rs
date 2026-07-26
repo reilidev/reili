@@ -12,12 +12,14 @@ use rmcp::model::{CallToolResult, ContentBlock, Tool};
 use tracing::{error, warn};
 
 const DATADOG_SUB_AGENT_TOOLS: &[&str] = &[
+    "search_datadog_services",
     "search_datadog_logs",
     "analyze_datadog_logs",
     "search_datadog_metrics",
     "get_datadog_metric",
     "get_datadog_metric_context",
     "search_datadog_events",
+    "search_datadog_monitors",
     "search_datadog_dashboards",
     "get_datadog_dashboard",
     "get_synthetics_tests",
@@ -29,6 +31,10 @@ const DATADOG_SUB_AGENT_TOOLS: &[&str] = &[
 /// Kept short on purpose: the lead only needs enough signal to pick tools; the full schema is
 /// injected into the spawned sub-agent.
 const DATADOG_SUB_AGENT_TOOL_SUMMARIES: &[(&str, &str)] = &[
+    (
+        "search_datadog_services",
+        "Find Datadog services by name or keyword.",
+    ),
     (
         "search_datadog_logs",
         "Search Datadog logs with a query over a time range.",
@@ -52,6 +58,10 @@ const DATADOG_SUB_AGENT_TOOL_SUMMARIES: &[(&str, &str)] = &[
     (
         "search_datadog_events",
         "Search Datadog events (deploys, alerts, changes) over a time range.",
+    ),
+    (
+        "search_datadog_monitors",
+        "Find Datadog monitors by name, tag, or status.",
     ),
     (
         "search_datadog_dashboards",
@@ -78,14 +88,6 @@ const DATADOG_SUB_AGENT_TOOL_SUMMARIES: &[(&str, &str)] = &[
         "Aggregate Datadog security findings to surface patterns and counts.",
     ),
 ];
-const DATADOG_LEAD_AGENT_TOOLS: &[&str] = &[
-    "search_datadog_services",
-    "search_datadog_metrics",
-    "get_datadog_metric_context",
-    "search_datadog_monitors",
-    "get_synthetics_tests",
-    "search_datadog_security_signals",
-];
 #[derive(Clone)]
 pub struct DatadogMcpToolset {
     tools: Vec<Tool>,
@@ -93,16 +95,6 @@ pub struct DatadogMcpToolset {
 }
 
 impl DatadogMcpToolset {
-    #[must_use]
-    pub fn lead_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        build_tool_adapters(
-            &self.tools,
-            DATADOG_LEAD_AGENT_TOOLS,
-            "lead",
-            self.client.clone(),
-        )
-    }
-
     #[must_use]
     pub fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
         build_tool_adapters(
@@ -314,8 +306,8 @@ mod tests {
     use rmcp::model::Tool;
 
     use super::{
-        DATADOG_LEAD_AGENT_TOOLS, DATADOG_SUB_AGENT_TOOLS, filter_tools,
-        format_datadog_mcp_tool_error, format_datadog_mcp_tool_success,
+        DATADOG_SUB_AGENT_TOOLS, filter_tools, format_datadog_mcp_tool_error,
+        format_datadog_mcp_tool_success,
     };
 
     fn tool(name: &str) -> Tool {
@@ -342,6 +334,24 @@ mod tests {
             .collect();
 
         assert_eq!(names, vec!["search_datadog_logs", "get_datadog_metric"]);
+    }
+
+    #[test]
+    fn catalog_entries_include_lead_tools_moved_to_sub_agent_scope() {
+        let tools = vec![
+            tool("search_datadog_services"),
+            tool("search_datadog_monitors"),
+        ];
+
+        let names: Vec<String> = super::build_sub_agent_catalog_entries(&tools)
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect();
+
+        assert_eq!(
+            names,
+            vec!["search_datadog_services", "search_datadog_monitors"]
+        );
     }
 
     #[test]
@@ -373,6 +383,7 @@ mod tests {
             tool("get_datadog_metric"),
             tool("get_datadog_metric_context"),
             tool("search_datadog_events"),
+            tool("search_datadog_monitors"),
             tool("search_datadog_dashboards"),
             tool("get_datadog_dashboard"),
             tool("get_synthetics_tests"),
@@ -390,49 +401,20 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "search_datadog_services",
                 "search_datadog_logs",
                 "analyze_datadog_logs",
                 "search_datadog_metrics",
                 "get_datadog_metric",
                 "get_datadog_metric_context",
                 "search_datadog_events",
+                "search_datadog_monitors",
                 "search_datadog_dashboards",
                 "get_datadog_dashboard",
                 "get_synthetics_tests",
                 "search_datadog_security_signals",
                 "search_datadog_security_findings",
                 "analyze_security_findings",
-            ]
-        );
-    }
-
-    #[test]
-    fn filters_lead_tools_to_triage_reads_and_synthetics() {
-        let tools = vec![
-            tool("search_datadog_services"),
-            tool("search_datadog_metrics"),
-            tool("get_datadog_metric_context"),
-            tool("search_datadog_monitors"),
-            tool("search_datadog_dashboards"),
-            tool("get_synthetics_tests"),
-            tool("search_datadog_security_signals"),
-        ];
-
-        let filtered = filter_tools(&tools, DATADOG_LEAD_AGENT_TOOLS, "lead");
-        let names = filtered
-            .iter()
-            .map(|tool| tool.name.as_ref())
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            names,
-            vec![
-                "search_datadog_services",
-                "search_datadog_metrics",
-                "get_datadog_metric_context",
-                "search_datadog_monitors",
-                "get_synthetics_tests",
-                "search_datadog_security_signals",
             ]
         );
     }

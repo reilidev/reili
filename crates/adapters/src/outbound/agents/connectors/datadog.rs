@@ -58,10 +58,6 @@ impl PreparedConnector for PreparedDatadogConnector {
         self.toolset.sub_agent_tools()
     }
 
-    fn lead_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        self.toolset.lead_tools()
-    }
-
     fn spawn_tool_catalog(&self) -> ToolCatalogGroup {
         ToolCatalogGroup {
             source: "Datadog".to_string(),
