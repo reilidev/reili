@@ -19,11 +19,6 @@ pub trait PreparedConnector: Send + Sync {
     /// Tools exposed to a dynamically spawned sub-agent.
     fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>>;
 
-    /// Tools exposed directly to the lead (only Datadog is non-empty; default is empty).
-    fn lead_tools(&self) -> Vec<Box<dyn ToolDyn>> {
-        Vec::new()
-    }
-
     /// Catalog of tools this connector can supply to a dynamically spawned sub-agent.
     /// Entries must match the names of tools returned by [`Self::sub_agent_tools`].
     fn spawn_tool_catalog(&self) -> ToolCatalogGroup;

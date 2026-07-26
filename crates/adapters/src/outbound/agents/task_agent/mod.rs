@@ -8,7 +8,6 @@ use reili_core::task::{
 };
 use rig::agent::Agent;
 use rig::prelude::CompletionClient;
-use rig::tool::ToolDyn;
 
 mod instructions;
 mod prompt;
@@ -93,12 +92,6 @@ where
             .additional_params(self.config.settings.additional_params.clone());
         let builder = with_max_tokens(builder, self.config.settings.task_runner_max_tokens);
 
-        let lead_tools: Vec<Box<dyn ToolDyn>> = input
-            .prepared_connectors
-            .iter()
-            .flat_map(|prepared| prepared.lead_tools())
-            .collect();
-
         // spawn_agent replaces per-connector sub-agent tools: the lead composes each
         // sub-agent's instructions and tool selection per delegation.
         let agent_factory = {
@@ -115,7 +108,6 @@ where
         };
 
         let builder = builder
-            .tools(lead_tools)
             .tool(ReportProgressTool::new(ReportProgressToolInput {
                 on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
                 owner_id: TASK_RUNNER_PROGRESS_OWNER_ID.to_string(),
