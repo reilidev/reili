@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use futures::StreamExt;
 use reili_core::error::PortError;
 use reili_core::secret::SecretString;
 use reqwest::header::{HeaderMap as ReqwestHeaderMap, HeaderName, HeaderValue};
@@ -15,7 +16,7 @@ use rmcp::transport::streamable_http_client::{
     StreamableHttpClient, StreamableHttpError, StreamableHttpPostResponse,
 };
 use serde_json::json;
-use tracing::error;
+use tracing::{debug, error};
 
 const DATADOG_MCP_CLIENT_NAME: &str = "reili";
 const DATADOG_MCP_CLIENT_VERSION_FALLBACK: &str = "unknown";
@@ -347,10 +348,40 @@ async fn read_server_result(
         StreamableHttpPostResponse::Json(message, session_id) => {
             Ok((extract_server_result(message)?, session_id.map(Into::into)))
         }
-        StreamableHttpPostResponse::Sse(_, session_id) => Err(PortError::new(format!(
-            "Datadog MCP returned an unexpected SSE response for session {}",
-            session_id.as_deref().unwrap_or("<none>")
-        ))),
+        StreamableHttpPostResponse::Sse(mut stream, session_id) => {
+            // Streamable HTTP servers may answer any request with an SSE stream instead
+            // of a single JSON body; rmcp's own `expect_initialized` handles the same case.
+            while let Some(event) = stream.next().await {
+                let event = event.map_err(|error| {
+                    PortError::new(format!("Datadog MCP SSE stream error: {error}"))
+                })?;
+                let payload = event.data.unwrap_or_default();
+                if payload.trim().is_empty() {
+                    continue;
+                }
+
+                let message: ServerJsonRpcMessage =
+                    serde_json::from_str(&payload).map_err(|error| {
+                        PortError::new(format!(
+                            "Failed to parse Datadog MCP SSE event as a JSON-RPC message: {error}"
+                        ))
+                    })?;
+
+                if matches!(message, ServerJsonRpcMessage::Response(_)) {
+                    return Ok((extract_server_result(message)?, session_id.map(Into::into)));
+                }
+
+                debug!(
+                    ?message,
+                    "Datadog MCP SSE stream emitted a message before the result; continuing to drain"
+                );
+            }
+
+            Err(PortError::new(format!(
+                "Datadog MCP SSE stream ended for session {} without returning a result",
+                session_id.as_deref().unwrap_or("<none>")
+            )))
+        }
         other => Err(PortError::new(format!(
             "Datadog MCP returned an unsupported streamable HTTP response: {other:?}"
         ))),
@@ -404,6 +435,7 @@ mod tests {
     use reqwest::header::HeaderValue;
     use rmcp::model::{NumberOrString, ServerJsonRpcMessage, ServerResult};
     use rmcp::transport::streamable_http_client::StreamableHttpPostResponse;
+    use sse_stream::Sse;
 
     use super::{
         DATADOG_MCP_CLIENT_NAME, DATADOG_MCP_CLIENT_VERSION_FALLBACK, DatadogMcpToolConfig,
@@ -485,7 +517,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_sse_server_result_response() {
+    async fn rejects_empty_sse_stream_without_result() {
         let response = StreamableHttpPostResponse::Sse(
             futures::stream::empty().boxed(),
             Some("session-123".to_string()),
@@ -493,11 +525,50 @@ mod tests {
 
         let error = read_server_result(response)
             .await
-            .expect_err("sse should fail");
+            .expect_err("empty sse stream should fail");
 
         assert_eq!(
             error.message,
-            "Datadog MCP returned an unexpected SSE response for session session-123"
+            "Datadog MCP SSE stream ended for session session-123 without returning a result"
         );
+    }
+
+    #[tokio::test]
+    async fn reads_server_result_from_sse_response() {
+        let message = ServerJsonRpcMessage::response(
+            ServerResult::InitializeResult(Default::default()),
+            NumberOrString::Number(1.into()),
+        );
+        let event = Sse::default().data(serde_json::to_string(&message).expect("serialize"));
+        let response = StreamableHttpPostResponse::Sse(
+            futures::stream::iter([Ok(event)]).boxed(),
+            Some("session-123".to_string()),
+        );
+
+        let (result, session_id) = read_server_result(response).await.expect("read result");
+
+        assert!(matches!(result, ServerResult::InitializeResult(_)));
+        assert_eq!(session_id.as_deref(), Some("session-123"));
+    }
+
+    #[tokio::test]
+    async fn skips_blank_sse_events_before_returning_result() {
+        let message = ServerJsonRpcMessage::response(
+            ServerResult::InitializeResult(Default::default()),
+            NumberOrString::Number(1.into()),
+        );
+        let events: Vec<Result<Sse, sse_stream::Error>> = vec![
+            Ok(Sse::default()),
+            Ok(Sse::default().data(serde_json::to_string(&message).expect("serialize"))),
+        ];
+        let response = StreamableHttpPostResponse::Sse(
+            futures::stream::iter(events).boxed(),
+            Some("session-123".to_string()),
+        );
+
+        let (result, session_id) = read_server_result(response).await.expect("read result");
+
+        assert!(matches!(result, ServerResult::InitializeResult(_)));
+        assert_eq!(session_id.as_deref(), Some("session-123"));
     }
 }
