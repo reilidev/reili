@@ -37,6 +37,41 @@ Core:
 Reili ships as a single Rust binary that connects to Slack (Socket Mode or HTTP) and runs
 assigned tasks as queued jobs executed by an AI lead agent.
 
+### Connectors
+
+Reili talks to Slack as its channel — mentions arrive as Slack Events, replies and progress go
+back out, and Canvas holds optional memory — and reads through a Connectors layer of
+allowlisted, read-only tool sources: Datadog, GitHub, JIRA, and esa today, with more added over
+time.
+
+```mermaid
+flowchart TD
+    Reili(("Reili"))
+
+    subgraph Slack
+        Events["Events<br/>(messages)"]
+        Canvas["Canvas<br/>(memory)"]
+    end
+
+    subgraph Connectors
+        Datadog["Datadog"]
+        GitHub["GitHub"]
+        JIRA["JIRA"]
+        Esa["esa"]
+        More(("…"))
+    end
+
+    Reili <--> Events
+    Reili <--> Canvas
+    Reili <--> Datadog
+    Reili <--> GitHub
+    Reili <--> JIRA
+    Reili <--> Esa
+    Reili -.-> More
+
+    style More stroke-dasharray: 5 5
+```
+
 A Slack mention is parsed, authorized, and enqueued as a task job into an in-memory queue
 (jobs are not durable across restarts). Worker tasks in the same process claim jobs and run
 them: each job loads the Slack thread context plus the channel's recent reusable Reili memories
