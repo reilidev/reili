@@ -47,8 +47,11 @@ impl OpenAiTaskRunner {
 #[async_trait]
 impl TaskRunnerPort for OpenAiTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
+        let client = openai::Client::from_val(self.api_key.expose().to_string().into());
+
         run_task(RunLlmTaskRunnerInput {
-            client: openai::Client::from_val(self.api_key.expose().to_string().into()),
+            client: client.clone(),
+            sub_agent_client: client,
             settings: self.provider_settings.clone(),
             connectors: self.connectors.clone(),
             language: self.language.clone(),

@@ -80,8 +80,7 @@ pub enum JudgeProviderConfig {
     },
     Bedrock {
         model_id: String,
-        aws_profile: Option<String>,
-        aws_region: Option<String>,
+        aws: BedrockAwsConfig,
     },
     VertexAi {
         project_id: String,
@@ -122,12 +121,18 @@ pub struct AnthropicLlmConfig {
     pub sub_agent_model: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BedrockAwsConfig {
+    pub profile: Option<String>,
+    pub region: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BedrockLlmConfig {
     pub model_id: String,
     pub sub_agent_model_id: String,
-    pub aws_profile: Option<String>,
-    pub aws_region: Option<String>,
+    pub aws: BedrockAwsConfig,
+    pub sub_agent_aws: BedrockAwsConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

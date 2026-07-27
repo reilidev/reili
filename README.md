@@ -259,9 +259,11 @@ in code, not left to the lead.
 
 By default the lead and spawned sub-agents both use `default_backend`. To run sub-agents on a
 different model than the lead, point `ai.lead_backend` and `ai.sub_agent_backend` at named backends
-in `[ai.backends]`. The two backends must use the same provider; only the model differs between the
-roles. A common setup is a stronger model for the lead and a cheaper, faster model for sub-agents.
-Either key falls back to `default_backend` when omitted.
+in `[ai.backends]`. The two backends must use the same provider. A common setup is a stronger model
+for the lead and a cheaper, faster model for sub-agents. Either key falls back to `default_backend`
+when omitted. For `provider = "bedrock"` backends, `aws_profile`/`aws_region` are honored per role:
+sub-agent calls use the `sub_agent_backend`'s own AWS settings rather than inheriting the lead's, so
+lead and sub-agent models can live in different AWS regions.
 
 The `search_web` tool's provider is configured independently through `ai.web_search_backend`,
 which falls back to the lead backend when omitted. It must resolve to an `openai` or `anthropic`

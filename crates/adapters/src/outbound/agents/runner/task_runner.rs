@@ -35,6 +35,7 @@ where
     C: CompletionClient,
 {
     pub client: C,
+    pub sub_agent_client: C,
     pub settings: LlmProviderSettings,
     pub connectors: ConnectorSet,
     pub language: String,
@@ -102,6 +103,7 @@ where
     });
     let task_agent_factory = TaskAgentFactory::new(CreateTaskAgentFactoryInput {
         client: input.client,
+        sub_agent_client: input.sub_agent_client,
         config: TaskAgentConfig {
             settings: input.settings.clone(),
             instructions: AgentInstructionsConfig {

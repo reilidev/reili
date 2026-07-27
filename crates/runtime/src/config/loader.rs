@@ -8,9 +8,9 @@ use super::file::{
     SlackChannelFileConfig, SlackFileConfig, parse_file_config,
 };
 use super::model::{
-    AnthropicLlmConfig, AppConfig, BedrockLlmConfig, EsaConfig, GitHubConfig, JiraConfig,
-    JudgeProviderConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig, OtlpTracingConfig,
-    SlackAuthorizationActors, SlackAuthorizationConfig, SlackCanvasMemoryConfig,
+    AnthropicLlmConfig, AppConfig, BedrockAwsConfig, BedrockLlmConfig, EsaConfig, GitHubConfig,
+    JiraConfig, JudgeProviderConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig,
+    OtlpTracingConfig, SlackAuthorizationActors, SlackAuthorizationConfig, SlackCanvasMemoryConfig,
     SlackChannelConfig, SlackConnectionMode, VertexAiLlmConfig, WebSearchProviderConfig,
 };
 use crate::config::SecretString;
@@ -329,12 +329,18 @@ fn resolve_llm_provider<'a>(
             model_id,
             aws_profile,
             aws_region,
-        } => Ok(LlmProviderConfig::Bedrock(BedrockLlmConfig {
-            model_id: model_id.to_string(),
-            sub_agent_model_id: sub_agent_model,
-            aws_profile: optional_trimmed(aws_profile.as_deref()),
-            aws_region: optional_trimmed(aws_region.as_deref()),
-        })),
+        } => {
+            let sub_agent_aws = bedrock_backend_aws_config(sub_backend).unwrap_or_default();
+            Ok(LlmProviderConfig::Bedrock(BedrockLlmConfig {
+                model_id: model_id.to_string(),
+                sub_agent_model_id: sub_agent_model,
+                aws: BedrockAwsConfig {
+                    profile: optional_trimmed(aws_profile.as_deref()),
+                    region: optional_trimmed(aws_region.as_deref()),
+                },
+                sub_agent_aws,
+            }))
+        }
         AiBackendFileConfig::VertexAi {
             project_id,
             location,
@@ -425,8 +431,10 @@ fn resolve_judge_llm_provider(
             aws_region,
         } => Ok(JudgeProviderConfig::Bedrock {
             model_id: model_id.to_string(),
-            aws_profile: optional_trimmed(aws_profile.as_deref()),
-            aws_region: optional_trimmed(aws_region.as_deref()),
+            aws: BedrockAwsConfig {
+                profile: optional_trimmed(aws_profile.as_deref()),
+                region: optional_trimmed(aws_region.as_deref()),
+            },
         }),
         AiBackendFileConfig::VertexAi {
             project_id,
@@ -512,6 +520,20 @@ fn backend_model(backend: &AiBackendFileConfig) -> &str {
         | AiBackendFileConfig::Anthropic { model, .. } => model,
         AiBackendFileConfig::Bedrock { model_id, .. }
         | AiBackendFileConfig::VertexAi { model_id, .. } => model_id,
+    }
+}
+
+fn bedrock_backend_aws_config(backend: &AiBackendFileConfig) -> Option<BedrockAwsConfig> {
+    match backend {
+        AiBackendFileConfig::Bedrock {
+            aws_profile,
+            aws_region,
+            ..
+        } => Some(BedrockAwsConfig {
+            profile: optional_trimmed(aws_profile.as_deref()),
+            region: optional_trimmed(aws_region.as_deref()),
+        }),
+        _ => None,
     }
 }
 
@@ -1082,8 +1104,42 @@ provider = "unsupported-provider"
                     provider.model_id,
                     "anthropic.claude-3-7-sonnet-20250219-v1:0"
                 );
-                assert_eq!(provider.aws_profile.as_deref(), Some("prod-sso"));
-                assert_eq!(provider.aws_region.as_deref(), Some("ap-northeast-1"));
+                assert_eq!(provider.aws.profile.as_deref(), Some("prod-sso"));
+                assert_eq!(provider.aws.region.as_deref(), Some("ap-northeast-1"));
+                assert_eq!(provider.sub_agent_aws.profile.as_deref(), Some("prod-sso"));
+                assert_eq!(
+                    provider.sub_agent_aws.region.as_deref(),
+                    Some("ap-northeast-1")
+                );
+            }
+            _ => panic!("expected bedrock provider"),
+        }
+    }
+
+    #[test]
+    fn resolves_sub_agent_backends_own_aws_profile_and_region_independently_of_lead() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_bedrock_config_with_distinct_backends());
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.llm.provider {
+            LlmProviderConfig::Bedrock(provider) => {
+                assert_eq!(provider.model_id, "us.anthropic.claude-sonnet-5");
+                assert_eq!(provider.sub_agent_model_id, "moonshotai.kimi-k2.5");
+                assert_eq!(
+                    provider.aws.profile.as_deref(),
+                    Some("reiwa5.stg.AdministratorAccess")
+                );
+                assert_eq!(provider.aws.region.as_deref(), Some("us-east-1"));
+                assert_eq!(
+                    provider.sub_agent_aws.profile.as_deref(),
+                    Some("reiwa5.stg.AdministratorAccess")
+                );
+                assert_eq!(
+                    provider.sub_agent_aws.region.as_deref(),
+                    Some("ap-northeast-1")
+                );
             }
             _ => panic!("expected bedrock provider"),
         }
@@ -2148,6 +2204,35 @@ provider = "bedrock"
 model_id = "anthropic.claude-3-7-sonnet-20250219-v1:0"
 aws_profile = "prod-sso"
 aws_region = "ap-northeast-1"
+
+[ai.backends.web_search]
+provider = "openai"
+model = "gpt-5.4"
+api_key_env = "LLM_OPENAI_API_KEY"
+
+"#,
+        )
+    }
+
+    fn valid_bedrock_config_with_distinct_backends() -> String {
+        base_config_with_ai_block(
+            r#"[ai]
+default_backend = "bedrock_kimi"
+lead_backend = "bedrock_claude"
+sub_agent_backend = "bedrock_kimi"
+web_search_backend = "web_search"
+
+[ai.backends.bedrock_claude]
+provider = "bedrock"
+model_id = "us.anthropic.claude-sonnet-5"
+aws_region = "us-east-1"
+aws_profile = "reiwa5.stg.AdministratorAccess"
+
+[ai.backends.bedrock_kimi]
+provider = "bedrock"
+model_id = "moonshotai.kimi-k2.5"
+aws_region = "ap-northeast-1"
+aws_profile = "reiwa5.stg.AdministratorAccess"
 
 [ai.backends.web_search]
 provider = "openai"

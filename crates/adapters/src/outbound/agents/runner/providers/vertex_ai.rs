@@ -48,6 +48,7 @@ impl TaskRunnerPort for VertexAiTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
         run_task(RunLlmTaskRunnerInput {
             client: self.client.clone(),
+            sub_agent_client: self.client.clone(),
             settings: self.provider_settings.clone(),
             connectors: self.connectors.clone(),
             language: self.language.clone(),
