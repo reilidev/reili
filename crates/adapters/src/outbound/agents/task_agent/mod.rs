@@ -37,6 +37,7 @@ where
     C: CompletionClient,
 {
     client: C,
+    sub_agent_client: C,
     config: TaskAgentConfig,
 }
 
@@ -45,6 +46,7 @@ where
     C: CompletionClient,
 {
     pub client: C,
+    pub sub_agent_client: C,
     pub config: TaskAgentConfig,
 }
 
@@ -60,6 +62,7 @@ where
     pub fn new(input: CreateTaskAgentFactoryInput<C>) -> Self {
         Self {
             client: input.client,
+            sub_agent_client: input.sub_agent_client,
             config: input.config,
         }
     }
@@ -73,7 +76,7 @@ where
     #[must_use]
     pub fn build(&self, input: BuildTaskAgentInput) -> CompletionAgent<C> {
         let sub_agent_factory = SubAgentFactory::new(CreateSubAgentFactoryInput {
-            client: self.client.clone(),
+            client: self.sub_agent_client.clone(),
             config: self.sub_agent_config(),
         });
         let memory_context_section = build_memory_context_section(&input.run_context.memory_items);

@@ -47,8 +47,11 @@ impl AnthropicTaskRunner {
 #[async_trait]
 impl TaskRunnerPort for AnthropicTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
+        let client = anthropic::Client::from_val(self.api_key.expose().to_string());
+
         run_task(RunLlmTaskRunnerInput {
-            client: anthropic::Client::from_val(self.api_key.expose().to_string()),
+            client: client.clone(),
+            sub_agent_client: client,
             settings: self.provider_settings.clone(),
             connectors: self.connectors.clone(),
             language: self.language.clone(),

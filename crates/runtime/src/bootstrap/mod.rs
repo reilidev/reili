@@ -3,10 +3,10 @@ use std::sync::Arc;
 use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::logger::TracingLogger;
 use reili_adapters::outbound::agents::{
-    AnthropicTaskRunner, AnthropicTaskRunnerInput, BedrockTaskRunner, BedrockTaskRunnerInput,
-    ConnectorSet, DatadogConnector, DatadogMcpToolConfig, EsaConnector, GitHubConnector,
-    JiraConnector, OpenAiTaskRunner, OpenAiTaskRunnerInput, VertexAiGeminiClient,
-    VertexAiTaskRunner, VertexAiTaskRunnerInput,
+    AnthropicTaskRunner, AnthropicTaskRunnerInput, BedrockAwsConfig as AdaptersBedrockAwsConfig,
+    BedrockTaskRunner, BedrockTaskRunnerInput, ConnectorSet, DatadogConnector,
+    DatadogMcpToolConfig, EsaConnector, GitHubConnector, JiraConnector, OpenAiTaskRunner,
+    OpenAiTaskRunnerInput, VertexAiGeminiClient, VertexAiTaskRunner, VertexAiTaskRunnerInput,
 };
 use reili_adapters::outbound::anthropic::{
     AnthropicWebSearchAdapter, AnthropicWebSearchAdapterConfig,
@@ -57,8 +57,8 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::config::{
-    AppConfig, EsaConfig, JiraConfig, JudgeProviderConfig, LlmProviderConfig, SecretString,
-    SlackConnectionMode, WebSearchProviderConfig,
+    AppConfig, BedrockAwsConfig, EsaConfig, JiraConfig, JudgeProviderConfig, LlmProviderConfig,
+    SecretString, SlackConnectionMode, WebSearchProviderConfig,
 };
 
 pub struct RuntimeDeps {
@@ -381,15 +381,10 @@ async fn create_auto_response_judge_port(
         JudgeProviderConfig::Anthropic { api_key, model } => Ok(
             create_anthropic_auto_response_judge_port(api_key.clone(), model.clone()),
         ),
-        JudgeProviderConfig::Bedrock {
-            model_id,
-            aws_profile,
-            aws_region,
-        } => Ok(
+        JudgeProviderConfig::Bedrock { model_id, aws } => Ok(
             create_bedrock_auto_response_judge_port(CreateBedrockAutoResponseJudgePortInput {
                 model_id: model_id.clone(),
-                aws_profile: aws_profile.clone(),
-                aws_region: aws_region.clone(),
+                aws: to_adapters_bedrock_aws_config(aws),
             })
             .await,
         ),
@@ -490,8 +485,8 @@ async fn create_task_runner(
             Ok(Arc::new(BedrockTaskRunner::new(BedrockTaskRunnerInput {
                 model_id: config.model_id.clone(),
                 sub_agent_model_id: config.sub_agent_model_id.clone(),
-                aws_profile: config.aws_profile.clone(),
-                aws_region: config.aws_region.clone(),
+                aws: to_adapters_bedrock_aws_config(&config.aws),
+                sub_agent_aws: to_adapters_bedrock_aws_config(&config.sub_agent_aws),
                 connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
@@ -512,8 +507,13 @@ async fn create_task_runner(
     }
 }
 
-/// Builds the `search_web` port from its own provider config, which is
-/// independent of the task runner's provider (see [`WebSearchProviderConfig`]).
+fn to_adapters_bedrock_aws_config(aws: &BedrockAwsConfig) -> AdaptersBedrockAwsConfig {
+    AdaptersBedrockAwsConfig {
+        profile: aws.profile.clone(),
+        region: aws.region.clone(),
+    }
+}
+
 fn create_web_search_port(web_search_llm: &WebSearchProviderConfig) -> Arc<dyn WebSearchPort> {
     match web_search_llm {
         WebSearchProviderConfig::OpenAi { api_key } => {

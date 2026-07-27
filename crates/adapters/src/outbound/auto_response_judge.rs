@@ -13,7 +13,7 @@ use rig::providers::{anthropic, openai};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::outbound::agents::{VertexAiGeminiClient, create_bedrock_client};
+use crate::outbound::agents::{BedrockAwsConfig, VertexAiGeminiClient, create_bedrock_client};
 
 const JUDGE_MAX_TOKENS: u64 = 512;
 const DEFAULT_JUDGE_POLICY: &str = "\
@@ -111,15 +111,13 @@ pub fn create_anthropic_auto_response_judge_port(
 
 pub struct CreateBedrockAutoResponseJudgePortInput {
     pub model_id: String,
-    pub aws_profile: Option<String>,
-    pub aws_region: Option<String>,
+    pub aws: BedrockAwsConfig,
 }
 
 pub async fn create_bedrock_auto_response_judge_port(
     input: CreateBedrockAutoResponseJudgePortInput,
 ) -> Arc<dyn AutoResponseJudgePort> {
-    let client =
-        create_bedrock_client(input.aws_profile.as_deref(), input.aws_region.as_deref()).await;
+    let client = create_bedrock_client(&input.aws).await;
 
     Arc::new(AutoResponseJudgeAdapter::new(client, input.model_id))
 }
