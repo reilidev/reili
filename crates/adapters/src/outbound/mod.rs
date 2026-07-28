@@ -6,6 +6,7 @@ pub mod datadog;
 pub mod esa;
 pub mod github;
 pub mod jira;
+pub(crate) mod mcp_streamable_http;
 pub mod openai;
 pub mod slack;
 pub mod vertex_ai;

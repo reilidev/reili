@@ -1,25 +1,14 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
-
-use futures::StreamExt;
 use reili_core::error::PortError;
 use reili_core::secret::SecretString;
 use reqwest::header::{HeaderMap as ReqwestHeaderMap, HeaderName, HeaderValue};
-use rmcp::model::{
-    CallToolRequest, CallToolRequestParams, CallToolResult, ClientCapabilities, ClientInfo,
-    ClientJsonRpcMessage, ClientNotification, ClientRequest, Implementation, InitializeRequest,
-    InitializedNotification, ListToolsRequest, NumberOrString, RequestId, ServerJsonRpcMessage,
-    ServerResult, Tool,
-};
-use rmcp::transport::streamable_http_client::{
-    StreamableHttpClient, StreamableHttpError, StreamableHttpPostResponse,
-};
+use rmcp::model::Tool;
 use serde_json::json;
-use tracing::{debug, error};
 
-const DATADOG_MCP_CLIENT_NAME: &str = "reili";
-const DATADOG_MCP_CLIENT_VERSION_FALLBACK: &str = "unknown";
+use crate::outbound::mcp_streamable_http::{
+    StaticMcpAuth, StreamableHttpMcpClient, build_client_implementation,
+};
+
+const DATADOG_MCP_SOURCE_LABEL: &str = "Datadog";
 const DATADOG_MCP_TOOLSETS: &str = "core,security,dashboards,synthetics";
 const DATADOG_API_KEY_HEADER: &str = "DD_API_KEY";
 const DATADOG_APPLICATION_KEY_HEADER: &str = "DD_APPLICATION_KEY";
@@ -31,207 +20,25 @@ pub struct DatadogMcpToolConfig {
     pub site: String,
 }
 
-#[derive(Clone)]
-pub(crate) struct DatadogMcpHttpClient {
-    http_client: reqwest::Client,
-    uri: Arc<str>,
-    client_info: ClientInfo,
-    request_id: Arc<AtomicU32>,
-}
+pub(crate) type DatadogMcpHttpClient = StreamableHttpMcpClient<StaticMcpAuth>;
 
-impl DatadogMcpHttpClient {
-    pub(crate) async fn connect(
-        config: &DatadogMcpToolConfig,
-    ) -> Result<(Self, Vec<Tool>), PortError> {
-        let client = Self {
-            http_client: build_datadog_mcp_http_client(config)?,
-            uri: datadog_mcp_url(&config.site).into(),
-            client_info: build_client_info(),
-            request_id: Arc::new(AtomicU32::new(1)),
-        };
-        let tools = match client.list_tools().await {
-            Ok(tools) => tools,
-            Err(error) => {
-                let diagnostic = diagnose_datadog_mcp_initialize(config).await;
-                return Err(create_datadog_mcp_connect_error(error.message, diagnostic));
-            }
-        };
-
-        Ok((client, tools))
-    }
-
-    pub(crate) async fn call_tool(
-        &self,
-        name: String,
-        arguments: Option<serde_json::Map<String, serde_json::Value>>,
-    ) -> Result<CallToolResult, PortError> {
-        let session_id = self.initialize_session().await?;
-        let result = self
-            .call_tool_with_session(name, arguments, session_id.clone())
-            .await;
-        self.cleanup_session(session_id).await;
-        result
-    }
-
-    async fn list_tools(&self) -> Result<Vec<Tool>, PortError> {
-        let session_id = self.initialize_session().await?;
-        let result = self.list_tools_with_session(session_id.clone()).await;
-        self.cleanup_session(session_id).await;
-        result
-    }
-
-    async fn initialize_session(&self) -> Result<Option<Arc<str>>, PortError> {
-        let initialize_request: ClientRequest =
-            InitializeRequest::new(self.client_info.clone()).into();
-        let initialize_response = self
-            .http_client
-            .post_message(
-                Arc::clone(&self.uri),
-                ClientJsonRpcMessage::request(initialize_request, self.next_request_id()),
-                None,
-                None,
-                HashMap::new(),
-            )
-            .await
-            .map_err(|error| {
-                format_streamable_http_error("initialize Datadog MCP session", error)
-            })?;
-        let (initialize_result, session_id) = read_server_result(initialize_response).await?;
-        match initialize_result {
-            ServerResult::InitializeResult(_) => {}
-            other => {
-                return Err(PortError::new(format!(
-                    "Datadog MCP initialize returned unexpected result: {other:?}"
-                )));
-            }
+pub(crate) async fn connect(
+    config: &DatadogMcpToolConfig,
+) -> Result<(DatadogMcpHttpClient, Vec<Tool>), PortError> {
+    let client = StreamableHttpMcpClient::new(
+        DATADOG_MCP_SOURCE_LABEL,
+        datadog_mcp_url(&config.site),
+        StaticMcpAuth(build_datadog_mcp_http_client(config)?),
+    );
+    let tools = match client.list_tools().await {
+        Ok(tools) => tools,
+        Err(error) => {
+            let diagnostic = diagnose_datadog_mcp_initialize(config).await;
+            return Err(create_datadog_mcp_connect_error(error.message, diagnostic));
         }
+    };
 
-        self.send_initialized_notification(session_id.clone())
-            .await?;
-        Ok(session_id)
-    }
-
-    async fn send_initialized_notification(
-        &self,
-        session_id: Option<Arc<str>>,
-    ) -> Result<(), PortError> {
-        let notification: ClientNotification = InitializedNotification {
-            method: Default::default(),
-            extensions: Default::default(),
-        }
-        .into();
-        self.http_client
-            .post_message(
-                Arc::clone(&self.uri),
-                ClientJsonRpcMessage::notification(notification),
-                session_id,
-                None,
-                HashMap::new(),
-            )
-            .await
-            .map_err(|error| {
-                format_streamable_http_error("send initialized notification to Datadog MCP", error)
-            })?
-            .expect_accepted_or_json::<reqwest::Error>()
-            .map_err(|error| {
-                format_streamable_http_error(
-                    "process initialized notification response from Datadog MCP",
-                    error,
-                )
-            })?;
-
-        Ok(())
-    }
-
-    async fn list_tools_with_session(
-        &self,
-        session_id: Option<Arc<str>>,
-    ) -> Result<Vec<Tool>, PortError> {
-        let list_tools_request: ClientRequest = ListToolsRequest {
-            method: Default::default(),
-            params: None,
-            extensions: Default::default(),
-        }
-        .into();
-        let response = self
-            .http_client
-            .post_message(
-                Arc::clone(&self.uri),
-                ClientJsonRpcMessage::request(list_tools_request, self.next_request_id()),
-                session_id,
-                None,
-                HashMap::new(),
-            )
-            .await
-            .map_err(|error| format_streamable_http_error("list Datadog MCP tools", error))?;
-        let (result, _) = read_server_result(response).await?;
-        match result {
-            ServerResult::ListToolsResult(result) => Ok(result.tools),
-            other => Err(PortError::new(format!(
-                "Datadog MCP tools/list returned unexpected result: {other:?}"
-            ))),
-        }
-    }
-
-    async fn call_tool_with_session(
-        &self,
-        name: String,
-        arguments: Option<serde_json::Map<String, serde_json::Value>>,
-        session_id: Option<Arc<str>>,
-    ) -> Result<CallToolResult, PortError> {
-        let params = match arguments {
-            Some(arguments) => CallToolRequestParams::new(name).with_arguments(arguments),
-            None => CallToolRequestParams::new(name),
-        };
-        let call_tool_request: ClientRequest = CallToolRequest::new(params).into();
-        let response = self
-            .http_client
-            .post_message(
-                Arc::clone(&self.uri),
-                ClientJsonRpcMessage::request(call_tool_request, self.next_request_id()),
-                session_id,
-                None,
-                HashMap::new(),
-            )
-            .await
-            .map_err(|error| format_streamable_http_error("call Datadog MCP tool", error))?;
-        let (result, _) = read_server_result(response).await?;
-        match result {
-            ServerResult::CallToolResult(result) => Ok(result),
-            other => Err(PortError::new(format!(
-                "Datadog MCP tools/call returned unexpected result: {other:?}"
-            ))),
-        }
-    }
-
-    async fn cleanup_session(&self, session_id: Option<Arc<str>>) {
-        let Some(session_id) = session_id else {
-            return;
-        };
-
-        if let Err(error) = self
-            .http_client
-            .delete_session(Arc::clone(&self.uri), session_id, None, HashMap::new())
-            .await
-        {
-            error!(
-                error = %format_streamable_http_error("delete Datadog MCP session", error).message,
-                "Failed to clean up Datadog MCP session"
-            );
-        }
-    }
-
-    fn next_request_id(&self) -> RequestId {
-        NumberOrString::Number(self.request_id.fetch_add(1, Ordering::Relaxed).into())
-    }
-}
-
-fn build_client_info() -> ClientInfo {
-    ClientInfo::new(ClientCapabilities::default(), build_client_implementation())
-}
-
-fn build_client_implementation() -> Implementation {
-    Implementation::new(DATADOG_MCP_CLIENT_NAME, DATADOG_MCP_CLIENT_VERSION_FALLBACK)
+    Ok((client, tools))
 }
 
 fn build_datadog_mcp_http_client(
@@ -338,80 +145,6 @@ struct DatadogMcpInitializeDiagnostic {
     body: String,
 }
 
-async fn read_server_result(
-    response: StreamableHttpPostResponse,
-) -> Result<(ServerResult, Option<Arc<str>>), PortError> {
-    match response {
-        StreamableHttpPostResponse::Accepted => Err(PortError::new(
-            "Datadog MCP returned 202 Accepted for a request that required a result",
-        )),
-        StreamableHttpPostResponse::Json(message, session_id) => {
-            Ok((extract_server_result(message)?, session_id.map(Into::into)))
-        }
-        StreamableHttpPostResponse::Sse(mut stream, session_id) => {
-            // Streamable HTTP servers may answer any request with an SSE stream instead
-            // of a single JSON body; rmcp's own `expect_initialized` handles the same case.
-            while let Some(event) = stream.next().await {
-                let event = event.map_err(|error| {
-                    PortError::new(format!("Datadog MCP SSE stream error: {error}"))
-                })?;
-                let payload = event.data.unwrap_or_default();
-                if payload.trim().is_empty() {
-                    continue;
-                }
-
-                let message: ServerJsonRpcMessage =
-                    serde_json::from_str(&payload).map_err(|error| {
-                        PortError::new(format!(
-                            "Failed to parse Datadog MCP SSE event as a JSON-RPC message: {error}"
-                        ))
-                    })?;
-
-                if matches!(message, ServerJsonRpcMessage::Response(_)) {
-                    return Ok((extract_server_result(message)?, session_id.map(Into::into)));
-                }
-
-                debug!(
-                    ?message,
-                    "Datadog MCP SSE stream emitted a message before the result; continuing to drain"
-                );
-            }
-
-            Err(PortError::new(format!(
-                "Datadog MCP SSE stream ended for session {} without returning a result",
-                session_id.as_deref().unwrap_or("<none>")
-            )))
-        }
-        other => Err(PortError::new(format!(
-            "Datadog MCP returned an unsupported streamable HTTP response: {other:?}"
-        ))),
-    }
-}
-
-fn extract_server_result(message: ServerJsonRpcMessage) -> Result<ServerResult, PortError> {
-    match message.into_result() {
-        Some((Ok(result), _)) => Ok(result),
-        Some((Err(error), _)) => Err(PortError::new(format!(
-            "Datadog MCP JSON-RPC error: code={:?} message={} data={}",
-            error.code,
-            error.message,
-            error
-                .data
-                .map_or_else(|| "null".to_string(), |value| value.to_string())
-        ))),
-        None => Err(PortError::new(
-            "Datadog MCP returned a notification where a response was expected",
-        )),
-    }
-}
-
-fn format_streamable_http_error(
-    context: &str,
-    error: StreamableHttpError<reqwest::Error>,
-) -> PortError {
-    PortError::new(format!("{context} failed: {error}"))
-}
-
 fn datadog_mcp_url(site: &str) -> String {
     let site_domain = datadog_site_domain(site);
 
@@ -430,17 +163,11 @@ fn datadog_site_domain(site: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt;
     use reili_core::secret::SecretString;
     use reqwest::header::HeaderValue;
-    use rmcp::model::{NumberOrString, ServerJsonRpcMessage, ServerResult};
-    use rmcp::transport::streamable_http_client::StreamableHttpPostResponse;
-    use sse_stream::Sse;
 
     use super::{
-        DATADOG_MCP_CLIENT_NAME, DATADOG_MCP_CLIENT_VERSION_FALLBACK, DatadogMcpToolConfig,
-        build_client_implementation, build_datadog_mcp_headers, datadog_mcp_url,
-        datadog_site_domain, read_server_result,
+        DatadogMcpToolConfig, build_datadog_mcp_headers, datadog_mcp_url, datadog_site_domain,
     };
 
     #[test]
@@ -490,85 +217,5 @@ mod tests {
         );
         assert!(headers.get("dd-api-key").is_none());
         assert!(headers.get("dd-application-key").is_none());
-    }
-
-    #[test]
-    fn builds_client_implementation_without_cargo_pkg_version() {
-        let client = build_client_implementation();
-
-        assert_eq!(client.name, DATADOG_MCP_CLIENT_NAME);
-        assert_eq!(client.version, DATADOG_MCP_CLIENT_VERSION_FALLBACK);
-    }
-
-    #[tokio::test]
-    async fn reads_server_result_from_json_response() {
-        let response = StreamableHttpPostResponse::Json(
-            ServerJsonRpcMessage::response(
-                ServerResult::InitializeResult(Default::default()),
-                NumberOrString::Number(1.into()),
-            ),
-            Some("session-123".to_string()),
-        );
-
-        let (result, session_id) = read_server_result(response).await.expect("read result");
-
-        assert!(matches!(result, ServerResult::InitializeResult(_)));
-        assert_eq!(session_id.as_deref(), Some("session-123"));
-    }
-
-    #[tokio::test]
-    async fn rejects_empty_sse_stream_without_result() {
-        let response = StreamableHttpPostResponse::Sse(
-            futures::stream::empty().boxed(),
-            Some("session-123".to_string()),
-        );
-
-        let error = read_server_result(response)
-            .await
-            .expect_err("empty sse stream should fail");
-
-        assert_eq!(
-            error.message,
-            "Datadog MCP SSE stream ended for session session-123 without returning a result"
-        );
-    }
-
-    #[tokio::test]
-    async fn reads_server_result_from_sse_response() {
-        let message = ServerJsonRpcMessage::response(
-            ServerResult::InitializeResult(Default::default()),
-            NumberOrString::Number(1.into()),
-        );
-        let event = Sse::default().data(serde_json::to_string(&message).expect("serialize"));
-        let response = StreamableHttpPostResponse::Sse(
-            futures::stream::iter([Ok(event)]).boxed(),
-            Some("session-123".to_string()),
-        );
-
-        let (result, session_id) = read_server_result(response).await.expect("read result");
-
-        assert!(matches!(result, ServerResult::InitializeResult(_)));
-        assert_eq!(session_id.as_deref(), Some("session-123"));
-    }
-
-    #[tokio::test]
-    async fn skips_blank_sse_events_before_returning_result() {
-        let message = ServerJsonRpcMessage::response(
-            ServerResult::InitializeResult(Default::default()),
-            NumberOrString::Number(1.into()),
-        );
-        let events: Vec<Result<Sse, sse_stream::Error>> = vec![
-            Ok(Sse::default()),
-            Ok(Sse::default().data(serde_json::to_string(&message).expect("serialize"))),
-        ];
-        let response = StreamableHttpPostResponse::Sse(
-            futures::stream::iter(events).boxed(),
-            Some("session-123".to_string()),
-        );
-
-        let (result, session_id) = read_server_result(response).await.expect("read result");
-
-        assert!(matches!(result, ServerResult::InitializeResult(_)));
-        assert_eq!(session_id.as_deref(), Some("session-123"));
     }
 }
