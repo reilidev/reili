@@ -1,17 +1,18 @@
 use std::collections::HashSet;
-use std::io;
 use std::sync::Arc;
 
 use reili_core::error::PortError;
 use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
-use rmcp::model::{CallToolResult, ContentBlock, Tool};
+use rmcp::model::{CallToolResult, Tool};
 use serde_json::{Map, Value};
-use tracing::error;
 
 use crate::outbound::agents::connector::ToolCatalogEntry;
-use crate::outbound::jira::jira_mcp_client::{JiraMcpConfig, JiraMcpHttpClient};
+use crate::outbound::agents::mcp::support;
+use crate::outbound::jira::jira_mcp_client::{self, JiraMcpConfig, JiraMcpHttpClient};
+
+const JIRA_MCP_SOURCE_LABEL: &str = "JIRA";
 
 // Confirmed against a live Rovo MCP server's `tools/list` response, `read_jira` and `search_jira`
 // permission groups only. Every `write_jira` tool (createJiraIssue, editJiraIssue,
@@ -85,7 +86,7 @@ fn build_sub_agent_catalog_entries(tools: &[Tool]) -> Vec<ToolCatalogEntry> {
 }
 
 pub async fn connect_jira_mcp_toolset(config: &JiraMcpConfig) -> Result<JiraMcpToolset, PortError> {
-    let (client, tools) = JiraMcpHttpClient::connect(config).await?;
+    let (client, tools) = jira_mcp_client::connect(config).await?;
 
     validate_required_tools(&tools)?;
 
@@ -122,13 +123,7 @@ fn validate_required_tools(tools: &[Tool]) -> Result<(), PortError> {
 }
 
 fn filter_tools(tools: &[Tool], names: &[&str]) -> Vec<Tool> {
-    let expected_names: HashSet<&str> = names.iter().copied().collect();
-
-    tools
-        .iter()
-        .filter(|tool| expected_names.contains(tool.name.as_ref()))
-        .cloned()
-        .collect()
+    support::filter_tools_by_name(tools, names)
 }
 
 fn build_tool_adapters(
@@ -162,18 +157,7 @@ impl ToolDyn for JiraMcpToolAdapter {
     }
 
     fn definition(&self, _prompt: String) -> WasmBoxedFuture<'_, ToolDefinition> {
-        Box::pin(async move {
-            ToolDefinition {
-                name: self.definition.name.to_string(),
-                description: self
-                    .definition
-                    .description
-                    .clone()
-                    .unwrap_or_default()
-                    .to_string(),
-                parameters: serde_json::to_value(&self.definition.input_schema).unwrap_or_default(),
-            }
-        })
+        Box::pin(async move { support::mcp_tool_definition(&self.definition) })
     }
 
     fn call(&self, args: String) -> WasmBoxedFuture<'_, Result<String, ToolError>> {
@@ -182,7 +166,7 @@ impl ToolDyn for JiraMcpToolAdapter {
         let site = Arc::clone(&self.site);
 
         Box::pin(async move {
-            let mut arguments = parse_tool_arguments(&args)?;
+            let mut arguments = support::parse_tool_arguments(JIRA_MCP_SOURCE_LABEL, &args)?;
             // Stamp the configured site onto every call so the LLM cannot target a different
             // Atlassian site than the one this connector is scoped to.
             arguments.insert(
@@ -197,125 +181,27 @@ impl ToolDyn for JiraMcpToolAdapter {
     }
 }
 
-fn parse_tool_arguments(args: &str) -> Result<Map<String, Value>, ToolError> {
-    serde_json::from_str::<Value>(args)?
-        .as_object()
-        .cloned()
-        .ok_or_else(|| {
-            ToolError::ToolCallError(Box::new(io::Error::other(
-                "JIRA MCP tool arguments must be a JSON object",
-            )))
-        })
-}
-
 pub(super) async fn call_jira_mcp_tool(
     client: &JiraMcpHttpClient,
     name: &str,
     arguments: Map<String, Value>,
 ) -> Result<CallToolResult, ToolError> {
-    let result = client
-        .call_tool(name.to_string(), Some(arguments))
-        .await
-        .map_err(|transport_error| {
-            let error_message =
-                format!("JIRA MCP tool {name} failed before returning a result: {transport_error}");
-            error!(tool_name = %name, error = %transport_error, "{error_message}");
-            ToolError::ToolCallError(Box::new(io::Error::other(error_message)))
-        })?;
-
-    if matches!(result.is_error, Some(true)) {
-        let error_message = format_jira_mcp_tool_error(name, &result);
-        error!(
-            tool_name = %name,
-            error_message = %error_message,
-            structured_content = ?result.structured_content,
-            content = ?result.content,
-            "JIRA MCP tool returned an error"
-        );
-        return Err(ToolError::ToolCallError(Box::new(io::Error::other(
-            error_message,
-        ))));
-    }
-
-    Ok(result)
+    support::call_mcp_tool(JIRA_MCP_SOURCE_LABEL, client, name, arguments).await
 }
 
 // About ~5 000 tokens at 4 chars/token; covers issue detail with a long comment thread.
 const CONTENT_CHAR_LIMIT: usize = 20_000;
 
 pub(super) fn format_jira_mcp_tool_success(result: &CallToolResult) -> String {
-    let content = render_contents(&result.content);
-    let content = if !content.is_empty() {
-        content
-    } else {
-        result
-            .structured_content
-            .as_ref()
-            .map_or_else(String::new, serde_json::Value::to_string)
-    };
-
-    truncate_if_oversized(content)
+    truncate_if_oversized(support::format_tool_success(result))
 }
 
 pub(super) fn truncate_if_oversized(content: String) -> String {
-    if content.len() <= CONTENT_CHAR_LIMIT {
-        return content;
-    }
-    let truncated = &content[..CONTENT_CHAR_LIMIT];
-    let returned_lines = truncated.lines().count();
-    let total_lines = content.lines().count();
-    format!(
-        "{truncated}\n[truncated: {returned_lines} of {total_lines} lines shown; \
-        narrow the query or request fewer fields to see more]"
+    support::truncate_content(
+        content,
+        CONTENT_CHAR_LIMIT,
+        "narrow the query or request fewer fields to see more",
     )
-}
-
-fn format_jira_mcp_tool_error(tool_name: &str, result: &CallToolResult) -> String {
-    let mut details = Vec::new();
-    let content = render_contents(&result.content);
-    if !content.is_empty() {
-        details.push(format!("content={content}"));
-    }
-
-    if let Some(structured_content) = &result.structured_content {
-        details.push(format!("structured_content={structured_content}"));
-    }
-
-    if let Some(meta) = &result.meta {
-        details.push(format!(
-            "meta={}",
-            serde_json::to_string(meta).unwrap_or_default()
-        ));
-    }
-
-    if details.is_empty() {
-        details.push("no error details returned".to_string());
-    }
-
-    format!(
-        "JIRA MCP tool {tool_name} returned an error: {}",
-        details.join("; ")
-    )
-}
-
-fn render_contents(contents: &[ContentBlock]) -> String {
-    contents
-        .iter()
-        .map(render_content)
-        .filter(|content: &String| !content.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn render_content(content: &ContentBlock) -> String {
-    match content {
-        ContentBlock::Text(text) => text.text.clone(),
-        ContentBlock::Resource(resource) => match &resource.resource {
-            rmcp::model::ResourceContents::TextResourceContents { text, .. } => text.clone(),
-            _ => serde_json::to_string(content).unwrap_or_default(),
-        },
-        _ => serde_json::to_string(content).unwrap_or_default(),
-    }
 }
 
 #[cfg(test)]
@@ -325,8 +211,7 @@ mod tests {
 
     use super::{
         CONTENT_CHAR_LIMIT, JIRA_SUB_AGENT_TOOLS, REQUIRED_JIRA_SUB_AGENT_TOOLS, filter_tools,
-        format_jira_mcp_tool_error, format_jira_mcp_tool_success, truncate_if_oversized,
-        validate_required_tools,
+        format_jira_mcp_tool_success, truncate_if_oversized, validate_required_tools,
     };
     use rmcp::model::{CallToolResult, ContentBlock};
 
@@ -456,19 +341,5 @@ mod tests {
         let result = CallToolResult::success(vec![ContentBlock::text(oversized.clone())]);
 
         assert!(format_jira_mcp_tool_success(&result).len() < oversized.len());
-    }
-
-    #[test]
-    fn formats_tool_error_with_text_and_structured_content() {
-        let mut result = rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-            "request failed",
-        )]);
-        result.structured_content =
-            Some(json!({ "details": "permission denied", "error_code": "FORBIDDEN" }));
-
-        assert_eq!(
-            format_jira_mcp_tool_error("getJiraIssue", &result),
-            "JIRA MCP tool getJiraIssue returned an error: content=request failed; structured_content={\"details\":\"permission denied\",\"error_code\":\"FORBIDDEN\"}"
-        );
     }
 }

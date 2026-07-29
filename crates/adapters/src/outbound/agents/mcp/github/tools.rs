@@ -1,18 +1,19 @@
 use std::collections::HashSet;
-use std::io;
 
 use reili_core::error::PortError;
 use reili_core::source_code::github::GithubScopePolicy;
 use rig::completion::ToolDefinition;
 use rig::tool::{ToolDyn, ToolError};
 use rig::wasm_compat::WasmBoxedFuture;
-use rmcp::model::{CallToolResult, ContentBlock, Tool};
+use rmcp::model::{CallToolResult, Tool};
 use serde_json::{Map, Value};
-use tracing::error;
 
 use super::read_file::GitHubReadFileToolAdapter;
 use crate::outbound::agents::connector::ToolCatalogEntry;
-use crate::outbound::github::github_mcp_client::{GitHubMcpConfig, GitHubMcpHttpClient};
+use crate::outbound::agents::mcp::support;
+use crate::outbound::github::github_mcp_client::{self, GitHubMcpConfig, GitHubMcpHttpClient};
+
+const GITHUB_MCP_SOURCE_LABEL: &str = "GitHub";
 
 const REQUIRED_GITHUB_SUB_AGENT_TOOLS: &[&str] = &[
     "search_code",
@@ -168,7 +169,7 @@ pub async fn connect_github_mcp_toolset(
     config: &GitHubMcpConfig,
     github_scope_org: String,
 ) -> Result<GitHubMcpToolset, PortError> {
-    let (client, tools) = GitHubMcpHttpClient::connect(config).await?;
+    let (client, tools) = github_mcp_client::connect(config).await?;
     let scope_policy = GithubScopePolicy::new(github_scope_org)?;
 
     validate_required_tools(&tools)?;
@@ -202,13 +203,7 @@ fn validate_required_tools(tools: &[Tool]) -> Result<(), PortError> {
 }
 
 fn filter_tools(tools: &[Tool], names: &[&str]) -> Vec<Tool> {
-    let expected_names: HashSet<&str> = names.iter().copied().collect();
-
-    tools
-        .iter()
-        .filter(|tool| expected_names.contains(tool.name.as_ref()))
-        .cloned()
-        .collect()
+    support::filter_tools_by_name(tools, names)
 }
 
 fn build_tool_adapters(
@@ -242,18 +237,7 @@ impl ToolDyn for GitHubMcpToolAdapter {
     }
 
     fn definition(&self, _prompt: String) -> WasmBoxedFuture<'_, ToolDefinition> {
-        Box::pin(async move {
-            ToolDefinition {
-                name: self.definition.name.to_string(),
-                description: self
-                    .definition
-                    .description
-                    .clone()
-                    .unwrap_or_default()
-                    .to_string(),
-                parameters: serde_json::to_value(&self.definition.input_schema).unwrap_or_default(),
-            }
-        })
+        Box::pin(async move { support::mcp_tool_definition(&self.definition) })
     }
 
     fn call(&self, args: String) -> WasmBoxedFuture<'_, Result<String, ToolError>> {
@@ -262,27 +246,16 @@ impl ToolDyn for GitHubMcpToolAdapter {
         let scope_policy = self.scope_policy.clone();
 
         Box::pin(async move {
-            let arguments = parse_tool_arguments(&args)?;
+            let arguments = support::parse_tool_arguments(GITHUB_MCP_SOURCE_LABEL, &args)?;
             validate_scope(&name, &arguments, &scope_policy).map_err(|error| {
-                ToolError::ToolCallError(Box::new(io::Error::other(error.message)))
+                ToolError::ToolCallError(Box::new(std::io::Error::other(error.message)))
             })?;
 
             let result = call_github_mcp_tool(&client, name.as_ref(), arguments).await?;
 
-            Ok(format_github_mcp_tool_success(&result))
+            Ok(support::format_tool_success(&result))
         })
     }
-}
-
-fn parse_tool_arguments(args: &str) -> Result<Map<String, Value>, ToolError> {
-    serde_json::from_str::<Value>(args)?
-        .as_object()
-        .cloned()
-        .ok_or_else(|| {
-            ToolError::ToolCallError(Box::new(io::Error::other(
-                "GitHub MCP tool arguments must be a JSON object",
-            )))
-        })
 }
 
 pub(super) async fn call_github_mcp_tool(
@@ -290,32 +263,7 @@ pub(super) async fn call_github_mcp_tool(
     name: &str,
     arguments: Map<String, Value>,
 ) -> Result<CallToolResult, ToolError> {
-    let result = client
-        .call_tool(name.to_string(), Some(arguments))
-        .await
-        .map_err(|transport_error| {
-            let error_message = format!(
-                "GitHub MCP tool {name} failed before returning a result: {transport_error}"
-            );
-            error!(tool_name = %name, error = %transport_error, "{error_message}");
-            ToolError::ToolCallError(Box::new(io::Error::other(error_message)))
-        })?;
-
-    if matches!(result.is_error, Some(true)) {
-        let error_message = format_github_mcp_tool_error(name, &result);
-        error!(
-            tool_name = %name,
-            error_message = %error_message,
-            structured_content = ?result.structured_content,
-            content = ?result.content,
-            "GitHub MCP tool returned an error"
-        );
-        return Err(ToolError::ToolCallError(Box::new(io::Error::other(
-            error_message,
-        ))));
-    }
-
-    Ok(result)
+    support::call_mcp_tool(GITHUB_MCP_SOURCE_LABEL, client, name, arguments).await
 }
 
 pub(super) fn validate_scope(
@@ -346,76 +294,15 @@ pub(super) fn validate_scope(
 const FILE_CONTENT_CHAR_LIMIT: usize = 20_000;
 
 pub(super) fn format_github_mcp_tool_success(result: &CallToolResult) -> String {
-    let content = render_contents(&result.content);
-    if !content.is_empty() {
-        return content;
-    }
-
-    result
-        .structured_content
-        .as_ref()
-        .map_or_else(String::new, serde_json::Value::to_string)
+    support::format_tool_success(result)
 }
 
 pub(super) fn truncate_if_oversized(content: String) -> String {
-    if content.len() <= FILE_CONTENT_CHAR_LIMIT {
-        return content;
-    }
-    let truncated = &content[..FILE_CONTENT_CHAR_LIMIT];
-    let returned_lines = truncated.lines().count();
-    let total_lines = content.lines().count();
-    format!(
-        "{truncated}\n[truncated: {returned_lines} of {total_lines} lines shown; \
-        request a specific line range to read more]"
+    support::truncate_content(
+        content,
+        FILE_CONTENT_CHAR_LIMIT,
+        "request a specific line range to read more",
     )
-}
-
-fn format_github_mcp_tool_error(tool_name: &str, result: &CallToolResult) -> String {
-    let mut details = Vec::new();
-    let content = render_contents(&result.content);
-    if !content.is_empty() {
-        details.push(format!("content={content}"));
-    }
-
-    if let Some(structured_content) = &result.structured_content {
-        details.push(format!("structured_content={structured_content}"));
-    }
-
-    if let Some(meta) = &result.meta {
-        details.push(format!(
-            "meta={}",
-            serde_json::to_string(meta).unwrap_or_default()
-        ));
-    }
-
-    if details.is_empty() {
-        details.push("no error details returned".to_string());
-    }
-
-    format!(
-        "GitHub MCP tool {tool_name} returned an error: {}",
-        details.join("; ")
-    )
-}
-
-fn render_contents(contents: &[ContentBlock]) -> String {
-    contents
-        .iter()
-        .map(render_content)
-        .filter(|content: &String| !content.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn render_content(content: &ContentBlock) -> String {
-    match content {
-        ContentBlock::Text(text) => text.text.clone(),
-        ContentBlock::Resource(resource) => match &resource.resource {
-            rmcp::model::ResourceContents::TextResourceContents { text, .. } => text.clone(),
-            _ => serde_json::to_string(content).unwrap_or_default(),
-        },
-        _ => serde_json::to_string(content).unwrap_or_default(),
-    }
 }
 
 #[cfg(test)]
@@ -425,9 +312,8 @@ mod tests {
 
     use super::{
         FILE_CONTENT_CHAR_LIMIT, GITHUB_SUB_AGENT_TOOLS, OPTIONAL_GITHUB_SUB_AGENT_TOOLS,
-        REQUIRED_GITHUB_SUB_AGENT_TOOLS, filter_tools, format_github_mcp_tool_error,
-        format_github_mcp_tool_success, truncate_if_oversized, validate_required_tools,
-        validate_scope,
+        REQUIRED_GITHUB_SUB_AGENT_TOOLS, filter_tools, format_github_mcp_tool_success,
+        truncate_if_oversized, validate_required_tools, validate_scope,
     };
     use reili_core::source_code::github::GithubScopePolicy;
     use rmcp::model::{CallToolResult, ContentBlock};
@@ -576,19 +462,5 @@ mod tests {
         let result = CallToolResult::success(vec![ContentBlock::text(oversized.clone())]);
 
         assert_eq!(format_github_mcp_tool_success(&result), oversized);
-    }
-
-    #[test]
-    fn formats_tool_error_with_text_and_structured_content() {
-        let mut result = rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
-            "request failed",
-        )]);
-        result.structured_content =
-            Some(json!({ "details": "permission denied", "error_code": "FORBIDDEN" }));
-
-        assert_eq!(
-            format_github_mcp_tool_error("search_code", &result),
-            "GitHub MCP tool search_code returned an error: content=request failed; structured_content={\"details\":\"permission denied\",\"error_code\":\"FORBIDDEN\"}"
-        );
     }
 }
