@@ -79,10 +79,11 @@ mod tests {
         let task_instructions =
             build_task_instructions(input(Some(configured_instructions.to_string())));
 
-        assert!(task_instructions.contains("Configured additional system prompt instructions"));
-        assert!(task_instructions.contains(
-            "Configured additional system prompt instructions from reili.toml:\n\nPrefer runbook links first."
-        ));
+        assert!(task_instructions.contains("# Configured Instructions (reili.toml)"));
+        assert!(
+            task_instructions
+                .contains("# Configured Instructions (reili.toml)\nPrefer runbook links first.")
+        );
         assert!(task_instructions.contains("Prefer runbook links first."));
         assert!(task_instructions.contains("State uncertainty explicitly."));
     }

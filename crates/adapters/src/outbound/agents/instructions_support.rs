@@ -93,9 +93,9 @@ pub(crate) fn append_configured_additional_system_prompt(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        Some(value) => format!(
-            "{base_instructions}\n\nConfigured additional system prompt instructions from reili.toml:\n\n{value}\n"
-        ),
+        Some(value) => {
+            format!("{base_instructions}\n\n# Configured Instructions (reili.toml)\n{value}\n")
+        }
         None => base_instructions,
     }
 }

@@ -249,9 +249,10 @@ mod tests {
         assert!(preamble.contains("## Mandatory GitHub scope rules\nUse org:acme."));
         assert!(preamble.contains("## Using Memory Context"));
         assert!(preamble.contains("# Reusable facts"));
-        assert!(preamble.contains(
-            "Configured additional system prompt instructions from reili.toml:\n\nPrefer runbook links first."
-        ));
+        assert!(
+            preamble
+                .contains("# Configured Instructions (reili.toml)\nPrefer runbook links first.")
+        );
     }
 
     #[test]
