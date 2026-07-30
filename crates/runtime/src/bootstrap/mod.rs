@@ -381,13 +381,14 @@ async fn create_auto_response_judge_port(
         JudgeProviderConfig::Anthropic { api_key, model } => Ok(
             create_anthropic_auto_response_judge_port(api_key.clone(), model.clone()),
         ),
-        JudgeProviderConfig::Bedrock { model_id, aws } => Ok(
+        JudgeProviderConfig::Bedrock { model_id, aws } => {
             create_bedrock_auto_response_judge_port(CreateBedrockAutoResponseJudgePortInput {
                 model_id: model_id.clone(),
                 aws: to_adapters_bedrock_aws_config(aws),
             })
-            .await,
-        ),
+            .await
+            .map_err(bedrock_client_initialization_error)
+        }
         JudgeProviderConfig::VertexAi {
             project_id,
             location,
@@ -482,7 +483,7 @@ async fn create_task_runner(
             },
         ))),
         LlmProviderConfig::Bedrock(config) => {
-            Ok(Arc::new(BedrockTaskRunner::new(BedrockTaskRunnerInput {
+            let runner = BedrockTaskRunner::new(BedrockTaskRunnerInput {
                 model_id: config.model_id.clone(),
                 sub_agent_model_id: config.sub_agent_model_id.clone(),
                 aws: to_adapters_bedrock_aws_config(&config.aws),
@@ -490,7 +491,11 @@ async fn create_task_runner(
                 connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
-            })))
+            })
+            .await
+            .map_err(bedrock_client_initialization_error)?;
+
+            Ok(Arc::new(runner))
         }
         LlmProviderConfig::VertexAi(config) => {
             let client = build_vertex_ai_client(&config.project_id, &config.location)?;
@@ -511,6 +516,14 @@ fn to_adapters_bedrock_aws_config(aws: &BedrockAwsConfig) -> AdaptersBedrockAwsC
     AdaptersBedrockAwsConfig {
         profile: aws.profile.clone(),
         region: aws.region.clone(),
+        assume_role_arn: aws.assume_role_arn.clone(),
+    }
+}
+
+fn bedrock_client_initialization_error(error: PortError) -> RuntimeBootstrapError {
+    RuntimeBootstrapError::ProviderClientInitialization {
+        provider: "bedrock".to_string(),
+        message: error.to_string(),
     }
 }
 

@@ -125,6 +125,7 @@ pub struct AnthropicLlmConfig {
 pub struct BedrockAwsConfig {
     pub profile: Option<String>,
     pub region: Option<String>,
+    pub assume_role_arn: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -329,6 +329,7 @@ fn resolve_llm_provider<'a>(
             model_id,
             aws_profile,
             aws_region,
+            aws_assume_role_arn,
         } => {
             let sub_agent_aws = bedrock_backend_aws_config(sub_backend).unwrap_or_default();
             Ok(LlmProviderConfig::Bedrock(BedrockLlmConfig {
@@ -337,6 +338,7 @@ fn resolve_llm_provider<'a>(
                 aws: BedrockAwsConfig {
                     profile: optional_trimmed(aws_profile.as_deref()),
                     region: optional_trimmed(aws_region.as_deref()),
+                    assume_role_arn: optional_trimmed(aws_assume_role_arn.as_deref()),
                 },
                 sub_agent_aws,
             }))
@@ -429,11 +431,13 @@ fn resolve_judge_llm_provider(
             model_id,
             aws_profile,
             aws_region,
+            aws_assume_role_arn,
         } => Ok(JudgeProviderConfig::Bedrock {
             model_id: model_id.to_string(),
             aws: BedrockAwsConfig {
                 profile: optional_trimmed(aws_profile.as_deref()),
                 region: optional_trimmed(aws_region.as_deref()),
+                assume_role_arn: optional_trimmed(aws_assume_role_arn.as_deref()),
             },
         }),
         AiBackendFileConfig::VertexAi {
@@ -528,10 +532,12 @@ fn bedrock_backend_aws_config(backend: &AiBackendFileConfig) -> Option<BedrockAw
         AiBackendFileConfig::Bedrock {
             aws_profile,
             aws_region,
+            aws_assume_role_arn,
             ..
         } => Some(BedrockAwsConfig {
             profile: optional_trimmed(aws_profile.as_deref()),
             region: optional_trimmed(aws_region.as_deref()),
+            assume_role_arn: optional_trimmed(aws_assume_role_arn.as_deref()),
         }),
         _ => None,
     }
@@ -1111,6 +1117,59 @@ provider = "unsupported-provider"
                     provider.sub_agent_aws.region.as_deref(),
                     Some("ap-northeast-1")
                 );
+                assert_eq!(provider.aws.assume_role_arn, None);
+                assert_eq!(provider.sub_agent_aws.assume_role_arn, None);
+            }
+            _ => panic!("expected bedrock provider"),
+        }
+    }
+
+    #[test]
+    fn resolves_bedrock_backend_aws_assume_role_arn_per_role() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(&valid_bedrock_config_with_distinct_backends());
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.llm.provider {
+            LlmProviderConfig::Bedrock(provider) => {
+                assert_eq!(
+                    provider.aws.assume_role_arn.as_deref(),
+                    Some("arn:aws:iam::111111111111:role/ReiliLead")
+                );
+                assert_eq!(
+                    provider.sub_agent_aws.assume_role_arn.as_deref(),
+                    Some("arn:aws:iam::222222222222:role/ReiliSubAgent")
+                );
+            }
+            _ => panic!("expected bedrock provider"),
+        }
+    }
+
+    #[test]
+    fn trims_bedrock_backend_aws_assume_role_arn_and_treats_blank_as_unset() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(
+            &valid_bedrock_config_with_distinct_backends()
+                .replace(
+                    "aws_assume_role_arn = \"arn:aws:iam::222222222222:role/ReiliSubAgent\"",
+                    "aws_assume_role_arn = \"   \"",
+                )
+                .replace(
+                    "aws_assume_role_arn = \"arn:aws:iam::111111111111:role/ReiliLead\"",
+                    "aws_assume_role_arn = \"  arn:aws:iam::111111111111:role/ReiliLead  \"",
+                ),
+        );
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.llm.provider {
+            LlmProviderConfig::Bedrock(provider) => {
+                assert_eq!(
+                    provider.aws.assume_role_arn.as_deref(),
+                    Some("arn:aws:iam::111111111111:role/ReiliLead")
+                );
+                assert_eq!(provider.sub_agent_aws.assume_role_arn, None);
             }
             _ => panic!("expected bedrock provider"),
         }
@@ -1776,6 +1835,45 @@ auto_response_policy = "React to incidents."
     }
 
     #[test]
+    fn resolves_judge_backend_aws_assume_role_arn_for_bedrock() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let file_config = parse_runtime_config(
+            &valid_bedrock_config_with_distinct_backends()
+                .replace(
+                    "[ai]\n",
+                    r#"[[channel.slack.channels]]
+names = ["alerts-*"]
+auto_response = true
+auto_response_policy = "React to incidents."
+
+[ai]
+"#,
+                )
+                .replace(
+                    "lead_backend = \"bedrock_claude\"",
+                    "lead_backend = \"bedrock_claude\"\njudge_backend = \"bedrock_kimi\"",
+                ),
+        );
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.judge_llm.expect("judge llm config") {
+            JudgeProviderConfig::Bedrock { model_id, aws } => {
+                assert_eq!(model_id, "moonshotai.kimi-k2.5");
+                assert_eq!(
+                    aws.assume_role_arn.as_deref(),
+                    Some("arn:aws:iam::222222222222:role/ReiliSubAgent")
+                );
+                assert_eq!(
+                    aws.profile.as_deref(),
+                    Some("reiwa5.stg.AdministratorAccess")
+                );
+            }
+            other => panic!("expected bedrock judge provider, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn rejects_unknown_judge_backend() {
         let env = FixedEnvironment::with_overrides(&[]);
         let file_config = parse_runtime_config(
@@ -2227,12 +2325,14 @@ provider = "bedrock"
 model_id = "us.anthropic.claude-sonnet-5"
 aws_region = "us-east-1"
 aws_profile = "reiwa5.stg.AdministratorAccess"
+aws_assume_role_arn = "arn:aws:iam::111111111111:role/ReiliLead"
 
 [ai.backends.bedrock_kimi]
 provider = "bedrock"
 model_id = "moonshotai.kimi-k2.5"
 aws_region = "ap-northeast-1"
 aws_profile = "reiwa5.stg.AdministratorAccess"
+aws_assume_role_arn = "arn:aws:iam::222222222222:role/ReiliSubAgent"
 
 [ai.backends.web_search]
 provider = "openai"
