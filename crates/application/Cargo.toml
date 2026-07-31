@@ -16,4 +16,4 @@ uuid = { version = "1.23.0", features = ["v4"] }
 
 [dev-dependencies]
 reili_core = { path = "../core", features = ["test-support"] }
-tokio = { version = "1.50.0", features = ["macros", "rt", "time"] }
+tokio = { version = "=1.50.0", features = ["macros", "rt", "time"] }
