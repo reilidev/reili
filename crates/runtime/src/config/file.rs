@@ -288,6 +288,7 @@ pub(crate) enum AiBackendFileConfig {
         model_id: String,
         aws_profile: Option<String>,
         aws_region: Option<String>,
+        aws_assume_role_arn: Option<String>,
     },
     #[serde(rename = "vertexai", alias = "vertex_ai")]
     VertexAi {

@@ -116,10 +116,13 @@ pub struct CreateBedrockAutoResponseJudgePortInput {
 
 pub async fn create_bedrock_auto_response_judge_port(
     input: CreateBedrockAutoResponseJudgePortInput,
-) -> Arc<dyn AutoResponseJudgePort> {
-    let client = create_bedrock_client(&input.aws).await;
+) -> Result<Arc<dyn AutoResponseJudgePort>, PortError> {
+    let client = create_bedrock_client(&input.aws).await?;
 
-    Arc::new(AutoResponseJudgeAdapter::new(client, input.model_id))
+    Ok(Arc::new(AutoResponseJudgeAdapter::new(
+        client,
+        input.model_id,
+    )))
 }
 
 pub fn create_vertex_ai_auto_response_judge_port(

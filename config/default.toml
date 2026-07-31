@@ -118,8 +118,8 @@ api_key_env = "LLM_OPENAI_API_KEY"
 # `sub_agent_backend` above to run sub-agents on a smaller model than the lead.
 # It must use the same provider as the lead backend.
 #[ai.backends.fast]
-#provider = "openai"
-#model = "gpt-5.4-mini"
+# provider = "openai"
+# model = "gpt-5.4-mini"
 
 #[ai.backends.anthropic]
 #provider = "anthropic"
@@ -130,8 +130,13 @@ api_key_env = "LLM_OPENAI_API_KEY"
 #[ai.backends.bedrock]
 #provider = "bedrock"
 #model_id = "anthropic.claude-3-7-sonnet-20250219-v1:0"
+
+# Optional for named profile and region for this backend.
 # aws_profile = "your-aws-profile"
 # aws_region = "ap-northeast-1"
+
+# Optional for role to switch into before calling Bedrock.
+# aws_assume_role_arn = "arn:aws:iam::123456789012:role/ReiliBedrock"
 
 #[ai.backends.vertex]
 #provider = "vertexai"
