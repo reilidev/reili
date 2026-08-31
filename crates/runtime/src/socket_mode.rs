@@ -65,11 +65,19 @@ pub enum SocketModeError {
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
     #[error("WebSocket error: {0}")]
-    WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+    WebSocket(#[from] Box<tokio_tungstenite::tungstenite::Error>),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("Socket Mode link disabled by Slack")]
     LinkDisabled,
+}
+
+/// `tokio_tungstenite::tungstenite::Error` is large enough to trip clippy's `result_large_err`
+/// lint when carried by value, so [`SocketModeError::WebSocket`] boxes it; this converts at each
+/// call site instead of relying on `#[from]`'s blanket `?` conversion (which needs an
+/// already-boxed source).
+fn ws_error(error: tokio_tungstenite::tungstenite::Error) -> SocketModeError {
+    SocketModeError::WebSocket(Box::new(error))
 }
 
 pub struct SocketModeConfig {
@@ -177,7 +185,7 @@ impl SocketModeClient {
         wss_url: &str,
         shutdown: &mut tokio::sync::watch::Receiver<bool>,
     ) -> Result<DisconnectReason, SocketModeError> {
-        let (ws_stream, _) = connect_async(wss_url).await?;
+        let (ws_stream, _) = connect_async(wss_url).await.map_err(ws_error)?;
         let (mut ws_sink, mut ws_recv) = ws_stream.split();
 
         let health_config = SocketHealthConfig::default();
@@ -205,13 +213,16 @@ impl SocketModeClient {
                             return Ok(DisconnectReason::SlackRefresh);
                         }
                         Some(Err(error)) => {
-                            return Err(SocketModeError::WebSocket(error));
+                            return Err(ws_error(error));
                         }
                         _ => {}
                     }
                 }
                 _ = ping_ticker.tick() => {
-                    ws_sink.send(Message::Ping(vec![].into())).await?;
+                    ws_sink
+                        .send(Message::Ping(vec![].into()))
+                        .await
+                        .map_err(ws_error)?;
                     health_state.on_ping_sent(tokio::time::Instant::now(), health_config.pong_timeout);
                 }
                 _ = wait_for_pong_timeout(pong_deadline) => {
@@ -243,7 +254,10 @@ impl SocketModeClient {
             "events_api" => {
                 if let Some(envelope_id) = &envelope.envelope_id {
                     let ack = json!({"envelope_id": envelope_id});
-                    ws_sink.send(Message::Text(ack.to_string().into())).await?;
+                    ws_sink
+                        .send(Message::Text(ack.to_string().into()))
+                        .await
+                        .map_err(ws_error)?;
                 }
 
                 if let Some(payload) = envelope.payload {
@@ -294,7 +308,10 @@ impl SocketModeClient {
             "interactive" => {
                 if let Some(envelope_id) = &envelope.envelope_id {
                     let ack = json!({"envelope_id": envelope_id});
-                    ws_sink.send(Message::Text(ack.to_string().into())).await?;
+                    ws_sink
+                        .send(Message::Text(ack.to_string().into()))
+                        .await
+                        .map_err(ws_error)?;
                 }
 
                 if let Some(payload) = envelope.payload {
@@ -325,7 +342,10 @@ impl SocketModeClient {
             _ => {
                 if let Some(envelope_id) = &envelope.envelope_id {
                     let ack = json!({"envelope_id": envelope_id});
-                    ws_sink.send(Message::Text(ack.to_string().into())).await?;
+                    ws_sink
+                        .send(Message::Text(ack.to_string().into()))
+                        .await
+                        .map_err(ws_error)?;
                 }
                 Ok(None)
             }
