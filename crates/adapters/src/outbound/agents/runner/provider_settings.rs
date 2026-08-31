@@ -36,6 +36,11 @@ pub struct CreateBedrockProviderSettingsInput {
     pub sub_agent_model_id: String,
 }
 
+pub struct CreateBedrockMantleProviderSettingsInput {
+    pub model_id: String,
+    pub sub_agent_model_id: String,
+}
+
 pub struct CreateVertexAiProviderSettingsInput {
     pub model_id: String,
     pub sub_agent_model_id: String,
@@ -89,6 +94,22 @@ pub fn create_bedrock_provider_settings(
 ) -> LlmProviderSettings {
     LlmProviderSettings {
         provider: "bedrock".to_string(),
+        task_runner_model: input.model_id,
+        sub_agent_model: input.sub_agent_model_id,
+        task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,
+        sub_agent_max_turns: DEFAULT_SUB_AGENT_MAX_TURNS,
+        tool_concurrency: DEFAULT_TOOL_CONCURRENCY,
+        task_runner_max_tokens: None,
+        sub_agent_max_tokens: None,
+        additional_params: json!({}),
+    }
+}
+
+pub fn create_bedrock_mantle_provider_settings(
+    input: CreateBedrockMantleProviderSettingsInput,
+) -> LlmProviderSettings {
+    LlmProviderSettings {
+        provider: "bedrock_mantle".to_string(),
         task_runner_model: input.model_id,
         sub_agent_model: input.sub_agent_model_id,
         task_runner_max_turns: DEFAULT_TASK_RUNNER_MAX_TURNS,

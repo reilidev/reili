@@ -119,7 +119,8 @@ sequenceDiagram
   - Configure the required scopes, events, and Interactivity using
     [Slack Permissions and API Usage](./docs/capabilities-and-permissions.md#slack-permissions-and-api-usage).
 - Datadog API Key + APP Key for the Datadog MCP server
-- OpenAI API Key, AWS credentials with permission to use Amazon Bedrock, or Google Cloud ADC with permission to call
+- OpenAI API Key, Anthropic API Key, AWS credentials with permission to use Amazon Bedrock (or a
+  Bedrock API key / IAM role for Bedrock Mantle), or Google Cloud ADC with permission to call
   Vertex AI Gemini models
 - GitHub App credentials for the repositories Reili works with
   - Create and install it from <a href="https://reilidev.github.io/reili/create-github-app" target="_blank">Create GitHub App</a>
@@ -194,6 +195,8 @@ Required secrets depend on your selected Slack mode and backend:
 - `JIRA_SERVICE_ACCOUNT_API_TOKEN` when `[connector.jira]` is configured
 - `LLM_OPENAI_API_KEY` when the selected backend uses `provider = "openai"`
 - `LLM_ANTHROPIC_API_KEY` when the selected backend uses `provider = "anthropic"`
+- The env var named by `api_key_env` (e.g. `LLM_BEDROCK_MANTLE_API_KEY`) when the selected backend
+  uses `provider = "bedrock_mantle"` with `api_key_env` set; not needed for its IAM-role auth mode
 
 The GitHub integration talks to a streamable HTTP MCP server and exposes a small allowlisted set
 of raw GitHub MCP read tools to the GitHub agent. File reads are exposed through a
@@ -269,9 +272,9 @@ inheriting the lead's, so lead and sub-agent models can live in different AWS re
 The `search_web` tool's provider is configured independently through `ai.web_search_backend`,
 which falls back to the lead backend when omitted. It must resolve to an `openai` or `anthropic`
 backend — those are the only providers with a supported web search integration; Reili refuses to
-start otherwise. This matters because Bedrock and Vertex AI backends cannot be used for web search
-(see below); set `ai.web_search_backend` to an `openai` or `anthropic` backend to give a
-Bedrock- or Vertex-AI-backed Reili working web search.
+start otherwise. This matters because Bedrock, Bedrock Mantle, and Vertex AI backends cannot be
+used for web search (see below); set `ai.web_search_backend` to an `openai` or `anthropic` backend
+to give a Bedrock-, Bedrock-Mantle-, or Vertex-AI-backed Reili working web search.
 
 When the selected backend uses `provider = "anthropic"`, Claude is called through the Anthropic
 API.
@@ -293,6 +296,39 @@ environment or profile chain.
 - Bedrock has no supported web search integration. If `ai.web_search_backend` is left unset and the
   lead backend uses `provider = "bedrock"`, Reili fails to start; point `ai.web_search_backend` at
   an `openai` or `anthropic` backend to enable `search_web`.
+
+When the selected backend uses `provider = "bedrock_mantle"`, models are called through
+[Amazon Bedrock powered by AWS Mantle](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html)
+— a separate service from `bedrock` above, with its own IAM action namespace
+(`bedrock-mantle:*`). Bedrock Mantle hosts different model providers on different paths and wire
+protocols; Reili detects which one to use from the `model_id` prefix:
+
+- `openai.*` and `xai.*` (Grok) — the OpenAI Responses API, at
+  `https://bedrock-mantle.<region>.api.aws/openai/v1`.
+- `anthropic.*` — the native Anthropic Messages API, at
+  `https://bedrock-mantle.<region>.api.aws/anthropic/v1`.
+
+`model_id` is the plain Bedrock Mantle model ID with no `us.`/`global.` region prefix (e.g.
+`openai.gpt-5.6-sol`, not the `us.openai.gpt-5.6-sol` cross-Region profile ID used on
+`bedrock-runtime`). The lead and sub-agent models must belong to the same family; mixing e.g. an
+`openai.*` lead with an `anthropic.*` sub-agent fails at startup. Set `model_id` and `aws_region`
+in `reili.toml`; `aws_region` is required since it picks the endpoint. Authenticate with either a
+bearer API key or an IAM role — the two are mutually exclusive, and setting both fails at startup:
+
+- **API key**: set `api_key_env` to the name of an env var holding a **long-term** Bedrock API key
+  (`aws iam create-service-specific-credential --service-name bedrock.amazonaws.com`). Short-term
+  keys expire within 12 hours and require an external token generator to refresh, so they aren't a
+  fit for Reili's long-running process.
+- **IAM role**: leave `api_key_env` unset and Reili SigV4-signs each request with AWS credentials
+  from the standard AWS SDK chain, honoring `aws_profile` and `aws_assume_role_arn` exactly like the
+  `bedrock` backend above. Sub-agent calls use the `sub_agent_backend`'s own `aws_region`/auth rather
+  than inheriting the lead's, the same way `provider = "bedrock"` honors per-role AWS settings.
+- IAM policies need `bedrock-mantle:CreateInference` scoped to the account's Bedrock Mantle project
+  resource for IAM-role auth, or `bedrock-mantle:CallWithBearerToken` on `Resource: "*"` for API-key
+  auth — see
+  [Actions, resources, and condition keys for Amazon Bedrock Powered by AWS Mantle](https://docs.aws.amazon.com/service-authorization/latest/reference/list_bedrock-mantle.html).
+- Bedrock Mantle has no supported web search integration either; point `ai.web_search_backend` at an
+  `openai` or `anthropic` backend to enable `search_web`.
 
 When the selected backend uses `provider = "vertexai"`, Google credentials are loaded from
 Application Default Credentials.

@@ -8,10 +8,11 @@ use super::file::{
     SlackChannelFileConfig, SlackFileConfig, parse_file_config,
 };
 use super::model::{
-    AnthropicLlmConfig, AppConfig, BedrockAwsConfig, BedrockLlmConfig, EsaConfig, GitHubConfig,
-    JiraConfig, JudgeProviderConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig,
-    OtlpTracingConfig, SlackAuthorizationActors, SlackAuthorizationConfig, SlackCanvasMemoryConfig,
-    SlackChannelConfig, SlackConnectionMode, VertexAiLlmConfig, WebSearchProviderConfig,
+    AnthropicLlmConfig, AppConfig, BedrockAwsConfig, BedrockLlmConfig, BedrockMantleAuthConfig,
+    BedrockMantleLlmConfig, EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig, LlmConfig,
+    LlmProviderConfig, OpenAiLlmConfig, OtlpTracingConfig, SlackAuthorizationActors,
+    SlackAuthorizationConfig, SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode,
+    VertexAiLlmConfig, WebSearchProviderConfig,
 };
 use crate::config::SecretString;
 use reili_core::messaging::slack::SlackChannelNamePattern;
@@ -343,6 +344,47 @@ fn resolve_llm_provider<'a>(
                 sub_agent_aws,
             }))
         }
+        AiBackendFileConfig::BedrockMantle {
+            model_id,
+            aws_region,
+            api_key_env,
+            aws_profile,
+            aws_assume_role_arn,
+        } => {
+            let AiBackendFileConfig::BedrockMantle {
+                aws_region: sub_aws_region,
+                api_key_env: sub_api_key_env,
+                aws_profile: sub_aws_profile,
+                aws_assume_role_arn: sub_aws_assume_role_arn,
+                ..
+            } = sub_backend
+            else {
+                unreachable!(
+                    "sub-agent backend provider already verified to match the lead backend's provider"
+                )
+            };
+
+            Ok(LlmProviderConfig::BedrockMantle(BedrockMantleLlmConfig {
+                model_id: model_id.to_string(),
+                sub_agent_model_id: sub_agent_model,
+                region: aws_region.to_string(),
+                auth: resolve_bedrock_mantle_auth(
+                    api_key_env.as_deref(),
+                    aws_profile.as_deref(),
+                    aws_assume_role_arn.as_deref(),
+                    env,
+                    &backend_field_prefix,
+                )?,
+                sub_agent_region: sub_aws_region.to_string(),
+                sub_agent_auth: resolve_bedrock_mantle_auth(
+                    sub_api_key_env.as_deref(),
+                    sub_aws_profile.as_deref(),
+                    sub_aws_assume_role_arn.as_deref(),
+                    env,
+                    &format!("ai.backends.{sub_id}"),
+                )?,
+            }))
+        }
         AiBackendFileConfig::VertexAi {
             project_id,
             location,
@@ -362,8 +404,9 @@ fn resolve_llm_provider<'a>(
 /// backend so behavior is unchanged when `ai.web_search_backend` is omitted.
 /// Only `openai` and `anthropic` backends are supported for web search; the
 /// lead backend can use any provider, but if it (or the explicit override)
-/// resolves to `bedrock` or `vertexai`, this returns an error asking for
-/// `ai.web_search_backend` to be set to an openai or anthropic backend.
+/// resolves to `bedrock`, `bedrock_mantle`, or `vertexai`, this returns an
+/// error asking for `ai.web_search_backend` to be set to an openai or
+/// anthropic backend.
 fn resolve_web_search_llm_provider(
     ai: &AiFileConfig,
     lead_id: &str,
@@ -387,15 +430,15 @@ fn resolve_web_search_llm_provider(
                 model: model.to_string(),
             })
         }
-        AiBackendFileConfig::Bedrock { .. } | AiBackendFileConfig::VertexAi { .. } => {
-            Err(ConfigError::InvalidValue {
-                field: web_search_field.to_string(),
-                message: format!(
-                    "backend `{web_search_id}` uses provider `{}`, but web search only supports `openai` and `anthropic`; point `ai.web_search_backend` at an openai or anthropic backend",
-                    backend_provider_name(web_search_backend)
-                ),
-            })
-        }
+        AiBackendFileConfig::Bedrock { .. }
+        | AiBackendFileConfig::BedrockMantle { .. }
+        | AiBackendFileConfig::VertexAi { .. } => Err(ConfigError::InvalidValue {
+            field: web_search_field.to_string(),
+            message: format!(
+                "backend `{web_search_id}` uses provider `{}`, but web search only supports `openai` and `anthropic`; point `ai.web_search_backend` at an openai or anthropic backend",
+                backend_provider_name(web_search_backend)
+            ),
+        }),
     }
 }
 
@@ -439,6 +482,23 @@ fn resolve_judge_llm_provider(
                 region: optional_trimmed(aws_region.as_deref()),
                 assume_role_arn: optional_trimmed(aws_assume_role_arn.as_deref()),
             },
+        }),
+        AiBackendFileConfig::BedrockMantle {
+            model_id,
+            aws_region,
+            api_key_env,
+            aws_profile,
+            aws_assume_role_arn,
+        } => Ok(JudgeProviderConfig::BedrockMantle {
+            model_id: model_id.to_string(),
+            region: aws_region.to_string(),
+            auth: resolve_bedrock_mantle_auth(
+                api_key_env.as_deref(),
+                aws_profile.as_deref(),
+                aws_assume_role_arn.as_deref(),
+                env,
+                &prefix,
+            )?,
         }),
         AiBackendFileConfig::VertexAi {
             project_id,
@@ -514,6 +574,7 @@ fn backend_provider_name(backend: &AiBackendFileConfig) -> &'static str {
         AiBackendFileConfig::OpenAi { .. } => "openai",
         AiBackendFileConfig::Anthropic { .. } => "anthropic",
         AiBackendFileConfig::Bedrock { .. } => "bedrock",
+        AiBackendFileConfig::BedrockMantle { .. } => "bedrock_mantle",
         AiBackendFileConfig::VertexAi { .. } => "vertexai",
     }
 }
@@ -523,7 +584,41 @@ fn backend_model(backend: &AiBackendFileConfig) -> &str {
         AiBackendFileConfig::OpenAi { model, .. }
         | AiBackendFileConfig::Anthropic { model, .. } => model,
         AiBackendFileConfig::Bedrock { model_id, .. }
+        | AiBackendFileConfig::BedrockMantle { model_id, .. }
         | AiBackendFileConfig::VertexAi { model_id, .. } => model_id,
+    }
+}
+
+/// Resolve a Bedrock Mantle backend's auth: an `api_key_env` selects bearer-token auth, and
+/// omitting it selects IAM-role auth (SigV4-signed with `aws_profile`/`aws_assume_role_arn`).
+/// The two are mutually exclusive since Bedrock Mantle has no default AWS credential chain to
+/// fall back to the way plain Bedrock does.
+fn resolve_bedrock_mantle_auth(
+    api_key_env: Option<&str>,
+    aws_profile: Option<&str>,
+    aws_assume_role_arn: Option<&str>,
+    env: &dyn EnvironmentReader,
+    prefix: &str,
+) -> Result<BedrockMantleAuthConfig, ConfigError> {
+    match api_key_env {
+        Some(api_key_env) => {
+            if aws_profile.is_some() || aws_assume_role_arn.is_some() {
+                return Err(ConfigError::InvalidValue {
+                    field: format!("{prefix}.api_key_env"),
+                    message: "cannot be combined with `aws_profile` or `aws_assume_role_arn`; a bedrock_mantle backend authenticates with either an API key or an IAM role, not both".to_string(),
+                });
+            }
+
+            Ok(BedrockMantleAuthConfig::ApiKey(read_required_secret(
+                env,
+                api_key_env,
+                &format!("{prefix}.api_key_env"),
+            )?))
+        }
+        None => Ok(BedrockMantleAuthConfig::IamRole {
+            profile: optional_trimmed(aws_profile),
+            assume_role_arn: optional_trimmed(aws_assume_role_arn),
+        }),
     }
 }
 
@@ -1201,6 +1296,136 @@ provider = "unsupported-provider"
                 );
             }
             _ => panic!("expected bedrock provider"),
+        }
+    }
+
+    #[test]
+    fn resolves_bedrock_mantle_backend_api_key_and_iam_role_per_role() {
+        let env =
+            FixedEnvironment::with_overrides(&[("LLM_BEDROCK_MANTLE_API_KEY", "mantle-api-key")]);
+        let file_config =
+            parse_runtime_config(&valid_bedrock_mantle_config_with_distinct_backends());
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.llm.provider {
+            LlmProviderConfig::BedrockMantle(provider) => {
+                assert_eq!(provider.model_id, "openai.gpt-5.6-sol");
+                assert_eq!(provider.region, "us-east-1");
+                match provider.auth {
+                    crate::config::model::BedrockMantleAuthConfig::ApiKey(api_key) => {
+                        assert_eq!(api_key.expose(), "mantle-api-key");
+                    }
+                    other => panic!("expected api key auth, got {other:?}"),
+                }
+
+                assert_eq!(provider.sub_agent_model_id, "openai.gpt-5.6-terra");
+                assert_eq!(provider.sub_agent_region, "ap-northeast-1");
+                match provider.sub_agent_auth {
+                    crate::config::model::BedrockMantleAuthConfig::IamRole {
+                        profile,
+                        assume_role_arn,
+                    } => {
+                        assert_eq!(profile.as_deref(), Some("prod-sso"));
+                        assert_eq!(
+                            assume_role_arn.as_deref(),
+                            Some("arn:aws:iam::111111111111:role/ReiliMantle")
+                        );
+                    }
+                    other => panic!("expected iam role auth, got {other:?}"),
+                }
+            }
+            other => panic!("expected bedrock_mantle provider, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_bedrock_mantle_backend_combining_api_key_and_iam_role() {
+        let env =
+            FixedEnvironment::with_overrides(&[("LLM_BEDROCK_MANTLE_API_KEY", "mantle-api-key")]);
+        let file_config = parse_runtime_config(
+            &valid_bedrock_mantle_config_with_distinct_backends().replace(
+                "aws_region = \"us-east-1\"\napi_key_env = \"LLM_BEDROCK_MANTLE_API_KEY\"",
+                "aws_region = \"us-east-1\"\napi_key_env = \"LLM_BEDROCK_MANTLE_API_KEY\"\naws_assume_role_arn = \"arn:aws:iam::333333333333:role/ReiliMantleLead\"",
+            ),
+        );
+
+        let error = resolve_app_config(file_config, &env)
+            .expect_err("api key combined with iam role should fail");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "ai.backends.mantle_api_key.api_key_env");
+                assert!(
+                    message.contains("either an API key or an IAM role"),
+                    "{message}"
+                );
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn rejects_bedrock_mantle_as_web_search_backend() {
+        let env =
+            FixedEnvironment::with_overrides(&[("LLM_BEDROCK_MANTLE_API_KEY", "mantle-api-key")]);
+        let file_config = parse_runtime_config(
+            &valid_bedrock_mantle_config_with_distinct_backends()
+                .replace("web_search_backend = \"web_search\"\n", ""),
+        );
+
+        let error =
+            resolve_app_config(file_config, &env).expect_err("unsupported web search provider");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "ai.lead_backend");
+                assert!(message.contains("provider `bedrock_mantle`"), "{message}");
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn resolves_judge_backend_for_bedrock_mantle() {
+        let env =
+            FixedEnvironment::with_overrides(&[("LLM_BEDROCK_MANTLE_API_KEY", "mantle-api-key")]);
+        let file_config = parse_runtime_config(
+            &valid_bedrock_mantle_config_with_distinct_backends()
+                .replace(
+                    "[ai]\n",
+                    r#"[[channel.slack.channels]]
+names = ["alerts-*"]
+auto_response = true
+auto_response_policy = "React to incidents."
+
+[ai]
+"#,
+                )
+                .replace(
+                    "sub_agent_backend = \"mantle_iam\"",
+                    "sub_agent_backend = \"mantle_iam\"\njudge_backend = \"mantle_iam\"",
+                ),
+        );
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        match config.judge_llm.expect("judge llm config") {
+            JudgeProviderConfig::BedrockMantle {
+                model_id,
+                region,
+                auth,
+            } => {
+                assert_eq!(model_id, "openai.gpt-5.6-terra");
+                assert_eq!(region, "ap-northeast-1");
+                match auth {
+                    crate::config::model::BedrockMantleAuthConfig::IamRole { profile, .. } => {
+                        assert_eq!(profile.as_deref(), Some("prod-sso"));
+                    }
+                    other => panic!("expected iam role auth, got {other:?}"),
+                }
+            }
+            other => panic!("expected bedrock_mantle judge provider, got {other:?}"),
         }
     }
 
@@ -2333,6 +2558,36 @@ model_id = "moonshotai.kimi-k2.5"
 aws_region = "ap-northeast-1"
 aws_profile = "reiwa5.stg.AdministratorAccess"
 aws_assume_role_arn = "arn:aws:iam::222222222222:role/ReiliSubAgent"
+
+[ai.backends.web_search]
+provider = "openai"
+model = "gpt-5.4"
+api_key_env = "LLM_OPENAI_API_KEY"
+
+"#,
+        )
+    }
+
+    fn valid_bedrock_mantle_config_with_distinct_backends() -> String {
+        base_config_with_ai_block(
+            r#"[ai]
+default_backend = "mantle_iam"
+lead_backend = "mantle_api_key"
+sub_agent_backend = "mantle_iam"
+web_search_backend = "web_search"
+
+[ai.backends.mantle_api_key]
+provider = "bedrock_mantle"
+model_id = "openai.gpt-5.6-sol"
+aws_region = "us-east-1"
+api_key_env = "LLM_BEDROCK_MANTLE_API_KEY"
+
+[ai.backends.mantle_iam]
+provider = "bedrock_mantle"
+model_id = "openai.gpt-5.6-terra"
+aws_region = "ap-northeast-1"
+aws_profile = "prod-sso"
+aws_assume_role_arn = "arn:aws:iam::111111111111:role/ReiliMantle"
 
 [ai.backends.web_search]
 provider = "openai"

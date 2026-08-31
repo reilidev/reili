@@ -50,6 +50,7 @@ pub enum LlmProviderConfig {
     OpenAi(OpenAiLlmConfig),
     Anthropic(AnthropicLlmConfig),
     Bedrock(BedrockLlmConfig),
+    BedrockMantle(BedrockMantleLlmConfig),
     VertexAi(VertexAiLlmConfig),
 }
 
@@ -60,6 +61,7 @@ impl LlmProviderConfig {
             Self::OpenAi(_) => "openai",
             Self::Anthropic(_) => "anthropic",
             Self::Bedrock(_) => "bedrock",
+            Self::BedrockMantle(_) => "bedrock_mantle",
             Self::VertexAi(_) => "vertexai",
         }
     }
@@ -81,6 +83,11 @@ pub enum JudgeProviderConfig {
     Bedrock {
         model_id: String,
         aws: BedrockAwsConfig,
+    },
+    BedrockMantle {
+        model_id: String,
+        region: String,
+        auth: BedrockMantleAuthConfig,
     },
     VertexAi {
         project_id: String,
@@ -134,6 +141,29 @@ pub struct BedrockLlmConfig {
     pub sub_agent_model_id: String,
     pub aws: BedrockAwsConfig,
     pub sub_agent_aws: BedrockAwsConfig,
+}
+
+/// How a Bedrock Mantle backend authenticates: either a bearer API key, or an IAM role that is
+/// SigV4-signed into each request. Bedrock Mantle has no concept of a default AWS credential
+/// chain the way plain Bedrock does, so unlike [`BedrockAwsConfig`] this carries no "unset"
+/// variant — every backend must pick one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BedrockMantleAuthConfig {
+    ApiKey(SecretString),
+    IamRole {
+        profile: Option<String>,
+        assume_role_arn: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BedrockMantleLlmConfig {
+    pub model_id: String,
+    pub sub_agent_model_id: String,
+    pub region: String,
+    pub auth: BedrockMantleAuthConfig,
+    pub sub_agent_region: String,
+    pub sub_agent_auth: BedrockMantleAuthConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

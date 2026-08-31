@@ -98,9 +98,9 @@ default_backend = "primary"
 
 # Optional: backend ID for the `search_web` tool. Defaults to `lead_backend`. Must point at an
 # `openai` or `anthropic` backend — those are the only providers with a supported web search
-# integration. Set this when the lead backend uses a different, unsupported provider (`bedrock` or
-# `vertexai`); startup fails with a clear error if the resolved web search backend isn't openai or
-# anthropic.
+# integration. Set this when the lead backend uses a different, unsupported provider (`bedrock`,
+# `bedrock_mantle`, or `vertexai`); startup fails with a clear error if the resolved web search
+# backend isn't openai or anthropic.
 # web_search_backend = "anthropic"
 
 # "primary" is an arbitrary backend ID chosen by the config author.
@@ -137,6 +137,28 @@ api_key_env = "LLM_OPENAI_API_KEY"
 
 # Optional for role to switch into before calling Bedrock.
 # aws_assume_role_arn = "arn:aws:iam::123456789012:role/ReiliBedrock"
+
+# Amazon Bedrock powered by AWS Mantle, separate from `bedrock` above. Use either an API key or
+# an IAM role below, not both.
+#[ai.backends.bedrock_mantle]
+#provider = "bedrock_mantle"
+# Plain Bedrock Mantle model ID, no `us.`/`global.` prefix (that's the bedrock-runtime form).
+# The API family (and endpoint path) is inferred from the prefix: `openai.`/`xai.` use the OpenAI
+# Responses API, `anthropic.` uses the native Anthropic Messages API. Lead and sub-agent models
+# must be the same family.
+#model_id = "openai.gpt-5.6-sol"
+# Required: the Bedrock Mantle endpoint is regional (https://bedrock-mantle.<region>.api.aws).
+#aws_region = "us-east-1"
+
+# API key auth: set this to use a long-term Bedrock API key
+#api_key_env = "LLM_BEDROCK_MANTLE_API_KEY"
+
+# IAM role auth (used only when `api_key_env` is unset): same shape as the `bedrock` backend's
+# aws_profile/aws_assume_role_arn above. Requires `bedrock-mantle:CreateInference` scoped to the
+# account's Bedrock Mantle project resource (see the Bedrock Mantle IAM reference for the ARN
+# format); `api_key_env` requires `bedrock-mantle:CallWithBearerToken` on `Resource: "*"` instead.
+#aws_profile = "your-aws-profile"
+#aws_assume_role_arn = "arn:aws:iam::123456789012:role/ReiliBedrockMantle"
 
 #[ai.backends.vertex]
 #provider = "vertexai"
