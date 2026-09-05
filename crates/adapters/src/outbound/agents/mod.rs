@@ -13,5 +13,11 @@ pub use rig_vertexai::Client as VertexAiGeminiClient;
 pub use runner::providers::anthropic::{AnthropicTaskRunner, AnthropicTaskRunnerInput};
 pub(crate) use runner::providers::bedrock::create_bedrock_client;
 pub use runner::providers::bedrock::{BedrockAwsConfig, BedrockTaskRunner, BedrockTaskRunnerInput};
+pub use runner::providers::bedrock_mantle::{
+    BedrockMantleAuth, BedrockMantleIamRole, BedrockMantleTaskRunner, BedrockMantleTaskRunnerInput,
+};
+pub(crate) use runner::providers::bedrock_mantle::{
+    BedrockMantleClient, BedrockMantleModelFamily, create_bedrock_mantle_client,
+};
 pub use runner::providers::openai::{OpenAiTaskRunner, OpenAiTaskRunnerInput};
 pub use runner::providers::vertex_ai::{VertexAiTaskRunner, VertexAiTaskRunnerInput};

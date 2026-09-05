@@ -4,16 +4,20 @@ use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::logger::TracingLogger;
 use reili_adapters::outbound::agents::{
     AnthropicTaskRunner, AnthropicTaskRunnerInput, BedrockAwsConfig as AdaptersBedrockAwsConfig,
-    BedrockTaskRunner, BedrockTaskRunnerInput, ConnectorSet, DatadogConnector,
-    DatadogMcpToolConfig, EsaConnector, GitHubConnector, JiraConnector, OpenAiTaskRunner,
-    OpenAiTaskRunnerInput, VertexAiGeminiClient, VertexAiTaskRunner, VertexAiTaskRunnerInput,
+    BedrockMantleAuth as AdaptersBedrockMantleAuth,
+    BedrockMantleIamRole as AdaptersBedrockMantleIamRole, BedrockMantleTaskRunner,
+    BedrockMantleTaskRunnerInput, BedrockTaskRunner, BedrockTaskRunnerInput, ConnectorSet,
+    DatadogConnector, DatadogMcpToolConfig, EsaConnector, GitHubConnector, JiraConnector,
+    OpenAiTaskRunner, OpenAiTaskRunnerInput, VertexAiGeminiClient, VertexAiTaskRunner,
+    VertexAiTaskRunnerInput,
 };
 use reili_adapters::outbound::anthropic::{
     AnthropicWebSearchAdapter, AnthropicWebSearchAdapterConfig,
 };
 use reili_adapters::outbound::auto_response_judge::{
-    CreateBedrockAutoResponseJudgePortInput, create_anthropic_auto_response_judge_port,
-    create_bedrock_auto_response_judge_port, create_openai_auto_response_judge_port,
+    CreateBedrockAutoResponseJudgePortInput, CreateBedrockMantleAutoResponseJudgePortInput,
+    create_anthropic_auto_response_judge_port, create_bedrock_auto_response_judge_port,
+    create_bedrock_mantle_auto_response_judge_port, create_openai_auto_response_judge_port,
     create_vertex_ai_auto_response_judge_port,
 };
 use reili_adapters::outbound::esa::{
@@ -57,8 +61,9 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::config::{
-    AppConfig, BedrockAwsConfig, EsaConfig, JiraConfig, JudgeProviderConfig, LlmProviderConfig,
-    SecretString, SlackConnectionMode, WebSearchProviderConfig,
+    AppConfig, BedrockAwsConfig, BedrockMantleAuthConfig, EsaConfig, JiraConfig,
+    JudgeProviderConfig, LlmProviderConfig, SecretString, SlackConnectionMode,
+    WebSearchProviderConfig,
 };
 
 pub struct RuntimeDeps {
@@ -389,6 +394,19 @@ async fn create_auto_response_judge_port(
             .await
             .map_err(bedrock_client_initialization_error)
         }
+        JudgeProviderConfig::BedrockMantle {
+            model_id,
+            region,
+            auth,
+        } => create_bedrock_mantle_auto_response_judge_port(
+            CreateBedrockMantleAutoResponseJudgePortInput {
+                model_id: model_id.clone(),
+                region: region.clone(),
+                auth: to_adapters_bedrock_mantle_auth(auth),
+            },
+        )
+        .await
+        .map_err(bedrock_mantle_client_initialization_error),
         JudgeProviderConfig::VertexAi {
             project_id,
             location,
@@ -497,6 +515,23 @@ async fn create_task_runner(
 
             Ok(Arc::new(runner))
         }
+        LlmProviderConfig::BedrockMantle(config) => {
+            let runner = BedrockMantleTaskRunner::new(BedrockMantleTaskRunnerInput {
+                model_id: config.model_id.clone(),
+                sub_agent_model_id: config.sub_agent_model_id.clone(),
+                region: config.region.clone(),
+                auth: to_adapters_bedrock_mantle_auth(&config.auth),
+                sub_agent_region: config.sub_agent_region.clone(),
+                sub_agent_auth: to_adapters_bedrock_mantle_auth(&config.sub_agent_auth),
+                connectors: input.connectors,
+                language: input.language,
+                additional_system_prompt: input.additional_system_prompt,
+            })
+            .await
+            .map_err(bedrock_mantle_client_initialization_error)?;
+
+            Ok(Arc::new(runner))
+        }
         LlmProviderConfig::VertexAi(config) => {
             let client = build_vertex_ai_client(&config.project_id, &config.location)?;
 
@@ -520,9 +555,31 @@ fn to_adapters_bedrock_aws_config(aws: &BedrockAwsConfig) -> AdaptersBedrockAwsC
     }
 }
 
+fn to_adapters_bedrock_mantle_auth(auth: &BedrockMantleAuthConfig) -> AdaptersBedrockMantleAuth {
+    match auth {
+        BedrockMantleAuthConfig::ApiKey(api_key) => {
+            AdaptersBedrockMantleAuth::ApiKey(api_key.clone())
+        }
+        BedrockMantleAuthConfig::IamRole {
+            profile,
+            assume_role_arn,
+        } => AdaptersBedrockMantleAuth::IamRole(AdaptersBedrockMantleIamRole {
+            profile: profile.clone(),
+            assume_role_arn: assume_role_arn.clone(),
+        }),
+    }
+}
+
 fn bedrock_client_initialization_error(error: PortError) -> RuntimeBootstrapError {
     RuntimeBootstrapError::ProviderClientInitialization {
         provider: "bedrock".to_string(),
+        message: error.to_string(),
+    }
+}
+
+fn bedrock_mantle_client_initialization_error(error: PortError) -> RuntimeBootstrapError {
+    RuntimeBootstrapError::ProviderClientInitialization {
+        provider: "bedrock_mantle".to_string(),
         message: error.to_string(),
     }
 }

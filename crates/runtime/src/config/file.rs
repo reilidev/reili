@@ -290,6 +290,17 @@ pub(crate) enum AiBackendFileConfig {
         aws_region: Option<String>,
         aws_assume_role_arn: Option<String>,
     },
+    #[serde(rename = "bedrock_mantle")]
+    BedrockMantle {
+        #[serde(deserialize_with = "require_non_empty_string")]
+        model_id: String,
+        #[serde(deserialize_with = "require_non_empty_string")]
+        aws_region: String,
+        #[serde(default, deserialize_with = "optional_non_empty_string")]
+        api_key_env: Option<String>,
+        aws_profile: Option<String>,
+        aws_assume_role_arn: Option<String>,
+    },
     #[serde(rename = "vertexai", alias = "vertex_ai")]
     VertexAi {
         #[serde(deserialize_with = "require_non_empty_string")]
@@ -576,6 +587,95 @@ model_id = "gemini-2.5-flash"
             }
             other => panic!("expected Vertex AI backend, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_bedrock_mantle_backend_with_api_key_at_parse_time() {
+        let toml = valid_config().replace(
+            r#"[ai.backends.primary]
+provider = "openai"
+model = "gpt-5.4"
+"#,
+            r#"[ai.backends.primary]
+provider = "bedrock_mantle"
+model_id = "openai.gpt-5.6-sol"
+aws_region = "us-east-1"
+api_key_env = "LLM_BEDROCK_MANTLE_API_KEY"
+"#,
+        );
+
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+
+        match config.ai.backends.get("primary").expect("primary backend") {
+            AiBackendFileConfig::BedrockMantle {
+                model_id,
+                aws_region,
+                api_key_env,
+                aws_profile,
+                aws_assume_role_arn,
+            } => {
+                assert_eq!(model_id, "openai.gpt-5.6-sol");
+                assert_eq!(aws_region, "us-east-1");
+                assert_eq!(api_key_env.as_deref(), Some("LLM_BEDROCK_MANTLE_API_KEY"));
+                assert_eq!(aws_profile, &None);
+                assert_eq!(aws_assume_role_arn, &None);
+            }
+            other => panic!("expected bedrock_mantle backend, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_bedrock_mantle_backend_with_iam_role_at_parse_time() {
+        let toml = valid_config().replace(
+            r#"[ai.backends.primary]
+provider = "openai"
+model = "gpt-5.4"
+"#,
+            r#"[ai.backends.primary]
+provider = "bedrock_mantle"
+model_id = "openai.gpt-5.6-sol"
+aws_region = "us-east-1"
+aws_profile = "prod-sso"
+aws_assume_role_arn = "arn:aws:iam::111111111111:role/ReiliMantle"
+"#,
+        );
+
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+
+        match config.ai.backends.get("primary").expect("primary backend") {
+            AiBackendFileConfig::BedrockMantle {
+                api_key_env,
+                aws_profile,
+                aws_assume_role_arn,
+                ..
+            } => {
+                assert_eq!(api_key_env, &None);
+                assert_eq!(aws_profile.as_deref(), Some("prod-sso"));
+                assert_eq!(
+                    aws_assume_role_arn.as_deref(),
+                    Some("arn:aws:iam::111111111111:role/ReiliMantle")
+                );
+            }
+            other => panic!("expected bedrock_mantle backend, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_bedrock_mantle_backend_missing_aws_region_at_parse_time() {
+        let toml = valid_config().replace(
+            r#"[ai.backends.primary]
+provider = "openai"
+model = "gpt-5.4"
+"#,
+            r#"[ai.backends.primary]
+provider = "bedrock_mantle"
+model_id = "openai.gpt-5.6-sol"
+"#,
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("missing field `aws_region`"), "{message}");
     }
 
     #[test]

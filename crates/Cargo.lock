@@ -3084,6 +3084,7 @@ dependencies = [
  "aws-sigv4",
  "axum",
  "base64",
+ "bytes",
  "chrono",
  "futures",
  "google-cloud-aiplatform-v1",

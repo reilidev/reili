@@ -13,7 +13,10 @@ use rig::providers::{anthropic, openai};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::outbound::agents::{BedrockAwsConfig, VertexAiGeminiClient, create_bedrock_client};
+use crate::outbound::agents::{
+    BedrockAwsConfig, BedrockMantleAuth, BedrockMantleClient, BedrockMantleModelFamily,
+    VertexAiGeminiClient, create_bedrock_client, create_bedrock_mantle_client,
+};
 
 const JUDGE_MAX_TOKENS: u64 = 512;
 const DEFAULT_JUDGE_POLICY: &str = "\
@@ -123,6 +126,30 @@ pub async fn create_bedrock_auto_response_judge_port(
         client,
         input.model_id,
     )))
+}
+
+pub struct CreateBedrockMantleAutoResponseJudgePortInput {
+    pub model_id: String,
+    pub region: String,
+    pub auth: BedrockMantleAuth,
+}
+
+pub async fn create_bedrock_mantle_auto_response_judge_port(
+    input: CreateBedrockMantleAutoResponseJudgePortInput,
+) -> Result<Arc<dyn AutoResponseJudgePort>, PortError> {
+    let family = BedrockMantleModelFamily::from_model_id(&input.model_id)?;
+    let client = create_bedrock_mantle_client(family, &input.region, &input.auth).await?;
+
+    Ok(match client {
+        BedrockMantleClient::OpenAi(client) => {
+            Arc::new(AutoResponseJudgeAdapter::new(client, input.model_id))
+                as Arc<dyn AutoResponseJudgePort>
+        }
+        BedrockMantleClient::Anthropic(client) => {
+            Arc::new(AutoResponseJudgeAdapter::new(client, input.model_id))
+                as Arc<dyn AutoResponseJudgePort>
+        }
+    })
 }
 
 pub fn create_vertex_ai_auto_response_judge_port(

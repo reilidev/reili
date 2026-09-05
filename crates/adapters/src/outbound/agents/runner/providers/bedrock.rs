@@ -91,7 +91,7 @@ pub(crate) async fn create_bedrock_client(aws: &BedrockAwsConfig) -> Result<Clie
     )))
 }
 
-async fn load_sdk_config(aws: &BedrockAwsConfig) -> SdkConfig {
+pub(crate) async fn load_sdk_config(aws: &BedrockAwsConfig) -> SdkConfig {
     let base_config = config_loader(aws).load().await;
 
     let Some(assume_role_arn) = aws.assume_role_arn.as_deref() else {
