@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use reili_core::error::PortError;
 use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
-use rig::completion::ToolDefinition;
-use rig::tool::Tool;
+use rig::tool::{Tool, ToolContext};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -48,30 +47,32 @@ impl Tool for ReportProgressTool {
     type Args = ReportProgressArgs;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description:
-                "Report a short progress summary before starting a new investigation step."
-                    .to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Short title of the next investigation step."
-                    },
-                    "summary": {
-                        "type": "string",
-                        "description": "Short details for the step."
-                    }
-                },
-                "required": ["title", "summary"]
-            }),
-        }
+    fn description(&self) -> String {
+        "Report a short progress summary before starting a new investigation step.".to_string()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    fn parameters(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Short title of the next investigation step."
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Short details for the step."
+                }
+            },
+            "required": ["title", "summary"]
+        })
+    }
+
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let publish_result = self
             .on_progress_event
             .publish(TaskProgressEventInput {
@@ -100,7 +101,7 @@ mod tests {
 
     use reili_core::error::PortError;
     use reili_core::task::{MockTaskProgressEventPort, TaskProgressEvent, TaskProgressEventInput};
-    use rig::tool::Tool;
+    use rig::tool::{Tool, ToolContext};
 
     use super::{ReportProgressArgs, ReportProgressTool, ReportProgressToolInput};
 
@@ -122,10 +123,13 @@ mod tests {
         });
 
         let output = tool
-            .call(ReportProgressArgs {
-                title: "Collect logs".to_string(),
-                summary: "Investigate recent errors".to_string(),
-            })
+            .call(
+                &mut ToolContext::new(),
+                ReportProgressArgs {
+                    title: "Collect logs".to_string(),
+                    summary: "Investigate recent errors".to_string(),
+                },
+            )
             .await
             .expect("call report_progress");
 
@@ -155,10 +159,13 @@ mod tests {
         });
 
         let output = tool
-            .call(ReportProgressArgs {
-                title: "Collect logs".to_string(),
-                summary: "Inspect the latest failures".to_string(),
-            })
+            .call(
+                &mut ToolContext::new(),
+                ReportProgressArgs {
+                    title: "Collect logs".to_string(),
+                    summary: "Inspect the latest failures".to_string(),
+                },
+            )
             .await
             .expect("call report_progress");
 

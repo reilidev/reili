@@ -67,6 +67,8 @@ mod tests {
             total_tokens: 30,
             cached_input_tokens: 0,
             cache_creation_input_tokens: 0,
+            tool_use_prompt_tokens: 0,
+            reasoning_tokens: 0,
         });
         collector.record_usage(&Usage {
             input_tokens: 3,
@@ -74,6 +76,8 @@ mod tests {
             total_tokens: 0,
             cached_input_tokens: 0,
             cache_creation_input_tokens: 0,
+            tool_use_prompt_tokens: 0,
+            reasoning_tokens: 0,
         });
 
         assert_eq!(

@@ -2,13 +2,11 @@ use std::collections::HashSet;
 
 use reili_core::error::PortError;
 use reili_core::source_code::github::GithubScopePolicy;
-use rig::completion::ToolDefinition;
-use rig::tool::{ToolDyn, ToolError};
-use rig::wasm_compat::WasmBoxedFuture;
+use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use rmcp::model::{CallToolResult, Tool};
 use serde_json::{Map, Value};
 
-use super::read_file::GitHubReadFileToolAdapter;
+use super::read_file::github_read_file_tool;
 use crate::outbound::agents::connector::ToolCatalogEntry;
 use crate::outbound::agents::mcp::support;
 use crate::outbound::github::github_mcp_client::{self, GitHubMcpConfig, GitHubMcpHttpClient};
@@ -129,17 +127,17 @@ pub struct GitHubMcpToolset {
 
 impl GitHubMcpToolset {
     #[must_use]
-    pub fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
+    pub fn sub_agent_tools(&self) -> Vec<DynamicTool> {
         let mut adapters = build_tool_adapters(
             &self.tools,
             GITHUB_SUB_AGENT_TOOLS,
             self.client.clone(),
             self.scope_policy.clone(),
         );
-        adapters.push(Box::new(GitHubReadFileToolAdapter::new(
+        adapters.push(github_read_file_tool(
             self.client.clone(),
             self.scope_policy.clone(),
-        )) as Box<dyn ToolDyn>);
+        ));
         adapters
     }
 
@@ -211,58 +209,49 @@ fn build_tool_adapters(
     names: &[&str],
     client: GitHubMcpHttpClient,
     scope_policy: GithubScopePolicy,
-) -> Vec<Box<dyn ToolDyn>> {
+) -> Vec<DynamicTool> {
     filter_tools(tools, names)
         .into_iter()
-        .map(|tool| {
-            Box::new(GitHubMcpToolAdapter {
-                definition: tool,
-                client: client.clone(),
-                scope_policy: scope_policy.clone(),
-            }) as Box<dyn ToolDyn>
-        })
+        .map(|tool| build_github_mcp_tool(tool, client.clone(), scope_policy.clone()))
         .collect()
 }
 
-#[derive(Clone)]
-struct GitHubMcpToolAdapter {
-    definition: Tool,
+fn build_github_mcp_tool(
+    tool: Tool,
     client: GitHubMcpHttpClient,
     scope_policy: GithubScopePolicy,
-}
+) -> DynamicTool {
+    let definition = support::mcp_tool_definition(&tool);
+    let name = tool.name.to_string();
 
-impl ToolDyn for GitHubMcpToolAdapter {
-    fn name(&self) -> String {
-        self.definition.name.to_string()
-    }
+    DynamicTool::new(
+        definition.name,
+        definition.description,
+        definition.parameters,
+        move |_context, arguments_value| {
+            let name = name.clone();
+            let client = client.clone();
+            let scope_policy = scope_policy.clone();
 
-    fn definition(&self, _prompt: String) -> WasmBoxedFuture<'_, ToolDefinition> {
-        Box::pin(async move { support::mcp_tool_definition(&self.definition) })
-    }
+            Box::pin(async move {
+                let arguments =
+                    support::parse_tool_arguments(GITHUB_MCP_SOURCE_LABEL, arguments_value)?;
+                validate_scope(&name, &arguments, &scope_policy)
+                    .map_err(|error| ToolExecutionError::permission_denied(error.message))?;
 
-    fn call(&self, args: String) -> WasmBoxedFuture<'_, Result<String, ToolError>> {
-        let name = self.definition.name.clone();
-        let client = self.client.clone();
-        let scope_policy = self.scope_policy.clone();
+                let result = call_github_mcp_tool(&client, &name, arguments).await?;
 
-        Box::pin(async move {
-            let arguments = support::parse_tool_arguments(GITHUB_MCP_SOURCE_LABEL, &args)?;
-            validate_scope(&name, &arguments, &scope_policy).map_err(|error| {
-                ToolError::ToolCallError(Box::new(std::io::Error::other(error.message)))
-            })?;
-
-            let result = call_github_mcp_tool(&client, name.as_ref(), arguments).await?;
-
-            Ok(support::format_tool_success(&result))
-        })
-    }
+                Ok(ToolOutput::text(support::format_tool_success(&result)))
+            })
+        },
+    )
 }
 
 pub(super) async fn call_github_mcp_tool(
     client: &GitHubMcpHttpClient,
     name: &str,
     arguments: Map<String, Value>,
-) -> Result<CallToolResult, ToolError> {
+) -> Result<CallToolResult, ToolExecutionError> {
     support::call_mcp_tool(GITHUB_MCP_SOURCE_LABEL, client, name, arguments).await
 }
 

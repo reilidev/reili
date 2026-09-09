@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rig::tool::ToolDyn;
+use rig::tool::DynamicTool;
 
 use super::catalog::ToolCatalogGroup;
 use super::error::ConnectorPrepareError;
@@ -17,7 +17,7 @@ pub trait ConnectorFactory: Send + Sync {
 /// A connected handle. Cheap and synchronous to query during the assembly phase.
 pub trait PreparedConnector: Send + Sync {
     /// Tools exposed to a dynamically spawned sub-agent.
-    fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>>;
+    fn sub_agent_tools(&self) -> Vec<DynamicTool>;
 
     /// Catalog of tools this connector can supply to a dynamically spawned sub-agent.
     /// Entries must match the names of tools returned by [`Self::sub_agent_tools`].

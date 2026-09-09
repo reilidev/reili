@@ -2,9 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use reili_core::error::PortError;
-use rig::completion::ToolDefinition;
-use rig::tool::{ToolDyn, ToolError};
-use rig::wasm_compat::WasmBoxedFuture;
+use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use rmcp::model::{CallToolResult, Tool};
 use serde_json::{Map, Value};
 
@@ -61,7 +59,7 @@ pub struct JiraMcpToolset {
 
 impl JiraMcpToolset {
     #[must_use]
-    pub fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
+    pub fn sub_agent_tools(&self) -> Vec<DynamicTool> {
         build_tool_adapters(
             &self.tools,
             JIRA_SUB_AGENT_TOOLS,
@@ -131,61 +129,49 @@ fn build_tool_adapters(
     names: &[&str],
     client: JiraMcpHttpClient,
     site: Arc<str>,
-) -> Vec<Box<dyn ToolDyn>> {
+) -> Vec<DynamicTool> {
     filter_tools(tools, names)
         .into_iter()
-        .map(|tool| {
-            Box::new(JiraMcpToolAdapter {
-                definition: tool,
-                client: client.clone(),
-                site: Arc::clone(&site),
-            }) as Box<dyn ToolDyn>
-        })
+        .map(|tool| build_jira_mcp_tool(tool, client.clone(), Arc::clone(&site)))
         .collect()
 }
 
-#[derive(Clone)]
-struct JiraMcpToolAdapter {
-    definition: Tool,
-    client: JiraMcpHttpClient,
-    site: Arc<str>,
-}
+fn build_jira_mcp_tool(tool: Tool, client: JiraMcpHttpClient, site: Arc<str>) -> DynamicTool {
+    let definition = support::mcp_tool_definition(&tool);
+    let name = tool.name.to_string();
 
-impl ToolDyn for JiraMcpToolAdapter {
-    fn name(&self) -> String {
-        self.definition.name.to_string()
-    }
+    DynamicTool::new(
+        definition.name,
+        definition.description,
+        definition.parameters,
+        move |_context, arguments_value| {
+            let name = name.clone();
+            let client = client.clone();
+            let site = Arc::clone(&site);
 
-    fn definition(&self, _prompt: String) -> WasmBoxedFuture<'_, ToolDefinition> {
-        Box::pin(async move { support::mcp_tool_definition(&self.definition) })
-    }
+            Box::pin(async move {
+                let mut arguments =
+                    support::parse_tool_arguments(JIRA_MCP_SOURCE_LABEL, arguments_value)?;
+                // Stamp the configured site onto every call so the LLM cannot target a different
+                // Atlassian site than the one this connector is scoped to.
+                arguments.insert(
+                    CLOUD_ID_ARGUMENT_NAME.to_string(),
+                    Value::String(site.to_string()),
+                );
 
-    fn call(&self, args: String) -> WasmBoxedFuture<'_, Result<String, ToolError>> {
-        let name = self.definition.name.clone();
-        let client = self.client.clone();
-        let site = Arc::clone(&self.site);
+                let result = call_jira_mcp_tool(&client, &name, arguments).await?;
 
-        Box::pin(async move {
-            let mut arguments = support::parse_tool_arguments(JIRA_MCP_SOURCE_LABEL, &args)?;
-            // Stamp the configured site onto every call so the LLM cannot target a different
-            // Atlassian site than the one this connector is scoped to.
-            arguments.insert(
-                CLOUD_ID_ARGUMENT_NAME.to_string(),
-                Value::String(site.to_string()),
-            );
-
-            let result = call_jira_mcp_tool(&client, name.as_ref(), arguments).await?;
-
-            Ok(format_jira_mcp_tool_success(&result))
-        })
-    }
+                Ok(ToolOutput::text(format_jira_mcp_tool_success(&result)))
+            })
+        },
+    )
 }
 
 pub(super) async fn call_jira_mcp_tool(
     client: &JiraMcpHttpClient,
     name: &str,
     arguments: Map<String, Value>,
-) -> Result<CallToolResult, ToolError> {
+) -> Result<CallToolResult, ToolExecutionError> {
     support::call_mcp_tool(JIRA_MCP_SOURCE_LABEL, client, name, arguments).await
 }
 

@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use reili_core::error::PortError;
-use rig::completion::ToolDefinition;
-use rig::tool::Tool;
+use rig::tool::{Tool, ToolContext};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -35,29 +34,33 @@ impl Tool for GetPostTool {
     type Args = GetPostArgs;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Fetch a single esa post by its post number (the numeric ID shown in \
+    fn description(&self) -> String {
+        "Fetch a single esa post by its post number (the numeric ID shown in \
                 the esa URL, e.g. the 123 in https://docs.esa.io/posts/123). Use this when you \
                 already know which post you want, such as one referenced by search_posts results \
                 or by a link shared in Slack or GitHub."
-                .to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "number": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "The esa post number to fetch, e.g. 123 for https://docs.esa.io/posts/123."
-                    }
-                },
-                "required": ["number"]
-            }),
-        }
+            .to_string()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    fn parameters(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "number": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The esa post number to fetch, e.g. 123 for https://docs.esa.io/posts/123."
+                }
+            },
+            "required": ["number"]
+        })
+    }
+
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         match self
             .esa_post_get_port
             .get_post(EsaPostGetInput {
@@ -78,7 +81,7 @@ mod tests {
     use crate::outbound::esa::{EsaPost, EsaPostGetInput, EsaPostGetPort};
     use async_trait::async_trait;
     use reili_core::error::PortError;
-    use rig::tool::Tool;
+    use rig::tool::{Tool, ToolContext};
 
     use super::{GetPostArgs, GetPostTool};
 
@@ -125,7 +128,7 @@ mod tests {
         );
 
         let output = tool
-            .call(GetPostArgs { number: 102 })
+            .call(&mut ToolContext::new(), GetPostArgs { number: 102 })
             .await
             .expect("call get_post");
 
@@ -149,7 +152,7 @@ mod tests {
         );
 
         let output = tool
-            .call(GetPostArgs { number: 999 })
+            .call(&mut ToolContext::new(), GetPostArgs { number: 999 })
             .await
             .expect("call get_post");
 
@@ -181,7 +184,7 @@ mod tests {
             }),
         );
 
-        let definition = tool.definition("test".to_string()).await;
+        let definition = rig::tool::tool_definition(&tool);
         assert_eq!(definition.name, "get_post");
         let required = definition.parameters["required"]
             .as_array()

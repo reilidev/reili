@@ -7,8 +7,7 @@ use reili_core::messaging::slack::{
     SlackMessageSearchSort, SlackMessageSearchSortDirection,
 };
 use reili_core::secret::SecretString;
-use rig::completion::ToolDefinition;
-use rig::tool::Tool;
+use rig::tool::{Tool, ToolContext};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -82,62 +81,66 @@ impl Tool for SearchSlackMessagesTool {
     type Args = SearchSlackMessagesArgs;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Search prior Slack messages in the current Slack invocation context. Results are limited by Slack permissions, the originating conversation context, and the app's bot-token search scopes.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Slack search query. Prefer concise plain text or valid Slack search filters.",
-                        "maxLength": 500
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 5,
-                        "default": 5,
-                        "description": "Maximum number of message results to return."
-                    },
-                    "includeBots": {
-                        "type": "boolean",
-                        "default": true,
-                        "description": "Whether to include bot-authored messages."
-                    },
-                    "includeContextMessages": {
-                        "type": "boolean",
-                        "default": true,
-                        "description": "Whether to include surrounding before/after messages for each hit."
-                    },
-                    "before": {
-                        "type": "integer",
-                        "description": "Optional upper bound as a UNIX timestamp in seconds."
-                    },
-                    "after": {
-                        "type": "integer",
-                        "description": "Optional lower bound as a UNIX timestamp in seconds."
-                    },
-                    "sort": {
-                        "type": "string",
-                        "enum": ["score", "timestamp"],
-                        "default": "score",
-                        "description": "Sort by relevance score or timestamp."
-                    },
-                    "sortDirection": {
-                        "type": "string",
-                        "enum": ["asc", "desc"],
-                        "default": "desc",
-                        "description": "Sort direction."
-                    }
-                },
-                "required": ["query"]
-            }),
-        }
+    fn description(&self) -> String {
+        "Search prior Slack messages in the current Slack invocation context. Results are limited by Slack permissions, the originating conversation context, and the app's bot-token search scopes.".to_string()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    fn parameters(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Slack search query. Prefer concise plain text or valid Slack search filters.",
+                    "maxLength": 500
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                    "default": 5,
+                    "description": "Maximum number of message results to return."
+                },
+                "includeBots": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether to include bot-authored messages."
+                },
+                "includeContextMessages": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether to include surrounding before/after messages for each hit."
+                },
+                "before": {
+                    "type": "integer",
+                    "description": "Optional upper bound as a UNIX timestamp in seconds."
+                },
+                "after": {
+                    "type": "integer",
+                    "description": "Optional lower bound as a UNIX timestamp in seconds."
+                },
+                "sort": {
+                    "type": "string",
+                    "enum": ["score", "timestamp"],
+                    "default": "score",
+                    "description": "Sort by relevance score or timestamp."
+                },
+                "sortDirection": {
+                    "type": "string",
+                    "enum": ["asc", "desc"],
+                    "default": "desc",
+                    "description": "Sort direction."
+                }
+            },
+            "required": ["query"]
+        })
+    }
+
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         if args.limit == 0 || args.limit > 5 {
             return to_json_string(&to_slack_tool_soft_error(&PortError::invalid_input(
                 "Slack search tool limit must be between 1 and 5",
@@ -288,7 +291,7 @@ mod tests {
         SlackMessageSearchSortDirection,
     };
     use reili_core::secret::SecretString;
-    use rig::tool::Tool;
+    use rig::tool::{Tool, ToolContext};
 
     use super::{SearchSlackMessagesArgs, SearchSlackMessagesTool};
 
@@ -349,16 +352,19 @@ mod tests {
         );
 
         let output = tool
-            .call(SearchSlackMessagesArgs {
-                query: "rollout issue".to_string(),
-                limit: 5,
-                include_bots: true,
-                include_context_messages: true,
-                before: None,
-                after: Some(1_710_000_000),
-                sort: SlackMessageSearchSort::Timestamp,
-                sort_direction: SlackMessageSearchSortDirection::Desc,
-            })
+            .call(
+                &mut ToolContext::new(),
+                SearchSlackMessagesArgs {
+                    query: "rollout issue".to_string(),
+                    limit: 5,
+                    include_bots: true,
+                    include_context_messages: true,
+                    before: None,
+                    after: Some(1_710_000_000),
+                    sort: SlackMessageSearchSort::Timestamp,
+                    sort_direction: SlackMessageSearchSortDirection::Desc,
+                },
+            )
             .await
             .expect("call search_slack_messages");
 
@@ -388,16 +394,19 @@ mod tests {
         );
 
         let output = tool
-            .call(SearchSlackMessagesArgs {
-                query: "outage".to_string(),
-                limit: 10,
-                include_bots: true,
-                include_context_messages: true,
-                before: None,
-                after: None,
-                sort: SlackMessageSearchSort::Score,
-                sort_direction: SlackMessageSearchSortDirection::Desc,
-            })
+            .call(
+                &mut ToolContext::new(),
+                SearchSlackMessagesArgs {
+                    query: "outage".to_string(),
+                    limit: 10,
+                    include_bots: true,
+                    include_context_messages: true,
+                    before: None,
+                    after: None,
+                    sort: SlackMessageSearchSort::Score,
+                    sort_direction: SlackMessageSearchSortDirection::Desc,
+                },
+            )
             .await
             .expect("call search_slack_messages");
 
@@ -418,16 +427,19 @@ mod tests {
         );
 
         let output = tool
-            .call(SearchSlackMessagesArgs {
-                query: "outage".to_string(),
-                limit: 5,
-                include_bots: true,
-                include_context_messages: true,
-                before: None,
-                after: None,
-                sort: SlackMessageSearchSort::Score,
-                sort_direction: SlackMessageSearchSortDirection::Desc,
-            })
+            .call(
+                &mut ToolContext::new(),
+                SearchSlackMessagesArgs {
+                    query: "outage".to_string(),
+                    limit: 5,
+                    include_bots: true,
+                    include_context_messages: true,
+                    before: None,
+                    after: None,
+                    sort: SlackMessageSearchSort::Score,
+                    sort_direction: SlackMessageSearchSortDirection::Desc,
+                },
+            )
             .await
             .expect("call search_slack_messages");
 
@@ -447,7 +459,7 @@ mod tests {
             },
         );
 
-        let definition = tool.definition("test".to_string()).await;
+        let definition = rig::tool::tool_definition(&tool);
         assert_eq!(definition.name, "search_slack_messages");
         assert_eq!(definition.parameters["properties"]["limit"]["default"], 5);
         assert_eq!(definition.parameters["properties"]["limit"]["maximum"], 5);

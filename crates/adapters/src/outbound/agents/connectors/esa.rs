@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rig::tool::Tool;
-use rig::tool::ToolDyn;
+use rig::tool::{DynamicTool, Tool};
 
 use crate::outbound::agents::connector::{
     ConnectorFactory, ConnectorPrepareError, ConnectorPromptFact, PreparedConnector,
     ToolCatalogEntry, ToolCatalogGroup,
 };
+use crate::outbound::agents::tool_adapter::into_dynamic_tool;
 use crate::outbound::agents::tools::{GetPostTool, SearchPostsTool};
 use crate::outbound::esa::{EsaPostGetPort, EsaPostSearchPort};
 
@@ -51,10 +51,10 @@ struct PreparedEsaConnector {
 }
 
 impl PreparedConnector for PreparedEsaConnector {
-    fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
+    fn sub_agent_tools(&self) -> Vec<DynamicTool> {
         vec![
-            Box::new(SearchPostsTool::new(Arc::clone(&self.post_search_port))) as Box<dyn ToolDyn>,
-            Box::new(GetPostTool::new(Arc::clone(&self.post_get_port))) as Box<dyn ToolDyn>,
+            into_dynamic_tool(SearchPostsTool::new(Arc::clone(&self.post_search_port))),
+            into_dynamic_tool(GetPostTool::new(Arc::clone(&self.post_get_port))),
         ]
     }
 

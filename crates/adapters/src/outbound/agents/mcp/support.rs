@@ -1,8 +1,7 @@
 use std::collections::HashSet;
-use std::io;
 
 use rig::completion::ToolDefinition;
-use rig::tool::ToolError;
+use rig::tool::ToolExecutionError;
 use rmcp::model::{CallToolResult, ContentBlock, Tool};
 use serde_json::{Map, Value};
 use tracing::error;
@@ -17,18 +16,16 @@ pub(super) fn mcp_tool_definition(tool: &Tool) -> ToolDefinition {
     }
 }
 
+/// Extracts the JSON object a [`rig::tool::DynamicTool`] callback receives already parsed.
 pub(super) fn parse_tool_arguments(
     source_label: &str,
-    args: &str,
-) -> Result<Map<String, Value>, ToolError> {
-    serde_json::from_str::<Value>(args)?
-        .as_object()
-        .cloned()
-        .ok_or_else(|| {
-            ToolError::ToolCallError(Box::new(io::Error::other(format!(
-                "{source_label} MCP tool arguments must be a JSON object"
-            ))))
-        })
+    arguments: Value,
+) -> Result<Map<String, Value>, ToolExecutionError> {
+    arguments.as_object().cloned().ok_or_else(|| {
+        ToolExecutionError::invalid_args(format!(
+            "{source_label} MCP tool arguments must be a JSON object"
+        ))
+    })
 }
 
 pub(super) fn filter_tools_by_name(tools: &[Tool], names: &[&str]) -> Vec<Tool> {
@@ -47,7 +44,7 @@ pub(super) async fn call_mcp_tool<A: McpHttpClientAuth + Clone>(
     client: &StreamableHttpMcpClient<A>,
     name: &str,
     arguments: Map<String, Value>,
-) -> Result<CallToolResult, ToolError> {
+) -> Result<CallToolResult, ToolExecutionError> {
     let result = client
         .call_tool(name.to_string(), Some(arguments))
         .await
@@ -56,7 +53,7 @@ pub(super) async fn call_mcp_tool<A: McpHttpClientAuth + Clone>(
                 "{source_label} MCP tool {name} failed before returning a result: {transport_error}"
             );
             error!(tool_name = %name, error = %transport_error, "{error_message}");
-            ToolError::ToolCallError(Box::new(io::Error::other(error_message)))
+            ToolExecutionError::other(error_message)
         })?;
 
     if matches!(result.is_error, Some(true)) {
@@ -68,9 +65,7 @@ pub(super) async fn call_mcp_tool<A: McpHttpClientAuth + Clone>(
             content = ?result.content,
             "{source_label} MCP tool returned an error"
         );
-        return Err(ToolError::ToolCallError(Box::new(io::Error::other(
-            error_message,
-        ))));
+        return Err(ToolExecutionError::other(error_message));
     }
 
     Ok(result)
@@ -177,7 +172,7 @@ mod tests {
 
     #[test]
     fn parses_object_arguments() {
-        let arguments = parse_tool_arguments("Example", r#"{"query":"foo"}"#).expect("parse");
+        let arguments = parse_tool_arguments("Example", json!({"query": "foo"})).expect("parse");
 
         assert_eq!(
             arguments.get("query").and_then(serde_json::Value::as_str),
@@ -187,7 +182,8 @@ mod tests {
 
     #[test]
     fn rejects_non_object_arguments() {
-        let error = parse_tool_arguments("Example", "[1,2,3]").expect_err("non-object should fail");
+        let error =
+            parse_tool_arguments("Example", json!([1, 2, 3])).expect_err("non-object should fail");
 
         assert!(error.to_string().contains("Example MCP tool arguments"));
     }

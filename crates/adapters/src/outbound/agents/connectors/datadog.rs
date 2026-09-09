@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rig::tool::ToolDyn;
+use rig::tool::DynamicTool;
 
 use crate::outbound::agents::connector::{
     ConnectorFactory, ConnectorPrepareError, ConnectorPromptFact, PreparedConnector,
@@ -54,7 +54,7 @@ struct PreparedDatadogConnector {
 }
 
 impl PreparedConnector for PreparedDatadogConnector {
-    fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
+    fn sub_agent_tools(&self) -> Vec<DynamicTool> {
         self.toolset.sub_agent_tools()
     }
 

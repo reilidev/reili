@@ -8,7 +8,7 @@ use reili_core::messaging::slack::{
 use reili_core::secret::SecretString;
 use rig::client::ProviderClient;
 use rig::extractor::ExtractionError;
-use rig::prelude::CompletionClient;
+use rig::prelude::{AgentClientExt, CompletionClient};
 use rig::providers::{anthropic, openai};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -95,21 +95,19 @@ where
 pub fn create_openai_auto_response_judge_port(
     api_key: SecretString,
     model: String,
-) -> Arc<dyn AutoResponseJudgePort> {
-    Arc::new(AutoResponseJudgeAdapter::new(
-        openai::Client::from_val(api_key.expose().to_string().into()),
-        model,
-    ))
+) -> Result<Arc<dyn AutoResponseJudgePort>, PortError> {
+    let client = openai::Client::from_val(api_key.expose().to_string().into())
+        .map_err(|error| PortError::new(format!("Failed to build OpenAI client: {error}")))?;
+    Ok(Arc::new(AutoResponseJudgeAdapter::new(client, model)))
 }
 
 pub fn create_anthropic_auto_response_judge_port(
     api_key: SecretString,
     model: String,
-) -> Arc<dyn AutoResponseJudgePort> {
-    Arc::new(AutoResponseJudgeAdapter::new(
-        anthropic::Client::from_val(api_key.expose().to_string()),
-        model,
-    ))
+) -> Result<Arc<dyn AutoResponseJudgePort>, PortError> {
+    let client = anthropic::Client::from_val(api_key.expose().to_string())
+        .map_err(|error| PortError::new(format!("Failed to build Anthropic client: {error}")))?;
+    Ok(Arc::new(AutoResponseJudgeAdapter::new(client, model)))
 }
 
 pub struct CreateBedrockAutoResponseJudgePortInput {

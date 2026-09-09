@@ -1,9 +1,6 @@
-use std::io;
-
 use reili_core::source_code::github::GithubScopePolicy;
 use rig::completion::ToolDefinition;
-use rig::tool::{ToolDyn, ToolError};
-use rig::wasm_compat::WasmBoxedFuture;
+use rig::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use rmcp::model::CallToolResult;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -17,60 +14,51 @@ use crate::outbound::github::github_mcp_client::GitHubMcpHttpClient;
 /// Default number of lines returned by `read_file` when the caller omits `limit`.
 const DEFAULT_READ_FILE_LINE_LIMIT: usize = 400;
 
-/// A `read_file` wrapper around the server-side `get_file_contents` tool.
+/// Builds the `read_file` wrapper around the server-side `get_file_contents` tool.
 ///
 /// The MCP server still fetches the whole file, but only a bounded, line-numbered window enters the
 /// LLM context. The agent can iterate (adjust `offset`/`limit`) instead of loading large files
 /// wholesale. Directory paths and other non-file responses are passed through unchanged.
-#[derive(Clone)]
-pub(super) struct GitHubReadFileToolAdapter {
+pub(super) fn github_read_file_tool(
     client: GitHubMcpHttpClient,
     scope_policy: GithubScopePolicy,
-}
+) -> DynamicTool {
+    let definition = read_file_tool_definition();
 
-impl GitHubReadFileToolAdapter {
-    pub(super) fn new(client: GitHubMcpHttpClient, scope_policy: GithubScopePolicy) -> Self {
-        Self {
-            client,
-            scope_policy,
-        }
-    }
-}
+    DynamicTool::new(
+        definition.name,
+        definition.description,
+        definition.parameters,
+        move |_context, arguments_value| {
+            let client = client.clone();
+            let scope_policy = scope_policy.clone();
 
-impl ToolDyn for GitHubReadFileToolAdapter {
-    fn name(&self) -> String {
-        READ_FILE_TOOL_NAME.to_string()
-    }
+            Box::pin(async move {
+                let arguments: ReadFileArguments = serde_json::from_value(arguments_value)
+                    .map_err(|error| {
+                        ToolExecutionError::invalid_args(format!(
+                            "read_file arguments were invalid: {error}"
+                        ))
+                    })?;
+                let forwarded = arguments.to_forwarded_arguments()?;
 
-    fn definition(&self, _prompt: String) -> WasmBoxedFuture<'_, ToolDefinition> {
-        Box::pin(async move { read_file_tool_definition() })
-    }
+                validate_scope(READ_FILE_TOOL_NAME, &forwarded, &scope_policy)
+                    .map_err(|error| ToolExecutionError::permission_denied(error.message))?;
 
-    fn call(&self, args: String) -> WasmBoxedFuture<'_, Result<String, ToolError>> {
-        let client = self.client.clone();
-        let scope_policy = self.scope_policy.clone();
+                let result =
+                    call_github_mcp_tool(&client, GET_FILE_CONTENTS_TOOL_NAME, forwarded).await?;
 
-        Box::pin(async move {
-            let arguments: ReadFileArguments = serde_json::from_str(&args)?;
-            let forwarded = arguments.to_forwarded_arguments()?;
-
-            validate_scope(READ_FILE_TOOL_NAME, &forwarded, &scope_policy).map_err(|error| {
-                ToolError::ToolCallError(Box::new(io::Error::other(error.message)))
-            })?;
-
-            let result =
-                call_github_mcp_tool(&client, GET_FILE_CONTENTS_TOOL_NAME, forwarded).await?;
-
-            match extract_file_text(&result) {
-                Some(file_text) => Ok(arguments.line_window().apply(&file_text)),
-                // Directory listings, resource links (>= 1MB files), and other non-file responses
-                // have no meaningful line window; cap them with the char limit instead.
-                None => Ok(truncate_if_oversized(format_github_mcp_tool_success(
-                    &result,
-                ))),
-            }
-        })
-    }
+                let text = match extract_file_text(&result) {
+                    Some(file_text) => arguments.line_window().apply(&file_text),
+                    // Directory listings, resource links (>= 1MB files), and other non-file
+                    // responses have no meaningful line window; cap them with the char limit
+                    // instead.
+                    None => truncate_if_oversized(format_github_mcp_tool_success(&result)),
+                };
+                Ok(ToolOutput::text(text))
+            })
+        },
+    )
 }
 
 fn read_file_tool_definition() -> ToolDefinition {
@@ -150,18 +138,23 @@ impl ReadFileArguments {
         LineWindow::new(self.offset, self.limit)
     }
 
-    fn to_forwarded_arguments(&self) -> Result<Map<String, Value>, ToolError> {
+    fn to_forwarded_arguments(&self) -> Result<Map<String, Value>, ToolExecutionError> {
         let value = serde_json::to_value(GetFileContentsArguments {
             owner: &self.owner,
             repo: &self.repo,
             path: &self.path,
             git_ref: self.git_ref.as_deref(),
+        })
+        .map_err(|error| {
+            ToolExecutionError::other(format!(
+                "failed to serialize read_file forwarded arguments: {error}"
+            ))
         })?;
         match value {
             Value::Object(map) => Ok(map),
-            _ => Err(ToolError::ToolCallError(Box::new(io::Error::other(
+            _ => Err(ToolExecutionError::other(
                 "read_file forwarded arguments must serialize to a JSON object",
-            )))),
+            )),
         }
     }
 }

@@ -47,7 +47,14 @@ impl OpenAiTaskRunner {
 #[async_trait]
 impl TaskRunnerPort for OpenAiTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
-        let client = openai::Client::from_val(self.api_key.expose().to_string().into());
+        let client = openai::Client::from_val(self.api_key.expose().to_string().into()).map_err(
+            |error| {
+                AgentRunFailedError::new_permanent(
+                    reili_core::task::LlmUsageSnapshot::default(),
+                    format!("Failed to build OpenAI client: {error}"),
+                )
+            },
+        )?;
 
         run_task(RunLlmTaskRunnerInput {
             client: client.clone(),

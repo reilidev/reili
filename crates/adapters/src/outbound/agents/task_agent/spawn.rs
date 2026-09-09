@@ -6,13 +6,14 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use reili_core::task::TaskResources;
-use rig::tool::{Tool, ToolDyn};
+use rig::tool::{DynamicTool, Tool};
 
 use crate::outbound::agents::connector::{PreparedConnector, ToolCatalogEntry, ToolCatalogGroup};
 use crate::outbound::agents::instructions_support::{
     append_configured_additional_system_prompt, sub_agent_memory_context_instruction,
     sub_agent_reusable_notes_instruction,
 };
+use crate::outbound::agents::tool_adapter::into_dynamic_tool;
 use crate::outbound::agents::tools::SearchWebTool;
 
 pub(super) struct ComposeSpawnedPreambleInput<'a> {
@@ -137,7 +138,7 @@ pub(super) struct ResolveSpawnSelectionInput<'a> {
 }
 
 pub(super) struct ResolvedSpawnSelection {
-    pub(super) tools: Vec<Box<dyn ToolDyn>>,
+    pub(super) tools: Vec<DynamicTool>,
     pub(super) guardrails: Vec<String>,
 }
 
@@ -148,7 +149,7 @@ pub(super) fn resolve_spawn_selection(
     input: &ResolveSpawnSelectionInput<'_>,
 ) -> ResolvedSpawnSelection {
     let requested: HashSet<&str> = input.tool_names.iter().map(String::as_str).collect();
-    let mut tools: Vec<Box<dyn ToolDyn>> = Vec::new();
+    let mut tools: Vec<DynamicTool> = Vec::new();
     let mut guardrails = Vec::new();
 
     for prepared in input.prepared_connectors {
@@ -171,7 +172,7 @@ pub(super) fn resolve_spawn_selection(
             prepared
                 .sub_agent_tools()
                 .into_iter()
-                .filter(|tool| selected.contains(tool.name().as_str())),
+                .filter(|tool| selected.contains(tool.name())),
         );
         if let Some(guardrail) = prepared.spawn_guardrails() {
             guardrails.push(guardrail);
@@ -179,7 +180,9 @@ pub(super) fn resolve_spawn_selection(
     }
 
     if requested.contains(SearchWebTool::NAME) {
-        tools.push(Box::new(SearchWebTool::new(Arc::clone(input.resources))) as Box<dyn ToolDyn>);
+        tools.push(into_dynamic_tool(SearchWebTool::new(Arc::clone(
+            input.resources,
+        ))));
     }
 
     ResolvedSpawnSelection { tools, guardrails }

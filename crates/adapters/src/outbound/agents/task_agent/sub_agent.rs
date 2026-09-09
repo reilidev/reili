@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use reili_core::task::TaskResources;
 use rig::agent::Agent;
-use rig::prelude::CompletionClient;
+use rig::prelude::{AgentClientExt, CompletionClient};
 
 use super::spawn::{
     ComposeSpawnedPreambleInput, ResolveSpawnSelectionInput, compose_spawned_sub_agent_preamble,
@@ -15,8 +15,6 @@ use crate::outbound::agents::runner::provider_settings::LlmProviderSettings;
 use crate::outbound::agents::tools::{
     ReportProgressTool, ReportProgressToolInput, SpawnedSubAgentSpec,
 };
-
-type SubAgent<C> = Agent<<C as CompletionClient>::CompletionModel, AgentExecutionHook>;
 
 #[derive(Clone)]
 pub(super) struct SubAgentFactory<C>
@@ -79,7 +77,7 @@ where
     /// Build a sub-agent from a lead-composed spawn spec: resolve the selected tools, compose
     /// the fixed-frame preamble around the lead-generated mission, and attach the shared
     /// execution hook and progress tooling.
-    pub(super) fn build_spawned_sub_agent(&self, input: BuildSpawnedSubAgentInput) -> SubAgent<C> {
+    pub(super) fn build_spawned_sub_agent(&self, input: BuildSpawnedSubAgentInput) -> Agent {
         let common = self.common_input(&input.run_context, input.spec.owner_id.clone());
         let SubAgentCommonInput {
             client,
@@ -123,7 +121,7 @@ where
         let builder = with_max_tokens(builder, settings.sub_agent_max_tokens);
 
         builder
-            .hook(AgentExecutionHook::new(
+            .add_hook(AgentExecutionHook::new(
                 owner_id.clone(),
                 runtime,
                 cancellation,
@@ -135,7 +133,7 @@ where
                 on_progress_event: Arc::clone(&on_progress_event),
                 owner_id,
             }))
-            .tools(selection.tools)
+            .dynamic_tools(selection.tools)
             .build()
     }
 

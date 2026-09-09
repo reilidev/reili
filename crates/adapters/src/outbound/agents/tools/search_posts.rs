@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use reili_core::error::PortError;
-use rig::completion::ToolDefinition;
-use rig::tool::Tool;
+use rig::tool::{Tool, ToolContext};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -63,50 +62,54 @@ impl Tool for SearchPostsTool {
     type Args = SearchPostsArgs;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Search the configured esa knowledge base for internal documents, runbooks, investigation notes, and operational knowledge. The q field must use esa post search query syntax.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "q": {
-                        "type": "string",
-                        "description": "esa search query. Supports esa syntax such as title:, body:, category:, in:, on:, tag:, #tag, @screen_name, user:, updated_by:, comment:, starred:true, watched:true, sharing:true, stars:>3, created:>YYYY-MM-DD, updated:>YYYY-MM, AND by spaces, OR, |, -keyword, and parentheses.",
-                        "maxLength": 1000
-                    },
-                    "page": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "default": 1,
-                        "description": "1-based result page."
-                    },
-                    "perPage": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 10,
-                        "default": 5,
-                        "description": "Maximum number of posts to return."
-                    },
-                    "sort": {
-                        "type": "string",
-                        "enum": ["updated", "created", "number", "stars", "watches", "comments", "best_match"],
-                        "default": "best_match",
-                        "description": "esa post result sort key."
-                    },
-                    "order": {
-                        "type": "string",
-                        "enum": ["desc", "asc"],
-                        "default": "desc",
-                        "description": "Result sort order."
-                    }
-                },
-                "required": ["q"]
-            }),
-        }
+    fn description(&self) -> String {
+        "Search the configured esa knowledge base for internal documents, runbooks, investigation notes, and operational knowledge. The q field must use esa post search query syntax.".to_string()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    fn parameters(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "q": {
+                    "type": "string",
+                    "description": "esa search query. Supports esa syntax such as title:, body:, category:, in:, on:, tag:, #tag, @screen_name, user:, updated_by:, comment:, starred:true, watched:true, sharing:true, stars:>3, created:>YYYY-MM-DD, updated:>YYYY-MM, AND by spaces, OR, |, -keyword, and parentheses.",
+                    "maxLength": 1000
+                },
+                "page": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 1,
+                    "description": "1-based result page."
+                },
+                "perPage": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "default": 5,
+                    "description": "Maximum number of posts to return."
+                },
+                "sort": {
+                    "type": "string",
+                    "enum": ["updated", "created", "number", "stars", "watches", "comments", "best_match"],
+                    "default": "best_match",
+                    "description": "esa post result sort key."
+                },
+                "order": {
+                    "type": "string",
+                    "enum": ["desc", "asc"],
+                    "default": "desc",
+                    "description": "Result sort order."
+                }
+            },
+            "required": ["q"]
+        })
+    }
+
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         match self
             .esa_post_search_port
             .search_posts(EsaPostSearchInput {
@@ -134,7 +137,7 @@ mod tests {
     };
     use async_trait::async_trait;
     use reili_core::error::PortError;
-    use rig::tool::Tool;
+    use rig::tool::{Tool, ToolContext};
 
     use super::{SearchPostsArgs, SearchPostsTool};
 
@@ -192,13 +195,16 @@ mod tests {
         );
 
         let output = tool
-            .call(SearchPostsArgs {
-                q: "in:runbooks error".to_string(),
-                page: 1,
-                per_page: 5,
-                sort: EsaPostSearchSort::BestMatch,
-                order: EsaPostSearchOrder::Desc,
-            })
+            .call(
+                &mut ToolContext::new(),
+                SearchPostsArgs {
+                    q: "in:runbooks error".to_string(),
+                    page: 1,
+                    per_page: 5,
+                    sort: EsaPostSearchSort::BestMatch,
+                    order: EsaPostSearchOrder::Desc,
+                },
+            )
             .await
             .expect("call search_posts");
 
@@ -223,13 +229,16 @@ mod tests {
         );
 
         let output = tool
-            .call(SearchPostsArgs {
-                q: "runbook".to_string(),
-                page: 1,
-                per_page: 5,
-                sort: EsaPostSearchSort::Updated,
-                order: EsaPostSearchOrder::Desc,
-            })
+            .call(
+                &mut ToolContext::new(),
+                SearchPostsArgs {
+                    q: "runbook".to_string(),
+                    page: 1,
+                    per_page: 5,
+                    sort: EsaPostSearchSort::Updated,
+                    order: EsaPostSearchOrder::Desc,
+                },
+            )
             .await
             .expect("call search_posts");
 
@@ -255,7 +264,7 @@ mod tests {
             }),
         );
 
-        let definition = tool.definition("test".to_string()).await;
+        let definition = rig::tool::tool_definition(&tool);
         assert_eq!(definition.name, "search_posts");
         let required = definition.parameters["required"]
             .as_array()
