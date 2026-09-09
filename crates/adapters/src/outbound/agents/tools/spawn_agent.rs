@@ -3,9 +3,8 @@ use std::sync::Arc;
 
 use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
 use rig::agent::Agent;
-use rig::agent::PromptHook;
-use rig::completion::{CompletionModel, Prompt, PromptError, ToolDefinition};
-use rig::tool::Tool;
+use rig::completion::{Prompt, PromptError};
+use rig::tool::{Tool, ToolContext};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
@@ -53,12 +52,8 @@ impl From<PromptError> for SpawnAgentToolError {
     }
 }
 
-pub struct SpawnAgentToolInput<M, P>
-where
-    M: CompletionModel,
-    P: PromptHook<M>,
-{
-    pub agent_factory: Arc<dyn Fn(SpawnedSubAgentSpec) -> Agent<M, P> + Send + Sync>,
+pub struct SpawnAgentToolInput {
+    pub agent_factory: Arc<dyn Fn(SpawnedSubAgentSpec) -> Agent + Send + Sync>,
     /// Tool names the lead may select, in catalog order. Used for validation and error messages.
     pub available_tool_names: Vec<String>,
     pub on_progress_event: Arc<dyn TaskProgressEventPort>,
@@ -67,24 +62,16 @@ where
 }
 
 #[derive(Clone)]
-pub struct SpawnAgentTool<M, P>
-where
-    M: CompletionModel,
-    P: PromptHook<M>,
-{
-    agent_factory: Arc<dyn Fn(SpawnedSubAgentSpec) -> Agent<M, P> + Send + Sync>,
+pub struct SpawnAgentTool {
+    agent_factory: Arc<dyn Fn(SpawnedSubAgentSpec) -> Agent + Send + Sync>,
     available_tool_names: Vec<String>,
     on_progress_event: Arc<dyn TaskProgressEventPort>,
     tool_concurrency: usize,
     shared_prompt_context: Option<String>,
 }
 
-impl<M, P> SpawnAgentTool<M, P>
-where
-    M: CompletionModel,
-    P: PromptHook<M>,
-{
-    pub fn new(input: SpawnAgentToolInput<M, P>) -> Self {
+impl SpawnAgentTool {
+    pub fn new(input: SpawnAgentToolInput) -> Self {
         Self {
             agent_factory: input.agent_factory,
             available_tool_names: input.available_tool_names,
@@ -178,55 +165,55 @@ where
     }
 }
 
-impl<M, P> Tool for SpawnAgentTool<M, P>
-where
-    M: CompletionModel + 'static,
-    P: PromptHook<M> + 'static,
-{
+impl Tool for SpawnAgentTool {
     const NAME: &'static str = "spawn_agent";
 
     type Error = SpawnAgentToolError;
     type Args = SpawnAgentToolArgs;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Spawn a one-shot sub-agent that runs with only the tools you select from the sub-agent tool catalog and returns its final report. Compose the sub-agent for the delegated mission: task-specific instructions plus the minimal tool set it needs. Run multiple spawn_agent calls in parallel for independent scopes.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Short snake_case name describing the sub-agent's scope, e.g. checkout_error_logs. Shown in progress updates."
-                    },
-                    "instructions": {
-                        "type": "string",
-                        "description": "The sub-agent's mission: its role, the goal, relevant background from the current task, hypotheses to test, and what a good answer looks like. Language, progress reporting, memory handling, and mandatory scope rules are added automatically — do not repeat them."
-                    },
-                    "tools": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Tool names from the sub-agent tool catalog. Select the minimal set the mission needs; mixing tools from different sources is allowed."
-                    },
-                    "prompt": {
-                        "type": "string",
-                        "description": "The concrete delegated task with its inputs: service names, time ranges, links, and error snippets."
-                    }
-                },
-                "required": ["name", "instructions", "tools", "prompt"]
-            }),
-        }
+    fn description(&self) -> String {
+        "Spawn a one-shot sub-agent that runs with only the tools you select from the sub-agent tool catalog and returns its final report. Compose the sub-agent for the delegated mission: task-specific instructions plus the minimal tool set it needs. Run multiple spawn_agent calls in parallel for independent scopes.".to_string()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    fn parameters(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Short snake_case name describing the sub-agent's scope, e.g. checkout_error_logs. Shown in progress updates."
+                },
+                "instructions": {
+                    "type": "string",
+                    "description": "The sub-agent's mission: its role, the goal, relevant background from the current task, hypotheses to test, and what a good answer looks like. Language, progress reporting, memory handling, and mandatory scope rules are added automatically — do not repeat them."
+                },
+                "tools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Tool names from the sub-agent tool catalog. Select the minimal set the mission needs; mixing tools from different sources is allowed."
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "The concrete delegated task with its inputs: service names, time ranges, links, and error snippets."
+                }
+            },
+            "required": ["name", "instructions", "tools", "prompt"]
+        })
+    }
+
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let spec = self.validate_args(&args)?;
         let owner_id = spec.owner_id.clone();
         let agent = (self.agent_factory)(spec);
         let prompt = self.build_prompt(args.prompt);
         let output = agent
             .prompt(prompt)
-            .with_tool_concurrency(self.tool_concurrency)
+            .tool_concurrency(self.tool_concurrency)
             .await?;
         self.publish_message_output_created(&owner_id).await;
         Ok(output)
@@ -265,14 +252,13 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use reili_core::task::{MockTaskProgressEventPort, TaskProgressEvent, TaskProgressEventInput};
-    use rig::OneOrMany;
     use rig::agent::AgentBuilder;
+    use rig::completion::message::{AssistantContent, Message, Text, UserContent};
     use rig::completion::{
-        CompletionError, CompletionModel, CompletionRequest, CompletionResponse, Usage,
+        CompletionError, CompletionModel, CompletionRequest, CompletionResponse,
     };
-    use rig::message::{AssistantContent, Message, Text, UserContent};
     use rig::streaming::{StreamingCompletionResponse, StreamingResult};
-    use rig::tool::Tool;
+    use rig::tool::{Tool, ToolContext};
 
     use super::{
         SpawnAgentTool, SpawnAgentToolArgs, SpawnAgentToolError, SpawnAgentToolInput,
@@ -284,22 +270,11 @@ mod tests {
         captured_prompts: Arc<Mutex<Vec<String>>>,
     }
 
-    #[allow(refining_impl_trait)]
     impl CompletionModel for PromptCaptureModel {
-        type Response = ();
-        type StreamingResponse = ();
-        type Client = ();
-
-        fn make(_: &Self::Client, _: impl Into<String>) -> Self {
-            Self {
-                captured_prompts: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-
         async fn completion(
             &self,
             request: CompletionRequest,
-        ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
+        ) -> Result<CompletionResponse, CompletionError> {
             let prompt = request
                 .chat_history
                 .iter()
@@ -312,29 +287,26 @@ mod tests {
                 .expect("lock prompts")
                 .push(prompt);
 
-            Ok(CompletionResponse {
-                choice: OneOrMany::one(AssistantContent::Text(Text {
-                    text: "done".to_string(),
-                })),
-                usage: Usage::new(),
-                raw_response: (),
-                message_id: Some("text-message".to_string()),
-            })
+            Ok(CompletionResponse::new(
+                vec![AssistantContent::Text(Text::new("done"))],
+                rig::completion::Usage::new(),
+                "test",
+            ))
         }
 
         async fn stream(
             &self,
             _request: CompletionRequest,
-        ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-            let stream: StreamingResult<()> = Box::pin(futures::stream::empty());
-            Ok(StreamingCompletionResponse::stream(stream))
+        ) -> Result<StreamingCompletionResponse, CompletionError> {
+            let stream: StreamingResult = Box::pin(futures::stream::empty());
+            Ok(StreamingCompletionResponse::stream("test", stream))
         }
     }
 
     fn message_text(message: &Message) -> Option<&str> {
         match message {
             Message::User { content } => content.iter().find_map(|item| match item {
-                UserContent::Text(Text { text }) => Some(text.as_str()),
+                UserContent::Text(Text { text, .. }) => Some(text.as_str()),
                 _ => None,
             }),
             Message::System { content } => Some(content.as_str()),
@@ -349,7 +321,7 @@ mod tests {
     }
 
     struct SpawnToolHarness {
-        tool: SpawnAgentTool<PromptCaptureModel, ()>,
+        tool: SpawnAgentTool,
         spawned_specs: Arc<Mutex<Vec<RecordedSpawn>>>,
         captured_prompts: Arc<Mutex<Vec<String>>>,
         progress_events: Arc<Mutex<Vec<TaskProgressEventInput>>>,
@@ -431,7 +403,7 @@ mod tests {
 
         let output = harness
             .tool
-            .call(valid_args())
+            .call(&mut ToolContext::new(), valid_args())
             .await
             .expect("spawn should succeed");
 
@@ -477,7 +449,7 @@ mod tests {
 
         let error = harness
             .tool
-            .call(args)
+            .call(&mut ToolContext::new(), args)
             .await
             .expect_err("unknown tool should fail");
 
@@ -497,7 +469,7 @@ mod tests {
 
         let error = harness
             .tool
-            .call(args)
+            .call(&mut ToolContext::new(), args)
             .await
             .expect_err("empty tools should fail");
 
@@ -516,7 +488,7 @@ mod tests {
 
         let error = harness
             .tool
-            .call(args)
+            .call(&mut ToolContext::new(), args)
             .await
             .expect_err("blank instructions should fail");
 
@@ -533,7 +505,7 @@ mod tests {
 
         let output = harness
             .tool
-            .call(valid_args())
+            .call(&mut ToolContext::new(), valid_args())
             .await
             .expect("spawn should succeed");
 

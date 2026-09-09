@@ -5,9 +5,7 @@ use crate::outbound::agents::mcp::support;
 pub use crate::outbound::datadog::DatadogMcpToolConfig;
 use crate::outbound::datadog::mcp_client::{self, DatadogMcpHttpClient};
 use reili_core::error::PortError;
-use rig::completion::ToolDefinition;
-use rig::tool::{ToolDyn, ToolError};
-use rig::wasm_compat::WasmBoxedFuture;
+use rig::tool::{DynamicTool, ToolOutput};
 use rmcp::model::Tool;
 use tracing::warn;
 
@@ -98,7 +96,7 @@ pub struct DatadogMcpToolset {
 
 impl DatadogMcpToolset {
     #[must_use]
-    pub fn sub_agent_tools(&self) -> Vec<Box<dyn ToolDyn>> {
+    pub fn sub_agent_tools(&self) -> Vec<DynamicTool> {
         build_tool_adapters(
             &self.tools,
             DATADOG_SUB_AGENT_TOOLS,
@@ -156,46 +154,36 @@ fn build_tool_adapters(
     names: &[&str],
     agent_scope: &str,
     client: DatadogMcpHttpClient,
-) -> Vec<Box<dyn ToolDyn>> {
+) -> Vec<DynamicTool> {
     filter_tools(tools, names, agent_scope)
         .into_iter()
-        .map(|tool| {
-            Box::new(DatadogMcpToolAdapter {
-                definition: tool,
-                client: client.clone(),
-            }) as Box<dyn ToolDyn>
-        })
+        .map(|tool| build_datadog_mcp_tool(tool, client.clone()))
         .collect()
 }
 
-#[derive(Clone)]
-struct DatadogMcpToolAdapter {
-    definition: Tool,
-    client: DatadogMcpHttpClient,
-}
+fn build_datadog_mcp_tool(tool: Tool, client: DatadogMcpHttpClient) -> DynamicTool {
+    let definition = support::mcp_tool_definition(&tool);
+    let name = tool.name.to_string();
 
-impl ToolDyn for DatadogMcpToolAdapter {
-    fn name(&self) -> String {
-        self.definition.name.to_string()
-    }
+    DynamicTool::new(
+        definition.name,
+        definition.description,
+        definition.parameters,
+        move |_context, arguments_value| {
+            let name = name.clone();
+            let client = client.clone();
 
-    fn definition(&self, _prompt: String) -> WasmBoxedFuture<'_, ToolDefinition> {
-        Box::pin(async move { support::mcp_tool_definition(&self.definition) })
-    }
+            Box::pin(async move {
+                let arguments =
+                    support::parse_tool_arguments(DATADOG_MCP_SOURCE_LABEL, arguments_value)?;
+                let result =
+                    support::call_mcp_tool(DATADOG_MCP_SOURCE_LABEL, &client, &name, arguments)
+                        .await?;
 
-    fn call(&self, args: String) -> WasmBoxedFuture<'_, Result<String, ToolError>> {
-        let name = self.definition.name.clone();
-        let client = self.client.clone();
-
-        Box::pin(async move {
-            let arguments = support::parse_tool_arguments(DATADOG_MCP_SOURCE_LABEL, &args)?;
-            let result =
-                support::call_mcp_tool(DATADOG_MCP_SOURCE_LABEL, &client, name.as_ref(), arguments)
-                    .await?;
-
-            Ok(support::format_tool_success(&result))
-        })
-    }
+                Ok(ToolOutput::text(support::format_tool_success(&result)))
+            })
+        },
+    )
 }
 
 #[cfg(test)]

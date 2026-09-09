@@ -4,6 +4,7 @@ mod instructions_support;
 mod mcp;
 mod runner;
 mod task_agent;
+mod tool_adapter;
 pub mod tools;
 
 pub use crate::outbound::datadog::DatadogMcpToolConfig;

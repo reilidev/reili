@@ -4,8 +4,7 @@ use reili_core::error::PortError;
 use reili_core::messaging::slack::{
     AppendSlackCanvasMemoryInput, SlackCanvasMemoryPort, SlackCanvasMemoryVisibility,
 };
-use rig::completion::ToolDefinition;
-use rig::tool::Tool;
+use rig::tool::{Tool, ToolContext};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -128,19 +127,23 @@ impl Tool for SaveMemoryTool {
     type Args = SaveMemoryArgs;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Persist one durable, reusable fact to THIS channel's memory for future \
+    fn description(&self) -> String {
+        "Persist one durable, reusable fact to THIS channel's memory for future \
 investigations in this channel. Provide fact, evidence, and scope. Channel and source are attached \
 automatically. Use this for facts specific to this channel's systems; for facts true across all \
 channels use save_shared_memory instead."
-                .to_string(),
-            parameters: memory_tool_parameters(),
-        }
+            .to_string()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    fn parameters(&self) -> serde_json::Value {
+        memory_tool_parameters()
+    }
+
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         self.core
             .append(SlackCanvasMemoryVisibility::Channel, args)
             .await
@@ -168,21 +171,24 @@ impl Tool for SaveSharedMemoryTool {
     type Args = SaveMemoryArgs;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description:
-                "Persist one durable, reusable fact that applies across ALL channels this \
+    fn description(&self) -> String {
+        "Persist one durable, reusable fact that applies across ALL channels this \
 assistant serves, not just the current one. Use only for facts that hold regardless of channel \
 (for example organization-wide conventions, shared tooling, or cross-team policies). For a fact \
 specific to this channel's systems, use save_memory instead. Provide fact, evidence, and scope; \
 source is attached automatically."
-                    .to_string(),
-            parameters: memory_tool_parameters(),
-        }
+            .to_string()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    fn parameters(&self) -> serde_json::Value {
+        memory_tool_parameters()
+    }
+
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         self.core
             .append(SlackCanvasMemoryVisibility::Shared, args)
             .await
@@ -198,7 +204,7 @@ mod tests {
         AppendSlackCanvasMemoryInput, MockSlackCanvasMemoryPort, SlackCanvasMemoryPort,
         SlackCanvasMemoryVisibility,
     };
-    use rig::tool::Tool;
+    use rig::tool::{Tool, ToolContext};
 
     use super::{SaveMemoryArgs, SaveMemoryTool, SaveMemoryToolInput, SaveSharedMemoryTool};
 
@@ -240,7 +246,10 @@ mod tests {
         let (port, calls) = capturing_port();
         let tool = SaveMemoryTool::new(tool_input(Arc::new(port)));
 
-        let output = tool.call(args()).await.expect("call save_memory");
+        let output = tool
+            .call(&mut ToolContext::new(), args())
+            .await
+            .expect("call save_memory");
 
         assert_eq!(output, "{\"ok\":true}");
         let captured = calls.lock().expect("lock calls").clone();
@@ -255,7 +264,10 @@ mod tests {
         let (port, calls) = capturing_port();
         let tool = SaveSharedMemoryTool::new(tool_input(Arc::new(port)));
 
-        let output = tool.call(args()).await.expect("call save_shared_memory");
+        let output = tool
+            .call(&mut ToolContext::new(), args())
+            .await
+            .expect("call save_shared_memory");
 
         assert_eq!(output, "{\"ok\":true}");
         let captured = calls.lock().expect("lock calls").clone();
@@ -271,7 +283,7 @@ mod tests {
 
         let tool = SaveMemoryTool::new(tool_input(Arc::new(port)));
         let output = tool
-            .call(args())
+            .call(&mut ToolContext::new(), args())
             .await
             .expect("call save_memory should not hard-fail");
 

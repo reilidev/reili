@@ -47,7 +47,13 @@ impl AnthropicTaskRunner {
 #[async_trait]
 impl TaskRunnerPort for AnthropicTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
-        let client = anthropic::Client::from_val(self.api_key.expose().to_string());
+        let client =
+            anthropic::Client::from_val(self.api_key.expose().to_string()).map_err(|error| {
+                AgentRunFailedError::new_permanent(
+                    reili_core::task::LlmUsageSnapshot::default(),
+                    format!("Failed to build Anthropic client: {error}"),
+                )
+            })?;
 
         run_task(RunLlmTaskRunnerInput {
             client: client.clone(),

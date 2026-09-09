@@ -11,7 +11,6 @@ use reili_core::task::{
     TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort, TaskRunOutcome,
     TaskRunReport,
 };
-use rig::OneOrMany;
 use rig::completion::message::{
     Document, DocumentMediaType, DocumentSourceKind, Message, UserContent,
 };
@@ -138,8 +137,8 @@ where
     let prompt_response_result = task_agent
         .prompt(prompt_message)
         .max_turns(input.settings.task_runner_max_turns)
-        .with_tool_concurrency(input.settings.tool_concurrency)
-        .with_hook(task_runner_prompt_hook)
+        .tool_concurrency(input.settings.tool_concurrency)
+        .add_hook(task_runner_prompt_hook)
         .extended_details()
         .await;
 
@@ -165,7 +164,7 @@ where
     .await?;
 
     Ok(TaskRunOutcome::Succeeded(TaskRunReport {
-        result_text: prompt_response.output,
+        result_text: prompt_response.output().to_string(),
         usage: usage_collector.snapshot(),
         execution: LlmExecutionMetadata {
             provider: input.settings.provider,
@@ -188,7 +187,7 @@ struct BuildPromptMessageInput<'a> {
 /// read it natively. A file that exceeds [`MAX_PDF_BYTES`] or cannot be downloaded is skipped
 /// rather than failing the whole task; the textual prompt is always included.
 async fn build_prompt_message(input: BuildPromptMessageInput<'_>) -> Message {
-    let mut content = OneOrMany::one(UserContent::text(input.task_prompt));
+    let mut content = vec![UserContent::text(input.task_prompt)];
 
     for file in input.pdf_files {
         let Some(url) = file.pdf_download_url() else {
@@ -283,9 +282,8 @@ mod tests {
         MockTaskProgressEventPort, TASK_RUNNER_PROGRESS_OWNER_ID, TaskCancellation,
         TaskProgressEvent, TaskProgressEventInput, TaskRuntime,
     };
-    use rig::agent::{PromptHook, ToolCallHookAction};
+    use rig::agent::ToolCallAction;
     use rig::completion::message::{DocumentMediaType, DocumentSourceKind, Message, UserContent};
-    use rig::providers::openai;
 
     use super::{
         BuildPromptMessageInput, CreateTaskRunnerPromptHookInput, MAX_PDF_BYTES,
@@ -464,16 +462,11 @@ mod tests {
             usage_collector: LlmUsageCollector::new(),
         });
 
-        let action = <_ as PromptHook<openai::CompletionModel>>::on_tool_call(
-            &hook,
-            "search_datadog_services",
-            Some("task-1".to_string()),
-            "internal-1",
-            "{}",
-        )
-        .await;
+        let action = hook
+            .handle_tool_call("search_datadog_services", Some("task-1"), "internal-1")
+            .await;
 
-        assert_eq!(action, ToolCallHookAction::Continue);
+        assert_eq!(action, ToolCallAction::Run);
         assert_eq!(
             calls.lock().expect("lock calls").as_slice(),
             &[TaskProgressEventInput {
@@ -498,15 +491,10 @@ mod tests {
             usage_collector: LlmUsageCollector::new(),
         });
 
-        let action = <_ as PromptHook<openai::CompletionModel>>::on_tool_call(
-            &hook,
-            "report_progress",
-            Some("task-1".to_string()),
-            "internal-1",
-            "{}",
-        )
-        .await;
+        let action = hook
+            .handle_tool_call("report_progress", Some("task-1"), "internal-1")
+            .await;
 
-        assert_eq!(action, ToolCallHookAction::Continue);
+        assert_eq!(action, ToolCallAction::Run);
     }
 }

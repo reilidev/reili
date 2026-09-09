@@ -380,12 +380,14 @@ async fn create_auto_response_judge_port(
     judge_llm: &JudgeProviderConfig,
 ) -> Result<Arc<dyn AutoResponseJudgePort>, RuntimeBootstrapError> {
     match judge_llm {
-        JudgeProviderConfig::OpenAi { api_key, model } => Ok(
-            create_openai_auto_response_judge_port(api_key.clone(), model.clone()),
-        ),
-        JudgeProviderConfig::Anthropic { api_key, model } => Ok(
-            create_anthropic_auto_response_judge_port(api_key.clone(), model.clone()),
-        ),
+        JudgeProviderConfig::OpenAi { api_key, model } => {
+            create_openai_auto_response_judge_port(api_key.clone(), model.clone())
+                .map_err(openai_client_initialization_error)
+        }
+        JudgeProviderConfig::Anthropic { api_key, model } => {
+            create_anthropic_auto_response_judge_port(api_key.clone(), model.clone())
+                .map_err(anthropic_client_initialization_error)
+        }
         JudgeProviderConfig::Bedrock { model_id, aws } => {
             create_bedrock_auto_response_judge_port(CreateBedrockAutoResponseJudgePortInput {
                 model_id: model_id.clone(),
@@ -570,6 +572,20 @@ fn to_adapters_bedrock_mantle_auth(auth: &BedrockMantleAuthConfig) -> AdaptersBe
     }
 }
 
+fn openai_client_initialization_error(error: PortError) -> RuntimeBootstrapError {
+    RuntimeBootstrapError::ProviderClientInitialization {
+        provider: "openai".to_string(),
+        message: error.to_string(),
+    }
+}
+
+fn anthropic_client_initialization_error(error: PortError) -> RuntimeBootstrapError {
+    RuntimeBootstrapError::ProviderClientInitialization {
+        provider: "anthropic".to_string(),
+        message: error.to_string(),
+    }
+}
+
 fn bedrock_client_initialization_error(error: PortError) -> RuntimeBootstrapError {
     RuntimeBootstrapError::ProviderClientInitialization {
         provider: "bedrock".to_string(),
@@ -611,7 +627,7 @@ fn build_vertex_ai_client(
         .map_err(
             |error| RuntimeBootstrapError::ProviderClientInitialization {
                 provider: "vertexai".to_string(),
-                message: error,
+                message: error.to_string(),
             },
         )
 }

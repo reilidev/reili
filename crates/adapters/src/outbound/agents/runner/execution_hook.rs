@@ -1,18 +1,19 @@
-use std::future::Future;
 use std::sync::Arc;
 
 use reili_core::logger::{LogFieldValue, Logger, log_fields};
 use reili_core::task::{
     TaskCancellation, TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort, TaskRuntime,
 };
-use rig::agent::{HookAction, PromptHook, ToolCallHookAction};
-use rig::completion::CompletionModel;
-use rig::message::Message;
+use rig::agent::{
+    AgentHook, CompletionCallAction, CompletionCallEvent, CompletionResponseEvent, HookContext,
+    ObservationAction, StreamResponseFinish, TextDelta, ToolCall, ToolCallAction, ToolCallDelta,
+    ToolResultAction, ToolResultEvent,
+};
+use rig::tool::ToolResult;
 
 use super::usage_collector::LlmUsageCollector;
 
 const REPORT_PROGRESS_TOOL_NAME: &str = "report_progress";
-const TOOL_RESULT_ERROR_PREFIXES: [&str; 2] = ["ToolCallError:", "JsonError:"];
 const TASK_CANCELLED_REASON: &str = "task_cancelled";
 
 #[derive(Clone)]
@@ -113,7 +114,7 @@ impl AgentExecutionHook {
         );
     }
 
-    fn log_tool_completed(&self, tool_name: &str, task_id: &str, raw_result: &str) {
+    fn log_tool_completed(&self, tool_name: &str, task_id: &str, raw_result: &ToolResult) {
         self.logger.info(
             "llm_tool_execution_completed",
             log_fields([
@@ -145,145 +146,124 @@ impl AgentExecutionHook {
     fn is_cancelled(&self) -> bool {
         self.cancellation.is_cancelled()
     }
+
+    async fn handle_completion_call(&self) -> CompletionCallAction {
+        if self.is_cancelled() {
+            return CompletionCallAction::stop(TASK_CANCELLED_REASON);
+        }
+        self.track_completion_call();
+        CompletionCallAction::continue_run()
+    }
+
+    async fn handle_completion_response(&self, usage: rig::completion::Usage) -> ObservationAction {
+        self.track_completion_response(usage);
+        if self.is_cancelled() {
+            return ObservationAction::stop(TASK_CANCELLED_REASON);
+        }
+        ObservationAction::continue_run()
+    }
+
+    pub(crate) async fn handle_tool_call(
+        &self,
+        tool_name: &str,
+        tool_call_id: Option<&str>,
+        internal_call_id: &str,
+    ) -> ToolCallAction {
+        if self.is_cancelled() {
+            return ToolCallAction::stop(TASK_CANCELLED_REASON);
+        }
+        let task_id = tool_call_id.unwrap_or(internal_call_id);
+        self.log_tool_started(tool_name, task_id);
+        self.publish_tool_started(tool_name, task_id).await;
+        ToolCallAction::run()
+    }
+
+    pub(crate) async fn handle_tool_result(
+        &self,
+        tool_name: &str,
+        tool_call_id: Option<&str>,
+        internal_call_id: &str,
+        raw_result: &ToolResult,
+    ) -> ToolResultAction {
+        let task_id = tool_call_id.unwrap_or(internal_call_id);
+        self.log_tool_completed(tool_name, task_id, raw_result);
+        self.publish_tool_completed(tool_name, task_id).await;
+        if self.is_cancelled() {
+            return ToolResultAction::stop(TASK_CANCELLED_REASON);
+        }
+        ToolResultAction::keep()
+    }
+
+    async fn handle_observation(&self) -> ObservationAction {
+        if self.is_cancelled() {
+            return ObservationAction::stop(TASK_CANCELLED_REASON);
+        }
+        ObservationAction::continue_run()
+    }
 }
 
-fn classify_tool_result(raw_result: &str) -> &'static str {
-    if TOOL_RESULT_ERROR_PREFIXES
-        .iter()
-        .any(|prefix| raw_result.starts_with(prefix))
-    {
+fn classify_tool_result(result: &ToolResult) -> &'static str {
+    if result.is_error() || result.is_refused() {
         "error"
     } else {
         "success"
     }
 }
 
-impl<M> PromptHook<M> for AgentExecutionHook
-where
-    M: CompletionModel,
-{
-    fn on_completion_call(
+impl AgentHook for AgentExecutionHook {
+    async fn on_completion_call(
         &self,
-        _prompt: &Message,
-        _history: &[Message],
-    ) -> impl Future<Output = HookAction> + Send {
-        let hook = self.clone();
-
-        async move {
-            if hook.is_cancelled() {
-                return HookAction::terminate(TASK_CANCELLED_REASON);
-            }
-            hook.track_completion_call();
-            HookAction::cont()
-        }
+        _ctx: &HookContext,
+        _event: CompletionCallEvent<'_>,
+    ) -> CompletionCallAction {
+        self.handle_completion_call().await
     }
 
-    fn on_completion_response(
+    async fn on_completion_response(
         &self,
-        _prompt: &Message,
-        response: &rig::completion::CompletionResponse<M::Response>,
-    ) -> impl Future<Output = HookAction> + Send {
-        let hook = self.clone();
-        let usage = response.usage;
-
-        async move {
-            hook.track_completion_response(usage);
-            if hook.is_cancelled() {
-                return HookAction::terminate(TASK_CANCELLED_REASON);
-            }
-            HookAction::cont()
-        }
+        _ctx: &HookContext,
+        event: CompletionResponseEvent<'_>,
+    ) -> ObservationAction {
+        self.handle_completion_response(event.usage).await
     }
 
-    fn on_tool_call(
-        &self,
-        tool_name: &str,
-        tool_call_id: Option<String>,
-        internal_call_id: &str,
-        _args: &str,
-    ) -> impl Future<Output = ToolCallHookAction> + Send {
-        let hook = self.clone();
-        let task_id = tool_call_id.unwrap_or_else(|| internal_call_id.to_string());
-        let tool_name = tool_name.to_string();
-
-        async move {
-            if hook.is_cancelled() {
-                return ToolCallHookAction::terminate(TASK_CANCELLED_REASON);
-            }
-            hook.log_tool_started(&tool_name, &task_id);
-            hook.publish_tool_started(&tool_name, &task_id).await;
-            ToolCallHookAction::cont()
-        }
+    async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
+        self.handle_tool_call(event.tool_name, event.tool_call_id, event.internal_call_id)
+            .await
     }
 
-    fn on_tool_result(
+    async fn on_tool_result(
         &self,
-        tool_name: &str,
-        tool_call_id: Option<String>,
-        internal_call_id: &str,
-        _args: &str,
-        result: &str,
-    ) -> impl Future<Output = HookAction> + Send {
-        let hook = self.clone();
-        let task_id = tool_call_id.unwrap_or_else(|| internal_call_id.to_string());
-        let tool_name = tool_name.to_string();
-        let result = result.to_string();
-
-        async move {
-            hook.log_tool_completed(&tool_name, &task_id, &result);
-            hook.publish_tool_completed(&tool_name, &task_id).await;
-            if hook.is_cancelled() {
-                return HookAction::terminate(TASK_CANCELLED_REASON);
-            }
-            HookAction::cont()
-        }
+        _ctx: &HookContext,
+        event: ToolResultEvent<'_>,
+    ) -> ToolResultAction {
+        self.handle_tool_result(
+            event.tool_name,
+            event.tool_call_id,
+            event.internal_call_id,
+            event.raw_result,
+        )
+        .await
     }
 
-    fn on_text_delta(
-        &self,
-        _text_delta: &str,
-        _aggregated_text: &str,
-    ) -> impl Future<Output = HookAction> + Send {
-        let hook = self.clone();
-
-        async move {
-            if hook.is_cancelled() {
-                return HookAction::terminate(TASK_CANCELLED_REASON);
-            }
-            HookAction::cont()
-        }
+    async fn on_text_delta(&self, _ctx: &HookContext, _event: TextDelta<'_>) -> ObservationAction {
+        self.handle_observation().await
     }
 
-    fn on_tool_call_delta(
+    async fn on_tool_call_delta(
         &self,
-        _tool_call_id: &str,
-        _internal_call_id: &str,
-        _tool_name: Option<&str>,
-        _tool_call_delta: &str,
-    ) -> impl Future<Output = HookAction> + Send {
-        let hook = self.clone();
-
-        async move {
-            if hook.is_cancelled() {
-                return HookAction::terminate(TASK_CANCELLED_REASON);
-            }
-            HookAction::cont()
-        }
+        _ctx: &HookContext,
+        _event: ToolCallDelta<'_>,
+    ) -> ObservationAction {
+        self.handle_observation().await
     }
 
-    fn on_stream_completion_response_finish(
+    async fn on_stream_response_finish(
         &self,
-        _prompt: &Message,
-        _response: &<M as CompletionModel>::StreamingResponse,
-    ) -> impl Future<Output = HookAction> + Send {
-        let hook = self.clone();
-
-        async move {
-            if hook.is_cancelled() {
-                return HookAction::terminate(TASK_CANCELLED_REASON);
-            }
-            HookAction::cont()
-        }
+        _ctx: &HookContext,
+        _event: StreamResponseFinish<'_>,
+    ) -> ObservationAction {
+        self.handle_observation().await
     }
 }
 
@@ -296,8 +276,8 @@ mod tests {
         MockTaskProgressEventPort, TaskCancellation, TaskProgressEvent, TaskProgressEventInput,
         TaskRuntime,
     };
-    use rig::agent::{PromptHook, ToolCallHookAction};
-    use rig::providers::openai;
+    use rig::agent::{ObservationAction, ToolCallAction, ToolResultAction};
+    use rig::tool::{ToolExecutionError, ToolOutput, ToolResult};
 
     use super::AgentExecutionHook;
     use crate::outbound::agents::runner::usage_collector::LlmUsageCollector;
@@ -430,26 +410,20 @@ mod tests {
             LlmUsageCollector::new(),
         );
 
-        let started_action = <_ as PromptHook<openai::CompletionModel>>::on_tool_call(
-            &hook,
-            "report_progress",
-            Some("task-3".to_string()),
-            "internal-1",
-            "{\"title\":\"Inspect logs\"}",
-        )
-        .await;
-        let completed_action = <_ as PromptHook<openai::CompletionModel>>::on_tool_result(
-            &hook,
-            "report_progress",
-            Some("task-3".to_string()),
-            "internal-1",
-            "{\"title\":\"Inspect logs\"}",
-            "\"done\"",
-        )
-        .await;
+        let started_action = hook
+            .handle_tool_call("report_progress", Some("task-3"), "internal-1")
+            .await;
+        let completed_action = hook
+            .handle_tool_result(
+                "report_progress",
+                Some("task-3"),
+                "internal-1",
+                &ToolResult::success(ToolOutput::text("done")),
+            )
+            .await;
 
-        assert_eq!(started_action, ToolCallHookAction::Continue);
-        assert_eq!(completed_action, rig::agent::HookAction::Continue);
+        assert_eq!(started_action, ToolCallAction::Run);
+        assert_eq!(completed_action, ToolResultAction::Keep);
     }
 
     #[test]
@@ -474,6 +448,8 @@ mod tests {
             total_tokens: 30,
             cached_input_tokens: 0,
             cache_creation_input_tokens: 0,
+            tool_use_prompt_tokens: 0,
+            reasoning_tokens: 0,
         });
 
         assert_eq!(collector.snapshot().requests, 1);
@@ -502,17 +478,12 @@ mod tests {
             LlmUsageCollector::new(),
         );
 
-        let action = <_ as PromptHook<openai::CompletionModel>>::on_tool_call(
-            &hook,
-            "search_datadog_logs",
-            Some("task-1".to_string()),
-            "internal-1",
-            "{\"query\":\"service:payments @message:error\"}",
-        )
-        .await;
+        let action = hook
+            .handle_tool_call("search_datadog_logs", Some("task-1"), "internal-1")
+            .await;
 
         let entries = log_entries.lock().expect("lock entries");
-        assert_eq!(action, ToolCallHookAction::Continue);
+        assert_eq!(action, ToolCallAction::Run);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].level, LogLevel::Info);
         assert_eq!(entries[0].event, "llm_tool_execution_started");
@@ -587,18 +558,17 @@ mod tests {
             LlmUsageCollector::new(),
         );
 
-        let action = <_ as PromptHook<openai::CompletionModel>>::on_tool_result(
-            &hook,
-            "search_datadog_logs",
-            Some("task-1".to_string()),
-            "internal-1",
-            "{\"query\":\"service:payments @message:error\"}",
-            "\"sensitive output body\"",
-        )
-        .await;
+        let action = hook
+            .handle_tool_result(
+                "search_datadog_logs",
+                Some("task-1"),
+                "internal-1",
+                &ToolResult::success(ToolOutput::text("sensitive output body")),
+            )
+            .await;
 
         let entries = log_entries.lock().expect("lock entries");
-        assert_eq!(action, rig::agent::HookAction::Continue);
+        assert_eq!(action, ToolResultAction::Keep);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].level, LogLevel::Info);
         assert_eq!(entries[0].event, "llm_tool_execution_completed");
@@ -618,7 +588,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn logs_tool_completed_tool_call_error_as_error() {
+    async fn logs_tool_completed_error_result_as_error() {
         let log_entries = Arc::new(Mutex::new(Vec::new()));
         let mut progress_event_port = MockTaskProgressEventPort::new();
         progress_event_port
@@ -634,13 +604,11 @@ mod tests {
             LlmUsageCollector::new(),
         );
 
-        <_ as PromptHook<openai::CompletionModel>>::on_tool_result(
-            &hook,
+        hook.handle_tool_result(
             "search_datadog_logs",
-            Some("task-1".to_string()),
+            Some("task-1"),
             "internal-1",
-            "{}",
-            "ToolCallError: permission denied",
+            &ToolResult::failed(ToolExecutionError::permission_denied("permission denied")),
         )
         .await;
 
@@ -655,7 +623,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn logs_tool_completed_json_error_as_error() {
+    async fn logs_tool_completed_refusal_as_error() {
         let log_entries = Arc::new(Mutex::new(Vec::new()));
         let mut progress_event_port = MockTaskProgressEventPort::new();
         progress_event_port
@@ -671,13 +639,11 @@ mod tests {
             LlmUsageCollector::new(),
         );
 
-        <_ as PromptHook<openai::CompletionModel>>::on_tool_result(
-            &hook,
+        hook.handle_tool_result(
             "search_datadog_logs",
-            Some("task-1".to_string()),
+            Some("task-1"),
             "internal-1",
-            "{}",
-            "JsonError: missing field",
+            &ToolResult::failed(ToolExecutionError::refused("refused")),
         )
         .await;
 
@@ -689,5 +655,19 @@ mod tests {
                 .and_then(LogFieldValue::as_str),
             Some("error")
         );
+    }
+
+    #[tokio::test]
+    async fn observation_hooks_continue_when_not_cancelled() {
+        let hook = AgentExecutionHook::new(
+            "datadog_agent".to_string(),
+            sample_runtime(),
+            sample_cancellation(),
+            logger_with_entries(Arc::new(Mutex::new(Vec::new())), 0),
+            Arc::new(MockTaskProgressEventPort::new()),
+            LlmUsageCollector::new(),
+        );
+
+        assert_eq!(hook.handle_observation().await, ObservationAction::Continue);
     }
 }

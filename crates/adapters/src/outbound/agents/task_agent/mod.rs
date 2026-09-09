@@ -7,7 +7,7 @@ use reili_core::task::{
     TaskRuntime,
 };
 use rig::agent::Agent;
-use rig::prelude::CompletionClient;
+use rig::prelude::{AgentClientExt, CompletionClient};
 
 mod instructions;
 mod prompt;
@@ -29,8 +29,6 @@ use spawn::{render_spawn_tool_catalog, spawn_catalog_tool_names, spawn_tool_cata
 use sub_agent::{
     BuildSpawnedSubAgentInput, CreateSubAgentFactoryInput, SubAgentConfig, SubAgentFactory,
 };
-
-type CompletionAgent<C> = Agent<<C as CompletionClient>::CompletionModel>;
 
 pub struct TaskAgentFactory<C>
 where
@@ -74,7 +72,7 @@ where
     C::CompletionModel: 'static,
 {
     #[must_use]
-    pub fn build(&self, input: BuildTaskAgentInput) -> CompletionAgent<C> {
+    pub fn build(&self, input: BuildTaskAgentInput) -> Agent {
         let sub_agent_factory = SubAgentFactory::new(CreateSubAgentFactoryInput {
             client: self.sub_agent_client.clone(),
             config: self.sub_agent_config(),
@@ -188,14 +186,10 @@ pub struct TaskAgentExecutionContext {
     pub usage_collector: LlmUsageCollector,
 }
 
-fn with_max_tokens<M, H>(
-    builder: rig::agent::AgentBuilder<M, H>,
+fn with_max_tokens<ToolState>(
+    builder: rig::agent::AgentBuilder<ToolState>,
     max_tokens: Option<u64>,
-) -> rig::agent::AgentBuilder<M, H>
-where
-    M: rig::completion::CompletionModel,
-    H: rig::agent::PromptHook<M>,
-{
+) -> rig::agent::AgentBuilder<ToolState> {
     match max_tokens {
         Some(value) => builder.max_tokens(value),
         None => builder,

@@ -54,11 +54,20 @@ impl WebSearchPort for VertexAiWebSearchAdapter {
             .set_candidate_count(1)
             .set_max_output_tokens(DEFAULT_MAX_OUTPUT_TOKENS);
 
+        let inner_client = match self.client.get_inner().await {
+            Ok(inner_client) => inner_client,
+            Err(error) => {
+                tracing::warn!(
+                    model = self.model_id,
+                    error = %error,
+                    "Vertex AI web search client initialization failed"
+                );
+                return Ok(classify_api_error(&error.to_string()));
+            }
+        };
+
         let start = Instant::now();
-        let response = self
-            .client
-            .get_inner()
-            .await
+        let response = inner_client
             .generate_content()
             .set_model(self.model_path())
             .set_contents([request_content])

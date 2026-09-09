@@ -3,8 +3,7 @@ use std::sync::Arc;
 use reili_core::error::PortError;
 use reili_core::knowledge::{WebCitation, WebSearchInput, WebSearchResult, WebSearchUserLocation};
 use reili_core::task::TaskResources;
-use rig::completion::ToolDefinition;
-use rig::tool::Tool;
+use rig::tool::{Tool, ToolContext};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -36,29 +35,33 @@ impl Tool for SearchWebTool {
     type Args = SearchWebArgs;
     type Output = String;
 
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: Self::NAME.to_string(),
-            description: "Search the public web for recent information relevant to the investigation. Returns a summary with source citations.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "The search query. Max 500 characters.",
-                        "maxLength": 500
-                    },
-                    "timezone": {
-                        "type": "string",
-                        "description": "IANA timezone for search location context (e.g. Asia/Tokyo)."
-                    }
-                },
-                "required": ["query","timezone"]
-            }),
-        }
+    fn description(&self) -> String {
+        "Search the public web for recent information relevant to the investigation. Returns a summary with source citations.".to_string()
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+    fn parameters(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query. Max 500 characters.",
+                    "maxLength": 500
+                },
+                "timezone": {
+                    "type": "string",
+                    "description": "IANA timezone for search location context (e.g. Asia/Tokyo)."
+                }
+            },
+            "required": ["query","timezone"]
+        })
+    }
+
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<Self::Output, Self::Error> {
         let input = WebSearchInput {
             query: args.query,
             user_location: WebSearchUserLocation {
@@ -113,7 +116,7 @@ mod tests {
     use async_trait::async_trait;
     use reili_core::error::PortError;
     use reili_core::knowledge::{WebCitation, WebSearchInput, WebSearchPort, WebSearchResult};
-    use rig::tool::Tool;
+    use rig::tool::{Tool, ToolContext};
 
     use super::*;
     use crate::outbound::agents::tools::search_web::SearchWebArgs;
@@ -180,10 +183,13 @@ mod tests {
         );
 
         let output = tool
-            .call(SearchWebArgs {
-                query: "test query".to_string(),
-                timezone: "Asia/Tokyo".to_string(),
-            })
+            .call(
+                &mut ToolContext::new(),
+                SearchWebArgs {
+                    query: "test query".to_string(),
+                    timezone: "Asia/Tokyo".to_string(),
+                },
+            )
             .await
             .expect("call search_web");
 
@@ -209,10 +215,13 @@ mod tests {
         );
 
         let output = tool
-            .call(SearchWebArgs {
-                query: "test".to_string(),
-                timezone: String::new(),
-            })
+            .call(
+                &mut ToolContext::new(),
+                SearchWebArgs {
+                    query: "test".to_string(),
+                    timezone: String::new(),
+                },
+            )
             .await
             .expect("call search_web");
 
@@ -230,7 +239,7 @@ mod tests {
             },
         );
 
-        let definition = tool.definition("test".to_string()).await;
+        let definition = rig::tool::tool_definition(&tool);
         assert_eq!(definition.name, "search_web");
         let required = definition.parameters["required"]
             .as_array()
