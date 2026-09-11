@@ -450,7 +450,7 @@ mod tests {
         TaskResources {
             slack_message_search_port,
             slack_file_download_port,
-            web_search_port,
+            web_search_port: Some(web_search_port),
             canvas_memory_port: None,
         }
     }

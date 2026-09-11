@@ -15,6 +15,7 @@ use super::usage_collector::LlmUsageCollector;
 
 const REPORT_PROGRESS_TOOL_NAME: &str = "report_progress";
 const TASK_CANCELLED_REASON: &str = "task_cancelled";
+const NATIVE_WEB_SEARCH_TOOL_NAME: &str = "web_search";
 
 #[derive(Clone)]
 pub struct AgentExecutionHook {
@@ -155,12 +156,81 @@ impl AgentExecutionHook {
         CompletionCallAction::continue_run()
     }
 
-    async fn handle_completion_response(&self, usage: rig::completion::Usage) -> ObservationAction {
+    async fn handle_completion_response(
+        &self,
+        usage: rig::completion::Usage,
+        raw: &serde_json::Value,
+    ) -> ObservationAction {
         self.track_completion_response(usage);
+        self.handle_native_web_search_calls(raw).await;
         if self.is_cancelled() {
             return ObservationAction::stop(TASK_CANCELLED_REASON);
         }
         ObservationAction::continue_run()
+    }
+
+    /// Bedrock Mantle's native `web_search` tool (see `build_provider_settings` in
+    /// `bedrock_mantle.rs`) runs server-side, so it never reaches
+    /// `on_tool_call`/`on_tool_result` the way the local `search_web` tool does — this is its
+    /// only observation point. Matches on the raw `type` string rather than deserializing into a
+    /// provider-specific response type, so it's a silent no-op for every other provider's
+    /// response shape.
+    async fn handle_native_web_search_calls(&self, raw: &serde_json::Value) {
+        let Some(items) = raw.get("output").and_then(serde_json::Value::as_array) else {
+            return;
+        };
+
+        for item in items {
+            if item.get("type").and_then(serde_json::Value::as_str) != Some("web_search_call") {
+                continue;
+            }
+
+            let tool_call_id = item
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+
+            self.logger.info(
+                "llm_native_web_search_call_observed",
+                log_fields([
+                    ("ownerId", LogFieldValue::from(self.owner_id.clone())),
+                    ("toolCallId", LogFieldValue::from(tool_call_id.to_string())),
+                    ("channel", LogFieldValue::from(self.runtime.channel.clone())),
+                    (
+                        "threadTs",
+                        LogFieldValue::from(self.runtime.thread_ts.clone()),
+                    ),
+                    ("retryCount", LogFieldValue::from(self.runtime.retry_count)),
+                    (
+                        "status",
+                        LogFieldValue::from(
+                            item.get("status")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("unknown")
+                                .to_string(),
+                        ),
+                    ),
+                ]),
+            );
+
+            // The search already finished, so this fires back to back rather than bracketing it.
+            self.publish_tool_started(NATIVE_WEB_SEARCH_TOOL_NAME, tool_call_id)
+                .await;
+            self.publish_tool_completed(NATIVE_WEB_SEARCH_TOOL_NAME, tool_call_id)
+                .await;
+
+            if let Some(query) = native_web_search_query(item) {
+                // Kept out of the info log above — same split as `slack_auto_response_discard*`.
+                self.logger.debug(
+                    "llm_native_web_search_call_query",
+                    log_fields([
+                        ("ownerId", LogFieldValue::from(self.owner_id.clone())),
+                        ("toolCallId", LogFieldValue::from(tool_call_id.to_string())),
+                        ("query", LogFieldValue::from(query)),
+                    ]),
+                );
+            }
+        }
     }
 
     pub(crate) async fn handle_tool_call(
@@ -210,6 +280,24 @@ fn classify_tool_result(result: &ToolResult) -> &'static str {
     }
 }
 
+/// Extracts a `web_search_call` output item's query text from `action.queries` — e.g.
+/// `{"action": {"type": "search", "queries": ["rig framework"]}}` — joining multiple queries with
+/// `; `. `None` when the item carries no queries (the shape varies by action type).
+fn native_web_search_query(item: &serde_json::Value) -> Option<String> {
+    let queries = item.get("action")?.get("queries")?.as_array()?;
+    let joined = queries
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    if joined.is_empty() {
+        None
+    } else {
+        Some(joined)
+    }
+}
+
 impl AgentHook for AgentExecutionHook {
     async fn on_completion_call(
         &self,
@@ -224,7 +312,8 @@ impl AgentHook for AgentExecutionHook {
         _ctx: &HookContext,
         event: CompletionResponseEvent<'_>,
     ) -> ObservationAction {
-        self.handle_completion_response(event.usage).await
+        self.handle_completion_response(event.usage, event.raw)
+            .await
     }
 
     async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
@@ -454,6 +543,152 @@ mod tests {
 
         assert_eq!(collector.snapshot().requests, 1);
         assert_eq!(collector.snapshot().total_tokens, 30);
+    }
+
+    #[tokio::test]
+    async fn logs_and_publishes_progress_for_native_web_search_call() {
+        let log_entries = Arc::new(Mutex::new(Vec::new()));
+        let progress_calls = Arc::new(Mutex::new(Vec::new()));
+        let publish_calls = Arc::clone(&progress_calls);
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port
+            .expect_publish()
+            .times(2)
+            .returning(move |input| {
+                publish_calls.lock().expect("lock calls").push(input);
+                Ok(())
+            });
+        let hook = AgentExecutionHook::new(
+            "datadog_agent".to_string(),
+            sample_runtime(),
+            sample_cancellation(),
+            logger_with_entries(Arc::clone(&log_entries), 2),
+            Arc::new(progress_event_port),
+            LlmUsageCollector::new(),
+        );
+
+        hook.handle_native_web_search_calls(&serde_json::json!({
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "id": "ws_001",
+                    "status": "completed",
+                    "action": { "type": "search", "queries": ["rig framework"] },
+                },
+            ],
+        }))
+        .await;
+
+        let entries = log_entries.lock().expect("lock entries");
+        assert_eq!(entries.len(), 2);
+
+        assert_eq!(entries[0].event, "llm_native_web_search_call_observed");
+        assert_eq!(entries[0].level, LogLevel::Info);
+        assert_eq!(
+            entries[0]
+                .fields
+                .get("toolCallId")
+                .and_then(LogFieldValue::as_str),
+            Some("ws_001")
+        );
+        assert_eq!(
+            entries[0]
+                .fields
+                .get("status")
+                .and_then(LogFieldValue::as_str),
+            Some("completed")
+        );
+        assert!(!entries[0].fields.contains_key("query"));
+
+        assert_eq!(entries[1].event, "llm_native_web_search_call_query");
+        assert_eq!(entries[1].level, LogLevel::Debug);
+        assert_eq!(
+            entries[1]
+                .fields
+                .get("toolCallId")
+                .and_then(LogFieldValue::as_str),
+            Some("ws_001")
+        );
+        assert_eq!(
+            entries[1]
+                .fields
+                .get("query")
+                .and_then(LogFieldValue::as_str),
+            Some("rig framework")
+        );
+
+        assert_eq!(
+            progress_calls.lock().expect("lock calls").as_slice(),
+            &[
+                TaskProgressEventInput {
+                    owner_id: "datadog_agent".to_string(),
+                    event: TaskProgressEvent::ToolCallStarted {
+                        task_id: "ws_001".to_string(),
+                        title: "web_search".to_string(),
+                    },
+                },
+                TaskProgressEventInput {
+                    owner_id: "datadog_agent".to_string(),
+                    event: TaskProgressEvent::ToolCallCompleted {
+                        task_id: "ws_001".to_string(),
+                        title: "web_search".to_string(),
+                    },
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn omits_debug_query_log_when_action_carries_no_queries() {
+        let log_entries = Arc::new(Mutex::new(Vec::new()));
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port
+            .expect_publish()
+            .times(2)
+            .returning(|_| Ok(()));
+        let hook = AgentExecutionHook::new(
+            "datadog_agent".to_string(),
+            sample_runtime(),
+            sample_cancellation(),
+            logger_with_entries(Arc::clone(&log_entries), 1),
+            Arc::new(progress_event_port),
+            LlmUsageCollector::new(),
+        );
+
+        hook.handle_native_web_search_calls(&serde_json::json!({
+            "output": [
+                { "type": "web_search_call", "id": "ws_002", "status": "in_progress" },
+            ],
+        }))
+        .await;
+
+        let entries = log_entries.lock().expect("lock entries");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].event, "llm_native_web_search_call_observed");
+    }
+
+    #[tokio::test]
+    async fn does_not_log_or_publish_when_raw_response_output_has_no_web_search_call() {
+        let log_entries = Arc::new(Mutex::new(Vec::new()));
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port.expect_publish().times(0);
+        let hook = AgentExecutionHook::new(
+            "datadog_agent".to_string(),
+            sample_runtime(),
+            sample_cancellation(),
+            logger_with_entries(Arc::clone(&log_entries), 0),
+            Arc::new(progress_event_port),
+            LlmUsageCollector::new(),
+        );
+
+        hook.handle_native_web_search_calls(&serde_json::json!({
+            "output": [
+                { "type": "message", "id": "msg_1" },
+            ],
+        }))
+        .await;
+
+        assert!(log_entries.lock().expect("lock entries").is_empty());
     }
 
     #[tokio::test]

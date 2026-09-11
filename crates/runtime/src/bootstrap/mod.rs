@@ -168,7 +168,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         additional_system_prompt: config.additional_system_prompt.clone(),
     })
     .await?;
-    let web_search_port = create_web_search_port(&config.web_search_llm);
+    let web_search_port = create_web_search_port(config.web_search_llm.as_ref());
 
     let task_resources = TaskResources {
         slack_message_search_port,
@@ -600,19 +600,23 @@ fn bedrock_mantle_client_initialization_error(error: PortError) -> RuntimeBootst
     }
 }
 
-fn create_web_search_port(web_search_llm: &WebSearchProviderConfig) -> Arc<dyn WebSearchPort> {
+/// Builds the `search_web` tool's backend; `None` flows into `TaskResources::web_search_port`.
+fn create_web_search_port(
+    web_search_llm: Option<&WebSearchProviderConfig>,
+) -> Option<Arc<dyn WebSearchPort>> {
     match web_search_llm {
-        WebSearchProviderConfig::OpenAi { api_key } => {
-            Arc::new(OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
+        Some(WebSearchProviderConfig::OpenAi { api_key }) => Some(Arc::new(
+            OpenAiWebSearchAdapter::new(OpenAiWebSearchAdapterConfig {
                 api_key: api_key.clone(),
-            }))
-        }
-        WebSearchProviderConfig::Anthropic { api_key, model } => Arc::new(
+            }),
+        )),
+        Some(WebSearchProviderConfig::Anthropic { api_key, model }) => Some(Arc::new(
             AnthropicWebSearchAdapter::new(AnthropicWebSearchAdapterConfig {
                 api_key: api_key.clone(),
                 model: model.clone(),
             }),
-        ),
+        )),
+        None => None,
     }
 }
 

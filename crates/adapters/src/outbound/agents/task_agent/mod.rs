@@ -78,7 +78,10 @@ where
             config: self.sub_agent_config(),
         });
         let memory_context_section = build_memory_context_section(&input.run_context.memory_items);
-        let catalog_groups = spawn_tool_catalog_groups(&input.prepared_connectors);
+        let catalog_groups = spawn_tool_catalog_groups(
+            &input.prepared_connectors,
+            input.run_context.resources.web_search_port.is_some(),
+        );
 
         let builder = self
             .client
@@ -117,7 +120,6 @@ where
                 Arc::clone(&input.run_context.resources.slack_message_search_port),
                 input.run_context.slack_action_token.clone(),
             ))
-            .tool(SearchWebTool::new(Arc::clone(&input.run_context.resources)))
             .tool(SpawnAgentTool::new(SpawnAgentToolInput {
                 agent_factory,
                 available_tool_names: spawn_catalog_tool_names(&catalog_groups),
@@ -125,6 +127,11 @@ where
                 tool_concurrency: self.config.settings.tool_concurrency,
                 shared_prompt_context: memory_context_section,
             }));
+
+        let builder = match &input.run_context.resources.web_search_port {
+            Some(web_search_port) => builder.tool(SearchWebTool::new(Arc::clone(web_search_port))),
+            None => builder,
+        };
 
         // save_memory / save_shared_memory are lead-only tools; sub-agents surface facts for the
         // lead to persist. Both are registered only when a Canvas memory backend is configured.

@@ -274,7 +274,10 @@ which falls back to the lead backend when omitted. It must resolve to an `openai
 backend — those are the only providers with a supported web search integration; Reili refuses to
 start otherwise. This matters because Bedrock, Bedrock Mantle, and Vertex AI backends cannot be
 used for web search (see below); set `ai.web_search_backend` to an `openai` or `anthropic` backend
-to give a Bedrock-, Bedrock-Mantle-, or Vertex-AI-backed Reili working web search.
+to give a Bedrock-, Bedrock-Mantle-, or Vertex-AI-backed Reili working web search. The one
+exception is an openai/xai-family `bedrock_mantle` lead backend with `ai.web_search_backend` left
+unset: Reili starts without a `search_web` backend, since that lead already searches the web
+natively (see below).
 
 When the selected backend uses `provider = "anthropic"`, Claude is called through the Anthropic
 API.
@@ -327,8 +330,10 @@ bearer API key or an IAM role — the two are mutually exclusive, and setting bo
   resource for IAM-role auth, or `bedrock-mantle:CallWithBearerToken` on `Resource: "*"` for API-key
   auth — see
   [Actions, resources, and condition keys for Amazon Bedrock Powered by AWS Mantle](https://docs.aws.amazon.com/service-authorization/latest/reference/list_bedrock-mantle.html).
-- Bedrock Mantle has no supported web search integration either; point `ai.web_search_backend` at an
-  `openai` or `anthropic` backend to enable `search_web`.
+- `openai.*`/`xai.*` backends get Bedrock Mantle's server-side `web_search` tool automatically
+  (see above for what that means for `ai.web_search_backend`). `anthropic.*` backends get no native
+  tool, and Bedrock Mantle still has no supported `search_web` integration for them; point
+  `ai.web_search_backend` at an `openai` or `anthropic` backend as usual.
 
 When the selected backend uses `provider = "vertexai"`, Google credentials are loaded from
 Application Default Credentials.

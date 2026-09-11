@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use reili_core::error::PortError;
-use reili_core::knowledge::{WebCitation, WebSearchInput, WebSearchResult, WebSearchUserLocation};
-use reili_core::task::TaskResources;
+use reili_core::knowledge::{
+    WebCitation, WebSearchInput, WebSearchPort, WebSearchResult, WebSearchUserLocation,
+};
 use rig::tool::{Tool, ToolContext};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -11,12 +12,12 @@ use super::support::json::to_json_string;
 
 #[derive(Clone)]
 pub struct SearchWebTool {
-    resources: Arc<TaskResources>,
+    web_search_port: Arc<dyn WebSearchPort>,
 }
 
 impl SearchWebTool {
-    pub fn new(resources: Arc<TaskResources>) -> Self {
-        Self { resources }
+    pub fn new(web_search_port: Arc<dyn WebSearchPort>) -> Self {
+        Self { web_search_port }
     }
 }
 
@@ -69,7 +70,7 @@ impl Tool for SearchWebTool {
             },
         };
 
-        let result = self.resources.web_search_port.search(input).await?;
+        let result = self.web_search_port.search(input).await?;
         to_json_string(&SearchWebOutput::from(result))
     }
 }
@@ -139,33 +140,7 @@ mod tests {
         result: WebSearchResult,
     ) -> SearchWebTool {
         let mock_port = Arc::new(MockWebSearchPort { calls, result });
-        let resources = Arc::new(build_test_resources(mock_port));
-        SearchWebTool::new(resources)
-    }
-
-    fn build_test_resources(web_search_port: Arc<dyn WebSearchPort>) -> TaskResources {
-        use reili_core::messaging::slack::{
-            MockSlackFileDownloadPort, SlackMessageSearchInput, SlackMessageSearchPort,
-            SlackMessageSearchResult,
-        };
-
-        struct StubSlackMessageSearch;
-        #[async_trait]
-        impl SlackMessageSearchPort for StubSlackMessageSearch {
-            async fn search_messages(
-                &self,
-                _: SlackMessageSearchInput,
-            ) -> Result<SlackMessageSearchResult, PortError> {
-                unimplemented!()
-            }
-        }
-
-        TaskResources {
-            slack_message_search_port: Arc::new(StubSlackMessageSearch),
-            slack_file_download_port: Arc::new(MockSlackFileDownloadPort::new()),
-            web_search_port,
-            canvas_memory_port: None,
-        }
+        SearchWebTool::new(mock_port)
     }
 
     #[tokio::test]

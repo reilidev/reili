@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use reili_core::task::TaskResources;
+use reili_core::knowledge::WebSearchPort;
 use rig::tool::{DynamicTool, Tool};
 
 use crate::outbound::agents::connector::{PreparedConnector, ToolCatalogEntry, ToolCatalogGroup};
@@ -80,24 +80,33 @@ const SEARCH_WEB_CATALOG_SUMMARY: &str =
     "Search the public web for vendor outages, status pages, documentation, and error messages.";
 
 /// Catalog group for tools supplied by the task agent itself rather than a connector.
-pub(super) fn built_in_spawn_catalog_group() -> ToolCatalogGroup {
-    ToolCatalogGroup {
-        source: "General".to_string(),
-        entries: vec![ToolCatalogEntry::new(
+pub(super) fn built_in_spawn_catalog_group(web_search_available: bool) -> ToolCatalogGroup {
+    let entries = if web_search_available {
+        vec![ToolCatalogEntry::new(
             SearchWebTool::NAME,
             SEARCH_WEB_CATALOG_SUMMARY,
-        )],
+        )]
+    } else {
+        Vec::new()
+    };
+
+    ToolCatalogGroup {
+        source: "General".to_string(),
+        entries,
     }
 }
 
 /// Full spawn catalog: every connector's group in registration order, then the built-in group.
 pub(super) fn spawn_tool_catalog_groups(
     prepared_connectors: &[Arc<dyn PreparedConnector>],
+    web_search_available: bool,
 ) -> Vec<ToolCatalogGroup> {
     prepared_connectors
         .iter()
         .map(|prepared| prepared.spawn_tool_catalog())
-        .chain(std::iter::once(built_in_spawn_catalog_group()))
+        .chain(std::iter::once(built_in_spawn_catalog_group(
+            web_search_available,
+        )))
         .collect()
 }
 
@@ -133,7 +142,7 @@ pub(super) fn spawn_catalog_tool_names(groups: &[ToolCatalogGroup]) -> Vec<Strin
 
 pub(super) struct ResolveSpawnSelectionInput<'a> {
     pub(super) prepared_connectors: &'a [Arc<dyn PreparedConnector>],
-    pub(super) resources: &'a Arc<TaskResources>,
+    pub(super) web_search_port: Option<&'a Arc<dyn WebSearchPort>>,
     pub(super) tool_names: &'a [String],
 }
 
@@ -179,9 +188,11 @@ pub(super) fn resolve_spawn_selection(
         }
     }
 
-    if requested.contains(SearchWebTool::NAME) {
+    if requested.contains(SearchWebTool::NAME)
+        && let Some(web_search_port) = input.web_search_port
+    {
         tools.push(into_dynamic_tool(SearchWebTool::new(Arc::clone(
-            input.resources,
+            web_search_port,
         ))));
     }
 
