@@ -15,6 +15,7 @@ use super::model::{
     VertexAiLlmConfig, WebSearchProviderConfig,
 };
 use crate::config::SecretString;
+use reili_adapters::outbound::agents::BedrockMantleModelFamily;
 use reili_core::messaging::slack::SlackChannelNamePattern;
 
 const DEFAULT_WORKER_CONCURRENCY: u32 = 8;
@@ -400,19 +401,18 @@ fn resolve_llm_provider<'a>(
     Ok((provider, lead_id, lead_field))
 }
 
-/// Resolve the backend used by the `search_web` tool. Falls back to the lead
-/// backend so behavior is unchanged when `ai.web_search_backend` is omitted.
-/// Only `openai` and `anthropic` backends are supported for web search; the
-/// lead backend can use any provider, but if it (or the explicit override)
-/// resolves to `bedrock`, `bedrock_mantle`, or `vertexai`, this returns an
-/// error asking for `ai.web_search_backend` to be set to an openai or
-/// anthropic backend.
+/// Resolves the `search_web` backend, falling back to the lead backend when
+/// `ai.web_search_backend` is unset. The one exception: falling back to a lead that is an
+/// openai/xai-family `bedrock_mantle` backend resolves to `Ok(None)` instead of an error, since
+/// that lead already searches the web natively (see `BedrockMantleTaskRunner`) — an explicit
+/// `ai.web_search_backend` override still has to name a supported provider.
 fn resolve_web_search_llm_provider(
     ai: &AiFileConfig,
     lead_id: &str,
     lead_field: &'static str,
     env: &dyn EnvironmentReader,
-) -> Result<WebSearchProviderConfig, ConfigError> {
+) -> Result<Option<WebSearchProviderConfig>, ConfigError> {
+    let falls_back_to_lead = ai.web_search_backend.is_none();
     let (web_search_id, web_search_field) = match ai.web_search_backend.as_deref() {
         Some(id) => (id, "ai.web_search_backend"),
         None => (lead_id, lead_field),
@@ -421,14 +421,25 @@ fn resolve_web_search_llm_provider(
     let prefix = format!("ai.backends.{web_search_id}");
 
     match web_search_backend {
-        AiBackendFileConfig::OpenAi { api_key_env, .. } => Ok(WebSearchProviderConfig::OpenAi {
-            api_key: resolve_openai_api_key(env, api_key_env.as_deref(), &prefix)?,
-        }),
+        AiBackendFileConfig::OpenAi { api_key_env, .. } => {
+            Ok(Some(WebSearchProviderConfig::OpenAi {
+                api_key: resolve_openai_api_key(env, api_key_env.as_deref(), &prefix)?,
+            }))
+        }
         AiBackendFileConfig::Anthropic { model, api_key_env } => {
-            Ok(WebSearchProviderConfig::Anthropic {
+            Ok(Some(WebSearchProviderConfig::Anthropic {
                 api_key: resolve_anthropic_api_key(env, api_key_env.as_deref(), &prefix)?,
                 model: model.to_string(),
-            })
+            }))
+        }
+        AiBackendFileConfig::BedrockMantle { model_id, .. }
+            if falls_back_to_lead
+                && matches!(
+                    BedrockMantleModelFamily::from_model_id(model_id),
+                    Ok(BedrockMantleModelFamily::OpenAiCompatible)
+                ) =>
+        {
+            Ok(None)
         }
         AiBackendFileConfig::Bedrock { .. }
         | AiBackendFileConfig::BedrockMantle { .. }
@@ -1366,12 +1377,30 @@ provider = "unsupported-provider"
     }
 
     #[test]
-    fn rejects_bedrock_mantle_as_web_search_backend() {
+    fn resolves_no_web_search_provider_when_lead_is_openai_family_bedrock_mantle() {
         let env =
             FixedEnvironment::with_overrides(&[("LLM_BEDROCK_MANTLE_API_KEY", "mantle-api-key")]);
         let file_config = parse_runtime_config(
             &valid_bedrock_mantle_config_with_distinct_backends()
                 .replace("web_search_backend = \"web_search\"\n", ""),
+        );
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert_eq!(config.web_search_llm, None);
+    }
+
+    #[test]
+    fn rejects_anthropic_family_bedrock_mantle_as_web_search_backend() {
+        let env =
+            FixedEnvironment::with_overrides(&[("LLM_BEDROCK_MANTLE_API_KEY", "mantle-api-key")]);
+        let file_config = parse_runtime_config(
+            &valid_bedrock_mantle_config_with_distinct_backends()
+                .replace("web_search_backend = \"web_search\"\n", "")
+                .replace(
+                    "model_id = \"openai.gpt-5.6-sol\"",
+                    "model_id = \"anthropic.claude-mythos-5\"",
+                ),
         );
 
         let error =
@@ -1380,6 +1409,29 @@ provider = "unsupported-provider"
         match error {
             ConfigError::InvalidValue { field, message } => {
                 assert_eq!(field, "ai.lead_backend");
+                assert!(message.contains("provider `bedrock_mantle`"), "{message}");
+            }
+            other => panic!("expected invalid-value error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn rejects_explicit_openai_family_bedrock_mantle_as_web_search_backend() {
+        let env =
+            FixedEnvironment::with_overrides(&[("LLM_BEDROCK_MANTLE_API_KEY", "mantle-api-key")]);
+        let file_config = parse_runtime_config(
+            &valid_bedrock_mantle_config_with_distinct_backends().replace(
+                "web_search_backend = \"web_search\"",
+                "web_search_backend = \"mantle_api_key\"",
+            ),
+        );
+
+        let error =
+            resolve_app_config(file_config, &env).expect_err("unsupported web search provider");
+
+        match error {
+            ConfigError::InvalidValue { field, message } => {
+                assert_eq!(field, "ai.web_search_backend");
                 assert!(message.contains("provider `bedrock_mantle`"), "{message}");
             }
             other => panic!("expected invalid-value error, got {other}"),
@@ -2301,7 +2353,7 @@ api_key_env = "LLM_OPENAI_API_KEY"
 
         let config = resolve_app_config(file_config, &env).expect("resolve config");
 
-        match config.web_search_llm {
+        match config.web_search_llm.expect("web search provider") {
             WebSearchProviderConfig::OpenAi { api_key } => {
                 assert_eq!(api_key.expose(), "openai-api-key");
             }
@@ -2323,7 +2375,7 @@ api_key_env = "LLM_OPENAI_API_KEY"
             LlmProviderConfig::OpenAi(_) => {}
             other => panic!("expected openai lead provider, got {other:?}"),
         }
-        match config.web_search_llm {
+        match config.web_search_llm.expect("web search provider") {
             WebSearchProviderConfig::Anthropic { model, api_key } => {
                 assert_eq!(model, "claude-haiku-4-5");
                 assert_eq!(api_key.expose(), "anthropic-api-key");

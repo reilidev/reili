@@ -15,6 +15,7 @@ use rig::http_client::{
 };
 use rig::providers::{anthropic, openai};
 use rig::wasm_compat::WasmCompatSend;
+use serde_json::json;
 
 use super::super::provider_settings::{
     CreateBedrockMantleProviderSettingsInput, LlmProviderSettings,
@@ -61,13 +62,13 @@ pub struct BedrockMantleIamRole {
 /// [Grok 4.6](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-xai-grok-4-6.html),
 /// and [Claude Mythos 5](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-mythos-5.html).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BedrockMantleModelFamily {
+pub enum BedrockMantleModelFamily {
     OpenAiCompatible,
     Anthropic,
 }
 
 impl BedrockMantleModelFamily {
-    pub(crate) fn from_model_id(model_id: &str) -> Result<Self, PortError> {
+    pub fn from_model_id(model_id: &str) -> Result<Self, PortError> {
         if model_id.starts_with("openai.") || model_id.starts_with("xai.") {
             Ok(Self::OpenAiCompatible)
         } else if model_id.starts_with("anthropic.") {
@@ -118,7 +119,8 @@ impl BedrockMantleTaskRunner {
                 .await?;
 
         Ok(Self {
-            provider_settings: create_bedrock_mantle_provider_settings(
+            provider_settings: build_provider_settings(
+                family,
                 CreateBedrockMantleProviderSettingsInput {
                     model_id: input.model_id,
                     sub_agent_model_id: input.sub_agent_model_id,
@@ -131,6 +133,24 @@ impl BedrockMantleTaskRunner {
             additional_system_prompt: input.additional_system_prompt,
         })
     }
+}
+
+fn build_provider_settings(
+    family: BedrockMantleModelFamily,
+    input: CreateBedrockMantleProviderSettingsInput,
+) -> LlmProviderSettings {
+    let mut settings = create_bedrock_mantle_provider_settings(input);
+    if family == BedrockMantleModelFamily::OpenAiCompatible {
+        settings.additional_params = json!({
+            "tools": [
+                {
+                    "type": "web_search",
+                    "search_context_size": "medium"
+                }
+            ]
+        });
+    }
+    settings
 }
 
 #[async_trait]
@@ -470,11 +490,42 @@ mod tests {
 
     use super::{
         BedrockMantleAuth, BedrockMantleIamRole, BedrockMantleModelFamily,
-        BedrockMantleTaskRunnerInput, bedrock_mantle_base_url,
+        BedrockMantleTaskRunnerInput, CreateBedrockMantleProviderSettingsInput,
+        bedrock_mantle_base_url, build_provider_settings,
     };
     use crate::outbound::agents::connector::ConnectorSet;
     use crate::outbound::agents::{DatadogConnector, DatadogMcpToolConfig, GitHubConnector};
     use crate::outbound::github::GitHubMcpConfig;
+
+    #[test]
+    fn enables_hosted_web_search_tool_for_openai_compatible_family() {
+        let settings = build_provider_settings(
+            BedrockMantleModelFamily::OpenAiCompatible,
+            CreateBedrockMantleProviderSettingsInput {
+                model_id: "openai.gpt-5.6-sol".to_string(),
+                sub_agent_model_id: "openai.gpt-5.6-terra".to_string(),
+            },
+        );
+
+        let tools = settings.additional_params["tools"]
+            .as_array()
+            .expect("tools array");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["type"], "web_search");
+    }
+
+    #[test]
+    fn does_not_enable_hosted_web_search_tool_for_anthropic_family() {
+        let settings = build_provider_settings(
+            BedrockMantleModelFamily::Anthropic,
+            CreateBedrockMantleProviderSettingsInput {
+                model_id: "anthropic.claude-mythos-5".to_string(),
+                sub_agent_model_id: "anthropic.claude-mythos-5".to_string(),
+            },
+        );
+
+        assert_eq!(settings.additional_params, serde_json::json!({}));
+    }
 
     #[test]
     fn base_url_targets_the_family_specific_regional_path() {

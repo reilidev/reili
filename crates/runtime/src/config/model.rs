@@ -101,7 +101,8 @@ pub enum JudgeProviderConfig {
 /// task runner — e.g. Bedrock backends, which cannot perform web search
 /// natively, can point web search at an Anthropic or OpenAI backend instead.
 /// Restricted to these two providers because they are the only ones with a
-/// supported web search integration.
+/// supported `search_web` integration. See `resolve_web_search_llm_provider`
+/// for when [`AppConfig::web_search_llm`] resolves to `None` instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebSearchProviderConfig {
     OpenAi {
@@ -235,8 +236,9 @@ pub struct AppConfig {
     /// one channel enables `auto_response`.
     pub judge_llm: Option<JudgeProviderConfig>,
     /// Provider used by the `search_web` tool; falls back to the lead backend
-    /// when `ai.web_search_backend` is not set.
-    pub web_search_llm: WebSearchProviderConfig,
+    /// when `ai.web_search_backend` is not set. `None` when no separate
+    /// backend is configured or needed — see [`WebSearchProviderConfig`].
+    pub web_search_llm: Option<WebSearchProviderConfig>,
     pub github: GitHubConfig,
     pub esa: Option<EsaConfig>,
     pub jira: Option<JiraConfig>,
@@ -304,9 +306,9 @@ mod tests {
                 api_key: SecretString::new("judge-openai-secret".to_string()),
                 model: "gpt-5.4-mini".to_string(),
             }),
-            web_search_llm: WebSearchProviderConfig::OpenAi {
+            web_search_llm: Some(WebSearchProviderConfig::OpenAi {
                 api_key: SecretString::new("web-search-openai-secret".to_string()),
-            },
+            }),
             github: GitHubConfig {
                 url: "https://api.githubcopilot.com/mcp/".to_string(),
                 app_id: "12345".to_string(),
@@ -386,9 +388,9 @@ mod tests {
                 }),
             },
             judge_llm: None,
-            web_search_llm: WebSearchProviderConfig::OpenAi {
+            web_search_llm: Some(WebSearchProviderConfig::OpenAi {
                 api_key: SecretString::new("openai-secret".to_string()),
-            },
+            }),
             github: GitHubConfig {
                 url: "https://api.githubcopilot.com/mcp/".to_string(),
                 app_id: "12345".to_string(),
