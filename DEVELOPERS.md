@@ -276,12 +276,36 @@ When adding behavior:
   Slack public-channel search, and web lookup integrations, and writes only Slack progress/control
   and result messages.
 
+- When `[[goals]]` are configured, a goal scheduler runs in the same process. Its durable state
+  is the goal ledger and work item issues in the Work State repository; see
+  [docs/autonomy.md](./docs/autonomy.md). Stopping the process interrupts running cycles; they
+  resume from their last checkpoint after the lease expires.
+
 ## Testing Conventions
 
 - Add Rust tests alongside implementation code with `#[cfg(test)]` or sibling test modules.
 - Prefer unit tests for application orchestration, config resolution, and adapter contract behavior.
 - Keep tests deterministic and independent from external APIs.
 - Do not add tests that only verify logging.
+- Goal behavior is covered by acceptance scenarios in `crates/application/src/goal/scenarios.rs`
+  (in-memory GitHub/Slack/Canvas/metrics fakes in `goal/testing.rs`) and by an HTTP integration
+  test against a fake GitHub API in `crates/runtime/src/bootstrap/goals_integration_tests.rs`.
+
+## Evaluation
+
+Investigation quality is evaluated with replayable fixtures in
+`crates/application/fixtures/eval/`:
+
+```bash
+cd crates
+cargo run -p reili_runtime -- eval --replay --output eval.json --markdown eval.md
+cargo run -p reili_runtime -- eval --config ../reili.toml --baseline eval.json   # live, AI keys only
+```
+
+`--replay` is deterministic and runs in CI. Live mode runs the configured AI backend against the
+fixtures with no live connectors; use `--baseline` to compare a prompt or model change against a
+previous run (exit code 2 on threshold failures or regressions). Add a fixture for every incident
+pattern you want to protect against regressions; see [docs/autonomy.md](./docs/autonomy.md#evaluation).
 
 ## Release Notes
 
@@ -296,4 +320,5 @@ assembled from those prebuilt binaries and published by the release workflow.
 - `cargo run -p reili_runtime -- --config reili.toml`: start the app from `crates/`
 - `cargo watch -x "run -p reili_runtime -- --config reili.toml"`: start with reload from `crates/`
 - `cargo test --workspace`: run Rust tests
+- `cargo run -p reili_runtime -- eval --replay`: replay evaluation fixtures
 - `cargo clippy --workspace --all-targets -- -D warnings`: run lints

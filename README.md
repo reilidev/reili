@@ -28,6 +28,9 @@ action is needed. Reili takes that work off your plate.
 
 Core:
 
+- **Goal-driven**: give Reili long-term goals in `reili.toml` (for example "keep checkout
+  reliable"); it investigates on a schedule, verifies conclusions with deterministic statistics,
+  tracks work in GitHub Issues, reports to Slack, and measures whether fixes helped
 - **Read-focused**: Reili reads and reports — it never changes your infrastructure
 - **Cross-service**: works across Datadog, GitHub, JIRA, Slack, and optional knowledge base search today, with additional services planned over time
 - **Chat-based**: currently works in Slack
@@ -71,6 +74,9 @@ flowchart TD
 
     style More stroke-dasharray: 5 5
 ```
+
+Goal cycles run in the same binary: a scheduler reads goal ledgers from GitHub Issues and runs
+leased, checkpointed cycles with the same agent stack (see [docs/autonomy.md](./docs/autonomy.md)).
 
 A Slack mention is parsed, authorized, and enqueued as a task job into an in-memory queue
 (jobs are not durable across restarts). Worker tasks in the same process claim jobs and run
@@ -400,6 +406,38 @@ What happens:
 If you need to stop a queued or running task, click `Cancel` on that task's control
 message in the same Slack thread.
 
+## Autonomous Goals
+
+Besides answering mentions, Reili can pursue long-term goals defined in `reili.toml`:
+
+```toml
+[work_state.github]
+repository = "acme/reili-work"      # dedicated repository for Reili's Work State
+
+[[goals]]
+id = "checkout-reliability"
+objective = "Continuously improve checkout service reliability."
+scope = ["checkout-api"]
+schedule = "0 */6 * * *"
+timezone = "Asia/Tokyo"
+report_channel = "C0123456789"
+enabled = true
+```
+
+Each cycle observes the goal's services and success criteria, investigates with dynamically
+composed sub-agents, verifies claims with deterministic tools (only independently verified
+hypotheses are recorded as supported), records the work as GitHub Issues that humans can read,
+edit, and steer (`/reili approve|implemented|dismiss|resolve|rerun`), posts only meaningful
+changes to Slack, saves gated reusable facts to the Canvas memory, and later compares metrics
+before and after implemented recommendations. Cycles survive restarts: state lives in GitHub
+Issues, not in the process. Ask `@Reili goals` or `@Reili goal <id>` in Slack for status.
+No extra secret is needed by default: Work State reuses the `[connector.github.app]` credentials
+(install the App on the Work State repository with Issues read & write), unless
+`[work_state.github]` names a separate App.
+
+See [docs/autonomy.md](./docs/autonomy.md) for configuration, the Work State format, durability
+guarantees and their limits, safety, the evaluation framework, and the operations runbook.
+
 ## Permissions and Tool Transparency
 
 Reili is intentionally scoped around task execution and decision support. The current runtime is
@@ -411,12 +449,17 @@ At a high level, the current runtime:
 - reads from Datadog, GitHub, optional esa posts, optional JIRA tickets, Slack thread history,
   Slack public-channel search, and web lookup integrations, and writes only Slack progress and
   result messages plus, when memory is configured, reusable notes in the shared memory Canvas
+- when goals are configured, additionally writes issues, comments, and labels in exactly one
+  dedicated Work State repository, using a GitHub App token down-scoped to that repository with
+  `issues: write` and `metadata: read`, and posts goal reports to each goal's report channel
+- runs deterministic analysis and verification (statistics on metrics it queries directly from
+  Datadog, exact arithmetic) inside the process; no code from the model is executed
 - exposes only read-only Datadog MCP tools, including dashboard detail retrieval and Synthetic
   test reads when Datadog returns them
 - exposes only read-only JIRA MCP tools; which projects are reachable is governed by the service
   account token's Atlassian permissions
 - does not register tools for Datadog mutations, GitHub writes, esa writes, JIRA writes,
-  remediation, or deployments
+  remediation, or deployments (Work State writes are application code, never agent tools)
 - is designed to analyze and report, not to change infrastructure, Datadog state, or repository
   state
 
@@ -436,6 +479,7 @@ not part of the release flow.
 ## Non-Goals
 
 - Executing operational actions like auto-remediation or auto-deploy
-- Heavy stateful workflow orchestration
+- Running its own database or durable job queue (Work State lives in GitHub Issues, knowledge in
+  the Slack Canvas, goals in `reili.toml`)
 
 This project is intentionally focused on read-only task execution and decision support.

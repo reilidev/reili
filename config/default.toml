@@ -218,3 +218,80 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
 #endpoint = "http://localhost:4317"
 # Optional when configured: service name attached to exported spans/traces. Defaults to `reili`.
 #service_name = "reili"
+
+# Optional: long-term goals Reili pursues autonomously. See docs/autonomy.md.
+# Goals persist their Work State as GitHub Issues in one dedicated repository.
+#[work_state.github]
+# Required when any [[goals]] entry exists: `owner/name` of the dedicated Work State repository.
+#repository = "example-org/reili-work"
+# Optional: App credentials default to [connector.github.app]. Install the App on this repository
+# with Issues (read & write) and Metadata (read). Tokens are always down-scoped to this repository.
+#app_id = "123456"
+#installation_id = "12345678"
+#private_key_env = "GITHUB_WORK_STATE_APP_PRIVATE_KEY"
+# Optional: GitHub Enterprise Server endpoints.
+#api_base_url = "https://api.github.com"
+#web_base_url = "https://github.com"
+
+# Optional: goal scheduler settings. Defaults shown.
+#[autonomy]
+#tick_interval_seconds = 60
+#max_concurrent_cycles = 1
+#lease_minutes = 15
+#feedback_poll_minutes = 10
+# Direct Datadog metric queries for verification tools, success criteria, and outcome tracking.
+# Requires the `timeseries_query` permission on the Datadog application key.
+#metric_queries = true
+
+#[[goals]]
+# Required: 1-39 characters of a-z, 0-9, `-`, `_`. Used in GitHub labels and Slack commands.
+#id = "checkout-reliability"
+#objective = """
+#Continuously improve checkout service reliability.
+#Identify recurring failures, investigate root causes,
+#and recommend measurable improvements.
+#"""
+# Optional: services, repositories, and environments in scope.
+#scope = ["checkout-api"]
+#repositories = ["example-org/checkout"]
+#environments = ["production"]
+# Required: 5-field cron (or @hourly/@daily/@weekly/@monthly) evaluated in `timezone`.
+#schedule = "0 */6 * * *"
+#timezone = "Asia/Tokyo"
+# Required: Slack channel ID for goal reports (invite the bot).
+#report_channel = "C0123456789"
+#enabled = true
+
+#[goals.report]
+#min_interval_minutes = 60
+#max_reports_per_day = 6
+
+#[goals.budget]
+#max_cycle_minutes = 30
+#max_llm_tokens_per_cycle = 2000000
+#max_llm_tokens_per_day = 8000000
+#max_tool_calls_per_cycle = 200
+#max_sub_agents_per_cycle = 12
+#max_parallel_tools = 4
+#max_new_work_items_per_cycle = 3
+#max_open_work_items = 20
+#max_cycle_attempts = 3
+
+#[goals.permissions]
+#save_knowledge = true
+#post_reports = true
+
+# Optional: alert bot posts in these channels request an early cycle.
+#[goals.alert_trigger]
+#channels = ["alerts-checkout"]
+#min_interval_minutes = 60
+
+# Optional: success criteria measured by Reili from Datadog every cycle.
+#[[goals.success_criteria]]
+#id = "error-rate"
+#description = "5xx rate at most 1%"
+#metric_query = "avg:checkout.error_rate{env:production}"
+#aggregation = "avg"
+#window_minutes = 60
+#comparator = "at_most"
+#target = 0.01

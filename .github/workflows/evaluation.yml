@@ -1,0 +1,74 @@
+name: Evaluation
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+    branches:
+      - main
+    paths:
+      - "crates/**"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "replay (deterministic) or live (uses the AI backend configured in EVAL_REILI_TOML)"
+        required: true
+        default: replay
+        type: choice
+        options:
+          - replay
+          - live
+
+env:
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  evaluate:
+    permissions:
+      contents: read
+    runs-on: ubuntu-slim
+    defaults:
+      run:
+        working-directory: crates
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # release tag v1; upstream does not publish v1.x.y tags
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: crates -> target
+
+      - name: Replay evaluation fixtures
+        if: github.event_name == 'pull_request' || inputs.mode == 'replay'
+        run: |
+          cargo run --locked -p reili_runtime -- eval --replay \
+            --output ../eval-replay.json --markdown ../eval-replay.md
+          cat ../eval-replay.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Live evaluation
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'live'
+        env:
+          EVAL_REILI_TOML: ${{ secrets.EVAL_REILI_TOML }}
+          LLM_OPENAI_API_KEY: ${{ secrets.LLM_OPENAI_API_KEY }}
+          LLM_ANTHROPIC_API_KEY: ${{ secrets.LLM_ANTHROPIC_API_KEY }}
+        run: |
+          printf '%s' "$EVAL_REILI_TOML" > ../eval-reili.toml
+          cargo run --locked -p reili_runtime -- eval --config ../eval-reili.toml \
+            --output ../eval-live.json --markdown ../eval-live.md
+          cat ../eval-live.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: evaluation-results
+          path: |
+            eval-*.json
+            eval-*.md
+          if-no-files-found: ignore

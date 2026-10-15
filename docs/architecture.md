@@ -19,6 +19,7 @@ flowchart TB
         INGRESS["Ingress<br/>routing · authorization ·<br/>auto-response gate · enqueue"]
         EXEC["Execution<br/>worker loop · task run ·<br/>cancellation"]
         PROGRESS["Progress<br/>event stream projection"]
+        GOAL["Goals<br/>scheduler · leased cycle ·<br/>verification gate · decide ·<br/>outcomes · reports · evaluation"]
     end
 
     subgraph adapters["crates/adapters — integrations"]
@@ -26,10 +27,11 @@ flowchart TB
         AGENTS["Agents<br/>lead agent · spawned sub-agents ·<br/>connectors · LLM providers"]
         OUTBOUND["Outbound Slack<br/>replies · reactions ·<br/>progress messages"]
         QUEUE["In-memory job queue"]
+        WORK["GitHub Issues Work State ·<br/>Datadog metric queries ·<br/>verification tools"]
     end
 
     subgraph core["crates/core — domain"]
-        DOMAIN["Domain types · typed errors ·<br/>trait-based ports"]
+        DOMAIN["Domain types · typed errors ·<br/>trait-based ports ·<br/>goals · work state · analysis"]
     end
 
     runtime --> application
@@ -41,13 +43,18 @@ flowchart TB
 ## Crate responsibilities
 
 - `crates/core`: domain types, typed errors, and trait-based ports. Independent from runtime
-  and adapter concerns.
+  and adapter concerns. Includes goal definitions and schedules (`goal`), Work State and the
+  structured investigation vocabulary (`work`), deterministic statistics (`analysis`), and the
+  metric, investigation-runner, work-state, and goal-report ports.
 - `crates/application`: use cases and task orchestration — Slack ingress (routing,
   authorization, auto-response gating, enqueue), task execution (worker loop, cancellation),
-  and progress projection.
+  progress projection, and goal autonomy (`goal`: scheduler, durable cycle, verification gate,
+  decide/dedupe, human-signal reconciliation, outcome evaluation, Slack reports and commands,
+  evaluation framework).
 - `crates/adapters`: inbound Slack parsing and signature verification, outbound Slack Web API
   adapters, the agent stack (lead agent, dynamically spawned sub-agents, connectors, LLM
-  providers), and the in-memory job queue.
+  providers), the in-memory job queue, the GitHub Issues Work State repository, the Datadog
+  metric query adapter, and the deterministic verification tools.
 - `crates/runtime`: config loading (`reili.toml` plus env secrets), dependency wiring in
   `bootstrap`, and the two Slack transports (Socket Mode client and axum HTTP server).
 
@@ -66,6 +73,9 @@ flowchart TB
   spawning sub-agents.
 - **Cancellation**: the Slack `Cancel` button flows through the interaction handler to an
   in-flight job registry that cancels queued or running tasks.
+- **Goal autonomy**: one provider runner implements both `TaskRunnerPort` (Slack tasks) and
+  `InvestigationRunnerPort` (goal cycles). Durable state lives only in GitHub Issues and the
+  Slack Canvas; see [autonomy.md](./autonomy.md).
 
 For the runtime investigation flow, see the [Architecture section in README.md](../README.md#architecture).
 For contributor workflows and architecture rules, see [DEVELOPERS.md](../DEVELOPERS.md).

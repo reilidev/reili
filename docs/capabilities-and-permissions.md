@@ -33,9 +33,15 @@ The runtime can expose only the following tool families:
 - JIRA MCP reads when `[connector.jira]` is configured: `searchJiraIssuesUsingJql`,
   `getJiraIssue`, `getJiraIssueRemoteIssueLinks`, `getTransitionsForJiraIssue`
 - External web lookup: `search_web`
+- Deterministic analysis and verification (computed inside Reili; results are recorded as
+  verifications): `calculate`, `analyze_series`, and, when direct metric queries are enabled,
+  `verify_metric_change`, `analyze_metric`, `correlate_metrics`, `evaluate_error_budget`
+- Goal cycles only: `submit_investigation_report` (hands the structured report back to Reili;
+  it writes nothing by itself)
 
 In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog
-mutations, esa writes, JIRA writes, remediation, or deployments.
+mutations, esa writes, JIRA writes, remediation, or deployments. Goal Work State writes (see
+"Goal-driven autonomy" below) are performed by application code, not by agent tools.
 
 ## Slack Permissions and API Usage
 
@@ -263,6 +269,50 @@ GitHub restrictions:
 - All GitHub search and reads are scoped to `GITHUB_SEARCH_SCOPE_ORG`: Reili enforces it before every
   allowlisted call, so queries must stay inside it and repository content, pull request, Actions,
   and Dependabot reads are rejected when the owner is outside it
+
+## Goal-driven Autonomy: Additional Access
+
+Everything in this section applies only when `[[goals]]` are configured (see
+[autonomy.md](./autonomy.md)).
+
+GitHub Work State (the one write exception):
+
+- Reili writes issues, comments, and labels only in the repository named by
+  `[work_state.github].repository`
+- The installation token is requested with `repositories: [<that repository>]` and
+  `permissions: { issues: write, metadata: read }`, so it cannot write anywhere else even if the
+  App installation is broader
+  ([create an installation access token](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app))
+- Required App permissions on that repository: **Issues** (read & write) and **Metadata** (read)
+- Endpoints: `GET/POST /repos/{owner}/{repo}/issues`, `GET/PATCH /repos/{owner}/{repo}/issues/{n}`,
+  `GET/POST /repos/{owner}/{repo}/issues/{n}/comments`, `POST /repos/{owner}/{repo}/labels`
+  ([Issues REST API](https://docs.github.com/en/rest/issues))
+- The adapter refuses issue references outside the repository before sending any request
+- Only comments from repository owners, members, and collaborators are treated as human input
+- No pushes, no pull requests, no repository settings, no other repositories
+
+Datadog direct metric queries (`[autonomy].metric_queries = true`, the default):
+
+- `GET https://api.<DATADOG_SITE>/api/v1/query` with the existing API/application keys
+  ([Query timeseries points](https://docs.datadoghq.com/api/latest/metrics/#query-timeseries-points))
+- Required application key permission: `timeseries_query`
+- Used for verification tools, success criteria, and outcome tracking; read-only
+
+Slack:
+
+- `chat:write`: goal reports in each goal's `report_channel` (the bot must be a member) and
+  replies to `@Reili goals` commands; report messages carry
+  [message metadata](https://api.slack.com/reference/metadata) with an idempotency key
+- `channels:history` (already required): `conversations.history` to detect an already-posted
+  report after a crash; without it Reili still works but may repeat one report after a crash
+- `canvases:write` (already required for memory): gated facts learned by goal cycles
+
+Restrictions:
+
+- Goals come only from `reili.toml`; Slack and GitHub cannot create, edit, enable, or widen them
+- Budgets (time, tokens per cycle and per day, tool calls, sub-agents, parallelism, new/open
+  work items, attempts, reports) are enforced in code
+- Human `/reili` commands can change a work item's status or request a re-investigation only
 
 ## esa Permissions and Scope
 
