@@ -6,11 +6,12 @@ use thiserror::Error;
 use super::fingerprint::stable_fingerprint;
 use super::schedule::GoalSchedule;
 
-const MAX_GOAL_ID_LENGTH: usize = 64;
+/// GitHub label names are limited to 50 characters and goals are labelled `reili-goal:<id>`.
+const MAX_GOAL_ID_LENGTH: usize = 39;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum GoalDefinitionError {
-    #[error("goal id `{0}` must be 1-64 chars of lowercase letters, digits, `-` or `_`")]
+    #[error("goal id `{0}` must be 1-39 chars of lowercase letters, digits, `-` or `_`")]
     InvalidId(String),
     #[error("goal `{goal}`: {message}")]
     Invalid { goal: String, message: String },
@@ -296,7 +297,8 @@ mod tests {
         );
         assert!(GoalId::new("").is_err());
         assert!(GoalId::new("a b").is_err());
-        assert!(GoalId::new("x".repeat(65)).is_err());
+        assert!(GoalId::new("x".repeat(39)).is_ok());
+        assert!(GoalId::new("x".repeat(40)).is_err());
     }
 
     #[test]

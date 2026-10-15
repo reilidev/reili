@@ -7,6 +7,9 @@ use aws_sigv4::http_request::{SignableBody, SignableRequest, SigningSettings, si
 use aws_sigv4::sign::v4;
 use bytes::Bytes;
 use reili_core::error::{AgentRunFailedError, PortError};
+use reili_core::investigation::{
+    InvestigationRunOutcome, InvestigationRunnerPort, RunInvestigationInput,
+};
 use reili_core::secret::SecretString;
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig::http_client::{
@@ -17,6 +20,7 @@ use rig::providers::{anthropic, openai};
 use rig::wasm_compat::WasmCompatSend;
 use serde_json::json;
 
+use super::super::investigation_runner::{RunLlmInvestigationInput, run_investigation};
 use super::super::provider_settings::{
     CreateBedrockMantleProviderSettingsInput, LlmProviderSettings,
     create_bedrock_mantle_provider_settings,
@@ -478,6 +482,51 @@ impl HttpClientExt for BedrockMantleHttpClient {
                     inner.send_streaming(Request::from_parts(parts, body)).await
                 }
             }
+        }
+    }
+}
+
+#[async_trait]
+impl InvestigationRunnerPort for BedrockMantleTaskRunner {
+    async fn run(
+        &self,
+        input: RunInvestigationInput,
+    ) -> Result<InvestigationRunOutcome, AgentRunFailedError> {
+        match (&self.client, &self.sub_agent_client) {
+            (
+                BedrockMantleClient::OpenAi(client),
+                BedrockMantleClient::OpenAi(sub_agent_client),
+            ) => {
+                run_investigation(RunLlmInvestigationInput {
+                    client: client.clone(),
+                    sub_agent_client: sub_agent_client.clone(),
+                    settings: self.provider_settings.clone(),
+                    connectors: self.connectors.clone(),
+                    language: self.language.clone(),
+                    additional_system_prompt: self.additional_system_prompt.clone(),
+                    run: input,
+                })
+                .await
+            }
+            (
+                BedrockMantleClient::Anthropic(client),
+                BedrockMantleClient::Anthropic(sub_agent_client),
+            ) => {
+                run_investigation(RunLlmInvestigationInput {
+                    client: client.clone(),
+                    sub_agent_client: sub_agent_client.clone(),
+                    settings: self.provider_settings.clone(),
+                    connectors: self.connectors.clone(),
+                    language: self.language.clone(),
+                    additional_system_prompt: self.additional_system_prompt.clone(),
+                    run: input,
+                })
+                .await
+            }
+            _ => Err(AgentRunFailedError::new_permanent(
+                reili_core::task::LlmUsageSnapshot::default(),
+                "lead/sub-agent Bedrock Mantle model family mismatch",
+            )),
         }
     }
 }

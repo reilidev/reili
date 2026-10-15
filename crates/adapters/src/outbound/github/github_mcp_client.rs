@@ -215,13 +215,13 @@ fn build_installation_token_url(installation_id: u32) -> String {
     format!("{GITHUB_API_BASE_URL}/app/installations/{installation_id}/access_tokens")
 }
 
-fn parse_github_app_id(app_id: &str) -> Result<AppId, PortError> {
+pub(crate) fn parse_github_app_id(app_id: &str) -> Result<AppId, PortError> {
     app_id.parse::<u64>().map(AppId).map_err(|error| {
         PortError::invalid_input(format!("Invalid GitHub App ID `{app_id}`: {error}"))
     })
 }
 
-fn truncate_for_error(value: &str) -> String {
+pub(crate) fn truncate_for_error(value: &str) -> String {
     let mut truncated = value.chars().take(MAX_ERROR_BODY_CHARS).collect::<String>();
     if value.chars().count() > MAX_ERROR_BODY_CHARS {
         truncated.push_str("...");
@@ -252,7 +252,7 @@ fn build_github_mcp_headers(auth_header: HeaderValue) -> HeaderMap {
     default_headers
 }
 
-fn build_bearer_auth_header(token: &str) -> Result<HeaderValue, PortError> {
+pub(crate) fn build_bearer_auth_header(token: &str) -> Result<HeaderValue, PortError> {
     let token = token.trim();
     let header_value = if token.starts_with("Bearer ") {
         token.to_string()

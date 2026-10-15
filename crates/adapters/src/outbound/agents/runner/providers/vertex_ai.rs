@@ -1,8 +1,12 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
+use reili_core::investigation::{
+    InvestigationRunOutcome, InvestigationRunnerPort, RunInvestigationInput,
+};
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig_vertexai::Client;
 
+use super::super::investigation_runner::{RunLlmInvestigationInput, run_investigation};
 use super::super::provider_settings::{
     CreateVertexAiProviderSettingsInput, LlmProviderSettings, create_vertex_ai_provider_settings,
 };
@@ -47,6 +51,25 @@ impl VertexAiTaskRunner {
 impl TaskRunnerPort for VertexAiTaskRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
         run_task(RunLlmTaskRunnerInput {
+            client: self.client.clone(),
+            sub_agent_client: self.client.clone(),
+            settings: self.provider_settings.clone(),
+            connectors: self.connectors.clone(),
+            language: self.language.clone(),
+            additional_system_prompt: self.additional_system_prompt.clone(),
+            run: input,
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl InvestigationRunnerPort for VertexAiTaskRunner {
+    async fn run(
+        &self,
+        input: RunInvestigationInput,
+    ) -> Result<InvestigationRunOutcome, AgentRunFailedError> {
+        run_investigation(RunLlmInvestigationInput {
             client: self.client.clone(),
             sub_agent_client: self.client.clone(),
             settings: self.provider_settings.clone(),

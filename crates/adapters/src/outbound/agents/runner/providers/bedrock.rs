@@ -3,9 +3,13 @@ use aws_config::sts::AssumeRoleProvider;
 use aws_config::{BehaviorVersion, ConfigLoader, SdkConfig};
 use aws_credential_types::provider::ProvideCredentials;
 use reili_core::error::{AgentRunFailedError, PortError};
+use reili_core::investigation::{
+    InvestigationRunOutcome, InvestigationRunnerPort, RunInvestigationInput,
+};
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig_bedrock::client::Client;
 
+use super::super::investigation_runner::{RunLlmInvestigationInput, run_investigation};
 use super::super::provider_settings::{
     CreateBedrockProviderSettingsInput, LlmProviderSettings, create_bedrock_provider_settings,
 };
@@ -148,6 +152,25 @@ fn credentials_error_message(aws: &BedrockAwsConfig, cause: &str) -> String {
     };
 
     format!("failed to resolve AWS credentials for Bedrock using {target}: {cause}")
+}
+
+#[async_trait]
+impl InvestigationRunnerPort for BedrockTaskRunner {
+    async fn run(
+        &self,
+        input: RunInvestigationInput,
+    ) -> Result<InvestigationRunOutcome, AgentRunFailedError> {
+        run_investigation(RunLlmInvestigationInput {
+            client: self.client.clone(),
+            sub_agent_client: self.sub_agent_client.clone(),
+            settings: self.provider_settings.clone(),
+            connectors: self.connectors.clone(),
+            language: self.language.clone(),
+            additional_system_prompt: self.additional_system_prompt.clone(),
+            run: input,
+        })
+        .await
+    }
 }
 
 #[cfg(test)]

@@ -97,11 +97,13 @@ where
             cancellation,
             on_progress_event,
             usage_collector,
+            budget,
         } = execution;
 
         let selection = resolve_spawn_selection(&ResolveSpawnSelectionInput {
             prepared_connectors: &input.prepared_connectors,
             web_search_port: resources.web_search_port.as_ref(),
+            verification: &input.run_context.verification,
             tool_names: &input.spec.tool_names,
         });
         let preamble = compose_spawned_sub_agent_preamble(&ComposeSpawnedPreambleInput {
@@ -121,14 +123,17 @@ where
         let builder = with_max_tokens(builder, settings.sub_agent_max_tokens);
 
         builder
-            .add_hook(AgentExecutionHook::new(
-                owner_id.clone(),
-                runtime,
-                cancellation,
-                logger,
-                Arc::clone(&on_progress_event),
-                usage_collector,
-            ))
+            .add_hook(
+                AgentExecutionHook::new(
+                    owner_id.clone(),
+                    runtime,
+                    cancellation,
+                    logger,
+                    Arc::clone(&on_progress_event),
+                    usage_collector,
+                )
+                .with_budget(budget),
+            )
             .tool(ReportProgressTool::new(ReportProgressToolInput {
                 on_progress_event: Arc::clone(&on_progress_event),
                 owner_id,

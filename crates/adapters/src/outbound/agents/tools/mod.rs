@@ -5,7 +5,9 @@ mod search_posts;
 mod search_slack_messages;
 mod search_web;
 mod spawn_agent;
+mod submit_report;
 mod support;
+mod verification;
 
 pub use get_post::GetPostTool;
 pub use report_progress::{ReportProgressTool, ReportProgressToolInput};
@@ -16,4 +18,10 @@ pub use search_web::SearchWebTool;
 pub use spawn_agent::{
     SpawnAgentTool, SpawnAgentToolArgs, SpawnAgentToolError, SpawnAgentToolInput,
     SpawnedSubAgentSpec,
+};
+pub use submit_report::SubmitInvestigationReportTool;
+pub use verification::{
+    AnalyzeMetricTool, AnalyzeSeriesTool, CalculateTool, CorrelateMetricsTool,
+    EvaluateErrorBudgetTool, VerificationToolset, VerifyMetricChangeTool,
+    verification_tool_summaries,
 };

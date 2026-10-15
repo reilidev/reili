@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use reili_core::investigation::{ReportSlot, RunBudget};
 use reili_core::logger::Logger;
 use reili_core::secret::SecretString;
 use reili_core::task::{
@@ -9,11 +10,13 @@ use reili_core::task::{
 use rig::agent::Agent;
 use rig::prelude::{AgentClientExt, CompletionClient};
 
+mod goal_instructions;
 mod instructions;
 mod prompt;
 mod spawn;
 mod sub_agent;
 
+pub use goal_instructions::{BuildGoalPromptInput, build_goal_prompt};
 pub use prompt::{BuildTaskPromptInput, build_task_prompt};
 
 use super::connector::PreparedConnector;
@@ -22,10 +25,14 @@ use super::runner::usage_collector::LlmUsageCollector;
 use super::tools::{
     ReportProgressTool, ReportProgressToolInput, SaveMemoryTool, SaveMemoryToolInput,
     SaveSharedMemoryTool, SearchSlackMessagesTool, SearchWebTool, SpawnAgentTool,
-    SpawnAgentToolInput, SpawnedSubAgentSpec,
+    SpawnAgentToolInput, SpawnedSubAgentSpec, SubmitInvestigationReportTool, VerificationToolset,
 };
+use goal_instructions::{BuildGoalInstructionsInput, build_goal_instructions};
 use instructions::{BuildTaskInstructionsInput, build_task_instructions};
-use spawn::{render_spawn_tool_catalog, spawn_catalog_tool_names, spawn_tool_catalog_groups};
+use spawn::{
+    render_spawn_tool_catalog, spawn_catalog_tool_names, spawn_tool_catalog_groups,
+    verification_dynamic_tools,
+};
 use sub_agent::{
     BuildSpawnedSubAgentInput, CreateSubAgentFactoryInput, SubAgentConfig, SubAgentFactory,
 };
@@ -81,6 +88,7 @@ where
         let catalog_groups = spawn_tool_catalog_groups(
             &input.prepared_connectors,
             input.run_context.resources.web_search_port.is_some(),
+            &input.run_context.verification,
         );
 
         let builder = self
@@ -126,7 +134,9 @@ where
                 on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
                 tool_concurrency: self.config.settings.tool_concurrency,
                 shared_prompt_context: memory_context_section,
-            }));
+                budget: None,
+            }))
+            .dynamic_tools(verification_dynamic_tools(&input.run_context.verification));
 
         let builder = match &input.run_context.resources.web_search_port {
             Some(web_search_port) => builder.tool(SearchWebTool::new(Arc::clone(web_search_port))),
@@ -155,6 +165,76 @@ where
         builder.build()
     }
 
+    /// Builds the lead agent for a goal cycle: goal-mode instructions, the verification tools,
+    /// `spawn_agent` bounded by the run budget, and the structured report tool as the only exit.
+    #[must_use]
+    pub fn build_goal_agent(&self, input: BuildGoalAgentInput) -> Agent {
+        let sub_agent_factory = SubAgentFactory::new(CreateSubAgentFactoryInput {
+            client: self.sub_agent_client.clone(),
+            config: self.sub_agent_config(),
+        });
+        let catalog_groups = spawn_tool_catalog_groups(
+            &input.prepared_connectors,
+            input.run_context.resources.web_search_port.is_some(),
+            &input.run_context.verification,
+        );
+        let tool_concurrency = usize::try_from(input.max_parallel_tools)
+            .unwrap_or(1)
+            .clamp(1, self.config.settings.tool_concurrency.max(1));
+
+        let builder = self
+            .client
+            .clone()
+            .agent(self.config.settings.task_runner_model.clone())
+            .name("GoalRunner")
+            .preamble(&build_goal_instructions(BuildGoalInstructionsInput {
+                additional_system_prompt: self.config.instructions.additional_system_prompt.clone(),
+                spawn_tool_catalog: render_spawn_tool_catalog(&catalog_groups),
+            }))
+            .default_max_turns(self.config.settings.task_runner_max_turns)
+            .additional_params(self.config.settings.additional_params.clone());
+        let builder = with_max_tokens(builder, self.config.settings.task_runner_max_tokens);
+
+        let agent_factory = {
+            let sub_agent_factory = sub_agent_factory.clone();
+            let run_context = input.run_context.clone();
+            let prepared_connectors = input.prepared_connectors.clone();
+            Arc::new(move |spec: SpawnedSubAgentSpec| {
+                sub_agent_factory.build_spawned_sub_agent(BuildSpawnedSubAgentInput {
+                    run_context: run_context.clone(),
+                    prepared_connectors: prepared_connectors.clone(),
+                    spec,
+                })
+            })
+        };
+
+        let builder = builder
+            .tool(ReportProgressTool::new(ReportProgressToolInput {
+                on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
+                owner_id: TASK_RUNNER_PROGRESS_OWNER_ID.to_string(),
+            }))
+            .tool(SpawnAgentTool::new(SpawnAgentToolInput {
+                agent_factory,
+                available_tool_names: spawn_catalog_tool_names(&catalog_groups),
+                on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
+                tool_concurrency,
+                shared_prompt_context: None,
+                budget: input.run_context.execution.budget.clone(),
+            }))
+            .tool(SubmitInvestigationReportTool::new(
+                input.report_slot,
+                input.run_context.verification.ledger(),
+            ))
+            .dynamic_tools(verification_dynamic_tools(&input.run_context.verification));
+
+        let builder = match &input.run_context.resources.web_search_port {
+            Some(web_search_port) => builder.tool(SearchWebTool::new(Arc::clone(web_search_port))),
+            None => builder,
+        };
+
+        builder.build()
+    }
+
     fn sub_agent_config(&self) -> SubAgentConfig {
         SubAgentConfig {
             settings: self.config.settings.clone(),
@@ -162,6 +242,13 @@ where
             additional_system_prompt: self.config.instructions.additional_system_prompt.clone(),
         }
     }
+}
+
+pub struct BuildGoalAgentInput {
+    pub run_context: TaskAgentRunContext,
+    pub prepared_connectors: Vec<Arc<dyn PreparedConnector>>,
+    pub report_slot: ReportSlot,
+    pub max_parallel_tools: u32,
 }
 
 #[derive(Clone)]
@@ -182,6 +269,7 @@ pub struct TaskAgentRunContext {
     pub execution: TaskAgentExecutionContext,
     pub slack_action_token: Option<SecretString>,
     pub memory_items: Vec<reili_core::task::TaskMemoryItem>,
+    pub verification: VerificationToolset,
 }
 
 #[derive(Clone)]
@@ -191,6 +279,7 @@ pub struct TaskAgentExecutionContext {
     pub cancellation: TaskCancellation,
     pub on_progress_event: Arc<dyn TaskProgressEventPort>,
     pub usage_collector: LlmUsageCollector,
+    pub budget: Option<RunBudget>,
 }
 
 fn with_max_tokens<ToolState>(

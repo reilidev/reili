@@ -1,9 +1,13 @@
 use async_trait::async_trait;
 use reili_core::error::AgentRunFailedError;
+use reili_core::investigation::{
+    InvestigationRunOutcome, InvestigationRunnerPort, RunInvestigationInput,
+};
 use reili_core::secret::SecretString;
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig::{client::ProviderClient, providers::anthropic};
 
+use super::super::investigation_runner::{RunLlmInvestigationInput, run_investigation};
 use super::super::provider_settings::{
     CreateAnthropicProviderSettingsInput, LlmProviderSettings, create_anthropic_provider_settings,
 };
@@ -56,6 +60,33 @@ impl TaskRunnerPort for AnthropicTaskRunner {
             })?;
 
         run_task(RunLlmTaskRunnerInput {
+            client: client.clone(),
+            sub_agent_client: client,
+            settings: self.provider_settings.clone(),
+            connectors: self.connectors.clone(),
+            language: self.language.clone(),
+            additional_system_prompt: self.additional_system_prompt.clone(),
+            run: input,
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl InvestigationRunnerPort for AnthropicTaskRunner {
+    async fn run(
+        &self,
+        input: RunInvestigationInput,
+    ) -> Result<InvestigationRunOutcome, AgentRunFailedError> {
+        let client =
+            anthropic::Client::from_val(self.api_key.expose().to_string()).map_err(|error| {
+                AgentRunFailedError::new_permanent(
+                    reili_core::task::LlmUsageSnapshot::default(),
+                    format!("Failed to build Anthropic client: {error}"),
+                )
+            })?;
+
+        run_investigation(RunLlmInvestigationInput {
             client: client.clone(),
             sub_agent_client: client,
             settings: self.provider_settings.clone(),

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use reili_core::investigation::{BudgetDecision, RunBudget};
 use reili_core::logger::{LogFieldValue, Logger, log_fields};
 use reili_core::task::{
     TaskCancellation, TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort, TaskRuntime,
@@ -16,6 +17,10 @@ use super::usage_collector::LlmUsageCollector;
 const REPORT_PROGRESS_TOOL_NAME: &str = "report_progress";
 const TASK_CANCELLED_REASON: &str = "task_cancelled";
 const NATIVE_WEB_SEARCH_TOOL_NAME: &str = "web_search";
+const BUDGET_EXCEEDED_REASON: &str = "run_budget_exceeded";
+/// Completions stay allowed past the token budget so the agent can submit its report; this
+/// multiple of the budget is the hard stop.
+const HARD_TOKEN_LIMIT_MULTIPLIER: u64 = 2;
 
 #[derive(Clone)]
 pub struct AgentExecutionHook {
@@ -25,6 +30,7 @@ pub struct AgentExecutionHook {
     logger: Arc<dyn Logger>,
     on_progress_event: Arc<dyn TaskProgressEventPort>,
     usage_collector: LlmUsageCollector,
+    budget: Option<RunBudget>,
 }
 
 impl AgentExecutionHook {
@@ -43,7 +49,15 @@ impl AgentExecutionHook {
             logger,
             on_progress_event,
             usage_collector,
+            budget: None,
         }
+    }
+
+    /// Enforces a shared run budget (tool calls and LLM tokens) across every agent using it.
+    #[must_use]
+    pub fn with_budget(mut self, budget: Option<RunBudget>) -> Self {
+        self.budget = budget;
+        self
     }
 
     async fn publish_tool_started(&self, tool_name: &str, task_id: &str) {
@@ -152,6 +166,15 @@ impl AgentExecutionHook {
         if self.is_cancelled() {
             return CompletionCallAction::stop(TASK_CANCELLED_REASON);
         }
+        if let Some(budget) = &self.budget
+            && budget.tokens_used()
+                >= budget
+                    .limits()
+                    .max_llm_tokens
+                    .saturating_mul(HARD_TOKEN_LIMIT_MULTIPLIER)
+        {
+            return CompletionCallAction::stop(BUDGET_EXCEEDED_REASON);
+        }
         self.track_completion_call();
         CompletionCallAction::continue_run()
     }
@@ -161,6 +184,13 @@ impl AgentExecutionHook {
         usage: rig::completion::Usage,
         raw: &serde_json::Value,
     ) -> ObservationAction {
+        if let Some(budget) = &self.budget {
+            budget.record_tokens(if usage.total_tokens > 0 {
+                usage.total_tokens
+            } else {
+                usage.input_tokens + usage.output_tokens
+            });
+        }
         self.track_completion_response(usage);
         self.handle_native_web_search_calls(raw).await;
         if self.is_cancelled() {
@@ -243,6 +273,11 @@ impl AgentExecutionHook {
             return ToolCallAction::stop(TASK_CANCELLED_REASON);
         }
         let task_id = tool_call_id.unwrap_or(internal_call_id);
+        if let Some(budget) = &self.budget
+            && let BudgetDecision::Deny(reason) = budget.on_tool_call(tool_name)
+        {
+            return ToolCallAction::skip(reason);
+        }
         self.log_tool_started(tool_name, task_id);
         self.publish_tool_started(tool_name, task_id).await;
         ToolCallAction::run()
@@ -904,5 +939,44 @@ mod tests {
         );
 
         assert_eq!(hook.handle_observation().await, ObservationAction::Continue);
+    }
+
+    #[tokio::test]
+    async fn budget_skips_tool_calls_once_exhausted_but_allows_report_submission() {
+        use reili_core::investigation::{RunBudget, RunLimits};
+
+        let mut progress_event_port = MockTaskProgressEventPort::new();
+        progress_event_port.expect_publish().returning(|_| Ok(()));
+        let budget = RunBudget::new(RunLimits {
+            max_tool_calls: 1,
+            max_llm_tokens: 100,
+            max_sub_agents: 1,
+            max_parallel_tools: 1,
+        });
+        let hook = AgentExecutionHook::new(
+            "lead".to_string(),
+            sample_runtime(),
+            sample_cancellation(),
+            logger_with_entries(Arc::new(Mutex::new(Vec::new())), 2),
+            Arc::new(progress_event_port),
+            LlmUsageCollector::new(),
+        )
+        .with_budget(Some(budget));
+
+        assert_eq!(
+            hook.handle_tool_call("search_datadog_logs", Some("t1"), "i1")
+                .await,
+            ToolCallAction::Run
+        );
+        assert!(matches!(
+            hook.handle_tool_call("search_datadog_logs", Some("t2"), "i2")
+                .await,
+            ToolCallAction::Skip(_)
+        ));
+        assert_eq!(
+            hook.handle_tool_call("submit_investigation_report", Some("t3"), "i3")
+                .await,
+            ToolCallAction::Run
+        );
     }
 }
