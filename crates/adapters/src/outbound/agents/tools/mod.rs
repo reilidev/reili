@@ -7,7 +7,6 @@ mod search_web;
 mod spawn_agent;
 mod submit_report;
 mod support;
-mod verification;
 
 pub use get_post::GetPostTool;
 pub use report_progress::{ReportProgressTool, ReportProgressToolInput};
@@ -20,8 +19,3 @@ pub use spawn_agent::{
     SpawnedSubAgentSpec,
 };
 pub use submit_report::SubmitInvestigationReportTool;
-pub use verification::{
-    AnalyzeMetricTool, AnalyzeSeriesTool, CalculateTool, CorrelateMetricsTool,
-    EvaluateErrorBudgetTool, VerificationToolset, VerifyMetricChangeTool,
-    verification_tool_summaries,
-};

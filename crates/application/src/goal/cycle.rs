@@ -1,4 +1,4 @@
-//! One goal cycle: Observe → Plan/Investigate/Verify (agent) → Decide → Report → Learn.
+//! One goal cycle: Observe → Plan/Investigate (agent) → Decide → Report → Learn.
 //!
 //! Durability: every phase boundary is checkpointed in the goal ledger (a GitHub Issue). A cycle
 //! holds a time-limited lease that is renewed while the agent runs; if the process dies, the lease
@@ -16,19 +16,19 @@ use reili_core::error::PortError;
 use reili_core::goal::{GoalDefinition, stable_fingerprint};
 use reili_core::investigation::{
     InvestigationRunOutcome, InvestigationRunnerPort, RunBudget, RunInvestigationInput, RunLimits,
-    VerificationLedger,
 };
 use reili_core::messaging::slack::{
     AppendSlackCanvasMemoryInput, GoalReportMessage, GoalReportPort, ListSlackCanvasMemoriesInput,
     SlackCanvasMemoryVisibility,
 };
+use reili_core::metrics::MetricQueryPort;
 use reili_core::task::{
     TaskCancellation, TaskProgressEventInput, TaskProgressEventPort, TaskResources,
 };
 use reili_core::work::{
     ActiveCycle, CriterionObservation, CyclePhase, CycleRecord, CycleResult, CycleTrigger,
     GoalLedgerState, InvestigationReport, KnowledgeDraft, StoredLedger, StoredWorkItem,
-    VerificationRecord, WorkItemStatus, WorkStateComment, WorkStateCommentKind, WorkStateError,
+    WorkItemStatus, WorkStateComment, WorkStateCommentKind, WorkStateError,
     sanitize::truncate_chars,
 };
 use thiserror::Error;
@@ -40,8 +40,8 @@ use super::decide::{
     ApplyContext, PlanChangesInput, PlannedChange, apply_proposal, new_work_item_state,
     plan_changes,
 };
-use super::gate::apply_verification_gate;
 use super::outcome::{apply_outcome_assessment, assess_outcome, evaluate_success_criteria};
+use super::policy::apply_report_policy;
 use super::reconcile::reconcile_human_signals;
 use super::report::{
     ComposeReportInput, ReportDecision, compose_report, notification_digest, report_key,
@@ -59,6 +59,9 @@ pub struct GoalCycleDeps {
     pub investigation_runner: Arc<dyn InvestigationRunnerPort>,
     pub report_port: Arc<dyn GoalReportPort>,
     pub task_resources: TaskResources,
+    /// Direct metric queries for success criteria and outcome tracking. `None` leaves both
+    /// unmeasured.
+    pub metric_query_port: Option<Arc<dyn MetricQueryPort>>,
     pub clock: Arc<dyn Clock>,
     pub logger: Arc<dyn TaskLogger>,
     /// Identifies this process as lease holder.
@@ -121,7 +124,6 @@ struct ObserveOutput {
 enum InvestigationResult {
     Report {
         report: Box<InvestigationReport>,
-        verifications: Vec<VerificationRecord>,
         tokens: u64,
     },
     Ended {
@@ -263,21 +265,9 @@ impl GoalCycleRunner {
                         .await?;
                     return Ok(CycleRunOutcome::Finished { run_id, result });
                 }
-                InvestigationResult::Report {
-                    report,
-                    verifications,
-                    tokens,
-                } => {
+                InvestigationResult::Report { report, tokens } => {
                     ledger = self
-                        .decide(
-                            goal,
-                            &ledger,
-                            &active,
-                            &observed,
-                            &report,
-                            &verifications,
-                            tokens,
-                        )
+                        .decide(goal, &ledger, &active, &observed, &report, tokens)
                         .await?;
                 }
             }
@@ -340,7 +330,7 @@ impl GoalCycleRunner {
         let reconciled = reconcile_human_signals(&self.deps.store, items, now).await?;
         let mut notes = reconciled.notes;
 
-        let metric_port = self.deps.task_resources.metric_query_port.as_ref();
+        let metric_port = self.deps.metric_query_port.as_ref();
         let criteria = evaluate_success_criteria(goal, metric_port, now).await;
 
         let mut items = Vec::with_capacity(reconciled.items.len());
@@ -355,9 +345,7 @@ impl GoalCycleRunner {
                 items.push(item);
                 continue;
             };
-            let verification_id = format!("outcome-{}", tracking.assessments.len() + 1);
-            let (assessment, record) =
-                assess_outcome(&tracking, metric_port, now, verification_id).await;
+            let assessment = assess_outcome(&tracking, metric_port, now).await;
             let detail = format!(
                 "Outcome assessment: `{}` — {}",
                 assessment.verdict.as_str(),
@@ -368,7 +356,7 @@ impl GoalCycleRunner {
                 .deps
                 .store
                 .mutate_work_item(&item, |state| {
-                    apply_outcome_assessment(state, assessment.clone(), record.clone(), now);
+                    apply_outcome_assessment(state, assessment.clone(), now);
                 })
                 .await?;
             self.deps
@@ -444,7 +432,6 @@ impl GoalCycleRunner {
             max_sub_agents: goal.budget.max_sub_agents_per_cycle,
             max_parallel_tools: goal.budget.max_parallel_tools,
         });
-        let verifications = VerificationLedger::new();
         let brief = build_brief(&BuildBriefInput {
             goal,
             ledger: &ledger.state,
@@ -462,7 +449,6 @@ impl GoalCycleRunner {
         let run_future = self.deps.investigation_runner.run(RunInvestigationInput {
             brief,
             budget: budget.clone(),
-            verifications: verifications.clone(),
             resources: self.deps.task_resources.clone(),
             cancellation: run_cancellation.clone(),
             on_progress_event: Arc::new(DiscardProgressEvents),
@@ -532,7 +518,6 @@ impl GoalCycleRunner {
                 match run.report {
                     Some(report) => InvestigationResult::Report {
                         report: Box::new(report),
-                        verifications: verifications.records(),
                         tokens,
                     },
                     None if budget.tokens_exhausted()
@@ -584,7 +569,6 @@ impl GoalCycleRunner {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn decide(
         &self,
         goal: &GoalDefinition,
@@ -592,21 +576,19 @@ impl GoalCycleRunner {
         active: &ActiveCycle,
         observed: &ObserveOutput,
         report: &InvestigationReport,
-        verifications: &[VerificationRecord],
         tokens: u64,
     ) -> Result<StoredLedger, GoalCycleError> {
         let now = self.deps.clock.now();
-        let gate = apply_verification_gate(report, verifications);
+        let policy = apply_report_policy(report);
         let changes = plan_changes(&PlanChangesInput {
             goal,
             existing: &observed.items,
-            proposals: &gate.proposals,
+            proposals: &policy.proposals,
         });
         let context = ApplyContext {
             run_id: &active.run_id,
             now,
             report,
-            verifications,
         };
         let mut touched: Vec<u64> = observed.outcome_changed.clone();
         let mut skipped = Vec::new();
@@ -674,19 +656,19 @@ impl GoalCycleRunner {
         touched.dedup();
 
         let mut summary = truncate_chars(report.summary.trim(), 1_000);
-        if !gate.notes.is_empty() {
+        if !policy.notes.is_empty() {
             summary.push_str(&format!(
-                " [verification gate adjusted {} claim(s)]",
-                gate.notes.len()
+                " [report policy adjusted {} item(s)]",
+                policy.notes.len()
             ));
         }
         if !skipped.is_empty() {
             summary.push_str(&format!(" [skipped: {}]", skipped.join("; ")));
         }
-        let audit = gate
+        let audit = policy
             .notes
             .iter()
-            .chain(gate.rejected_knowledge.iter().map(|note| note as &String))
+            .chain(policy.rejected_knowledge.iter().map(|note| note as &String))
             .cloned()
             .collect::<Vec<_>>();
         if !audit.is_empty() {
@@ -698,7 +680,7 @@ impl GoalCycleRunner {
                     WorkStateComment {
                         kind: WorkStateCommentKind::CycleLog,
                         body: format!(
-                            "Run `{}` verification gate and knowledge audit:\n{}",
+                            "Run `{}` report policy and knowledge audit:\n{}",
                             active.run_id,
                             audit
                                 .iter()
@@ -712,7 +694,7 @@ impl GoalCycleRunner {
         }
 
         let knowledge: Vec<KnowledgeDraft> = if goal.permissions.save_knowledge {
-            gate.knowledge.clone()
+            policy.knowledge.clone()
         } else {
             Vec::new()
         };
@@ -1258,17 +1240,11 @@ fn proposal_log(proposal: &reili_core::work::WorkItemProposal) -> String {
         .map(|hypothesis| format!("{}={}", hypothesis.id, hypothesis.status.as_str()))
         .collect::<Vec<_>>()
         .join(", ");
-    let verified = proposal
-        .findings
-        .iter()
-        .filter(|finding| finding.verified)
-        .count();
     format!(
-        "status proposal `{}`; hypotheses [{}]; {} verified / {} unverified finding(s).",
+        "status proposal `{}`; hypotheses [{}]; {} finding(s).",
         proposal.proposed_status.as_str(),
         hypotheses,
-        verified,
-        proposal.findings.len() - verified
+        proposal.findings.len()
     )
 }
 

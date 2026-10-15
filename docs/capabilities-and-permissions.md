@@ -33,9 +33,6 @@ The runtime can expose only the following tool families:
 - JIRA MCP reads when `[connector.jira]` is configured: `searchJiraIssuesUsingJql`,
   `getJiraIssue`, `getJiraIssueRemoteIssueLinks`, `getTransitionsForJiraIssue`
 - External web lookup: `search_web`
-- Deterministic analysis and verification (computed inside Reili; results are recorded as
-  verifications): `calculate`, `analyze_series`, and, when direct metric queries are enabled,
-  `verify_metric_change`, `analyze_metric`, `correlate_metrics`, `evaluate_error_budget`
 - Goal cycles only: `submit_investigation_report` (hands the structured report back to Reili;
   it writes nothing by itself)
 
@@ -296,7 +293,7 @@ Datadog direct metric queries (`[autonomy].metric_queries = true`, the default):
 - `GET https://api.<DATADOG_SITE>/api/v1/query` with the existing API/application keys
   ([Query timeseries points](https://docs.datadoghq.com/api/latest/metrics/#query-timeseries-points))
 - Required application key permission: `timeseries_query`
-- Used for verification tools, success criteria, and outcome tracking; read-only
+- Used for goal success criteria and outcome tracking (application code, not agent tools); read-only
 
 Slack:
 
@@ -305,7 +302,7 @@ Slack:
   [message metadata](https://api.slack.com/reference/metadata) with an idempotency key
 - `channels:history` (already required): `conversations.history` to detect an already-posted
   report after a crash; without it Reili still works but may repeat one report after a crash
-- `canvases:write` (already required for memory): gated facts learned by goal cycles
+- `canvases:write` (already required for memory): screened facts learned by goal cycles
 
 Restrictions:
 

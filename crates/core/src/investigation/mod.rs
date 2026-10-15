@@ -1,5 +1,5 @@
-//! Port for goal-driven investigations run by the agent stack, plus the shared run controls
-//! (budget and verification ledger) the agent tools report into.
+//! Port for goal-driven investigations run by the agent stack, plus the shared run budget the
+//! agent tools report into.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,10 +12,7 @@ use crate::logger::Logger;
 use crate::task::{
     LlmExecutionMetadata, LlmUsageSnapshot, TaskCancellation, TaskProgressEventPort, TaskResources,
 };
-use crate::work::{
-    InvestigationReport, VerificationDataSource, VerificationMethod, VerificationRecord,
-    VerificationStatus,
-};
+use crate::work::InvestigationReport;
 
 /// Whether a section of the brief was authored by Reili/config (trusted) or comes from external
 /// systems and humans (data only, never instructions).
@@ -95,14 +92,14 @@ impl RunBudget {
         }
         if self.tokens_exhausted() {
             return BudgetDecision::Deny(format!(
-                "LLM token budget ({}) exhausted. Call {REPORT_TOOL_NAME} now with what you have; mark unverified items as hypotheses.",
+                "LLM token budget ({}) exhausted. Call {REPORT_TOOL_NAME} now with what you have; keep uncertain conclusions as hypotheses.",
                 self.limits.max_llm_tokens
             ));
         }
         let used = self.tool_calls.fetch_add(1, Ordering::SeqCst) + 1;
         if used > self.limits.max_tool_calls {
             return BudgetDecision::Deny(format!(
-                "Tool call budget ({}) exhausted. Call {REPORT_TOOL_NAME} now with what you have; mark unverified items as hypotheses.",
+                "Tool call budget ({}) exhausted. Call {REPORT_TOOL_NAME} now with what you have; keep uncertain conclusions as hypotheses.",
                 self.limits.max_tool_calls
             ));
         }
@@ -157,57 +154,6 @@ impl RunBudget {
     }
 }
 
-pub struct NewVerification {
-    pub method: VerificationMethod,
-    pub claim: String,
-    pub status: VerificationStatus,
-    pub detail: String,
-    pub data_source: VerificationDataSource,
-    pub needed_to_settle: Option<String>,
-}
-
-/// Run-scoped record of every verification performed by deterministic tools. Verification results
-/// enter the work state from here, never from the model's own report.
-#[derive(Debug, Clone, Default)]
-pub struct VerificationLedger {
-    records: Arc<Mutex<Vec<VerificationRecord>>>,
-}
-
-impl VerificationLedger {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Records a verification and returns its assigned id (`V1`, `V2`, ...).
-    pub fn record(&self, verification: NewVerification, at: DateTime<Utc>) -> VerificationRecord {
-        let mut records = match self.records.lock() {
-            Ok(records) => records,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        let record = VerificationRecord {
-            id: format!("V{}", records.len() + 1),
-            method: verification.method,
-            claim: verification.claim,
-            status: verification.status,
-            detail: verification.detail,
-            data_source: verification.data_source,
-            performed_at: at,
-            needed_to_settle: verification.needed_to_settle,
-        };
-        records.push(record.clone());
-        record
-    }
-
-    #[must_use]
-    pub fn records(&self) -> Vec<VerificationRecord> {
-        match self.records.lock() {
-            Ok(records) => records.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        }
-    }
-}
-
 /// Captures the single structured report the agent submits.
 #[derive(Debug, Clone, Default)]
 pub struct ReportSlot {
@@ -240,7 +186,6 @@ impl ReportSlot {
 pub struct RunInvestigationInput {
     pub brief: InvestigationBrief,
     pub budget: RunBudget,
-    pub verifications: VerificationLedger,
     pub resources: TaskResources,
     pub cancellation: TaskCancellation,
     pub on_progress_event: Arc<dyn TaskProgressEventPort>,
@@ -274,10 +219,7 @@ pub trait InvestigationRunnerPort: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{TimeZone, Utc};
-
-    use super::{BudgetDecision, NewVerification, RunBudget, RunLimits, VerificationLedger};
-    use crate::work::{VerificationDataSource, VerificationMethod, VerificationStatus};
+    use super::{BudgetDecision, RunBudget, RunLimits};
 
     fn budget() -> RunBudget {
         RunBudget::new(RunLimits {
@@ -335,23 +277,5 @@ mod tests {
             budget.on_spawn_sub_agent(),
             BudgetDecision::Deny(_)
         ));
-    }
-
-    #[test]
-    fn ledger_assigns_sequential_ids() {
-        let ledger = VerificationLedger::new();
-        let at = Utc.timestamp_opt(0, 0).single().expect("time");
-        let make = || NewVerification {
-            method: VerificationMethod::Recalculation,
-            claim: "1+1=2".to_string(),
-            status: VerificationStatus::Passed,
-            detail: String::new(),
-            data_source: VerificationDataSource::Computation,
-            needed_to_settle: None,
-        };
-
-        assert_eq!(ledger.record(make(), at).id, "V1");
-        assert_eq!(ledger.record(make(), at).id, "V2");
-        assert_eq!(ledger.records().len(), 2);
     }
 }

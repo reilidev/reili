@@ -300,12 +300,7 @@ fn render_item(item: &StoredWorkItem, detailed: bool) -> String {
         for finding in &state.findings {
             let _ = writeln!(
                 body,
-                "- finding [{}]: {}",
-                if finding.verified {
-                    "verified"
-                } else {
-                    "unverified"
-                },
+                "- finding: {}",
                 truncate_chars(&finding.statement, 300)
             );
         }

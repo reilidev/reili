@@ -22,8 +22,13 @@
       "to": "2026-09-01T12:00:00Z",
       "step_minutes": 10,
       "segments": [
-        { "until": "2026-09-01T06:00:00Z", "value": 0.01 },
-        { "value": 0.035 }
+        {
+          "until": "2026-09-01T06:00:00Z",
+          "value": 0.01
+        },
+        {
+          "value": 0.035
+        }
       ],
       "noise": 0.05
     },
@@ -32,38 +37,41 @@
       "from": "2026-09-01T00:00:00Z",
       "to": "2026-09-01T12:00:00Z",
       "step_minutes": 10,
-      "segments": [{ "value": 1200 }],
+      "segments": [
+        {
+          "value": 1200
+        }
+      ],
       "noise": 0.03
     }
   ],
   "ground_truth": {
-    "root_cause_keywords": ["pr #812", "connection pool"],
-    "decoy_keywords": ["traffic surge"],
+    "root_cause_keywords": [
+      "pr #812",
+      "connection pool"
+    ],
+    "decoy_keywords": [
+      "traffic surge"
+    ],
     "expect_findings": true
   },
   "recorded": {
     "llm_tokens": 182000,
-    "verifications": [
-      {
-        "id": "V1",
-        "claim": "error rate increased after the 06:00 deploy of PR #812",
-        "query": "avg:checkout.error_rate{env:production}",
-        "split_at": "2026-09-01T06:00:00Z",
-        "expected": "increase"
-      },
-      {
-        "id": "V2",
-        "claim": "request rate increased at 06:00",
-        "query": "sum:checkout.requests{env:production}.as_rate()",
-        "split_at": "2026-09-01T06:00:00Z",
-        "expected": "increase"
-      }
-    ],
     "report": {
       "summary": "checkout-api 5xx rose from ~1% to ~3.5% immediately after PR #812; errors are DB connection pool timeouts.",
       "evidence": [
-        { "id": "E1", "source": "datadog", "url": "https://app.datadoghq.com/apm/services/checkout-api", "description": "checkout-api error rate" },
-        { "id": "E2", "source": "github", "url": "https://github.com/acme/checkout/pull/812", "description": "PR #812 switch to new DB driver" }
+        {
+          "id": "E1",
+          "source": "datadog",
+          "url": "https://app.datadoghq.com/apm/services/checkout-api",
+          "description": "checkout-api error rate"
+        },
+        {
+          "id": "E2",
+          "source": "github",
+          "url": "https://github.com/acme/checkout/pull/812",
+          "description": "PR #812 switch to new DB driver"
+        }
       ],
       "work_items": [
         {
@@ -74,15 +82,42 @@
           "proposed_status": "needs_human",
           "problem_statement": "Error rate tripled after the 06:00 deploy.",
           "hypotheses": [
-            { "id": "H1", "statement": "PR #812's new DB driver exhausts the connection pool", "status": "supported", "verification_ids": ["V1"], "evidence_ids": ["E1", "E2"] },
-            { "id": "H2", "statement": "A traffic surge overloaded checkout-api", "status": "supported", "verification_ids": ["V2"], "evidence_ids": ["E1"] }
+            {
+              "id": "H1",
+              "statement": "PR #812's new DB driver exhausts the connection pool",
+              "status": "supported",
+              "evidence_ids": [
+                "E1",
+                "E2"
+              ]
+            },
+            {
+              "id": "H2",
+              "statement": "A traffic surge overloaded checkout-api",
+              "status": "refuted",
+              "evidence_ids": [
+                "E1"
+              ],
+              "rationale": "request rate stayed flat around 06:00"
+            }
           ],
           "findings": [
-            { "statement": "Error rate rose ~3.5x after the PR #812 deploy", "verified": true, "verification_ids": ["V1"], "evidence_ids": ["E1"] }
+            {
+              "statement": "Error rate rose ~3.5x after the PR #812 deploy",
+              "evidence_ids": [
+                "E1"
+              ]
+            }
           ],
-          "recommendation": { "action": "Roll back PR #812 or raise the pool size", "rationale": "pool timeouts dominate errors" },
+          "recommendation": {
+            "action": "Roll back PR #812 or raise the pool size",
+            "rationale": "pool timeouts dominate errors"
+          },
           "human_decision_needed": "Roll back PR #812?",
-          "evidence_ids": ["E1", "E2"]
+          "evidence_ids": [
+            "E1",
+            "E2"
+          ]
         }
       ],
       "no_new_findings": false

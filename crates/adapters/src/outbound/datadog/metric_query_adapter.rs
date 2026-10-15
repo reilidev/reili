@@ -1,5 +1,5 @@
-//! Read-only Datadog timeseries queries (`GET /api/v1/query`) used by deterministic verification
-//! and outcome tracking, so numbers never pass through the LLM.
+//! Read-only Datadog timeseries queries (`GET /api/v1/query`) used for goal success criteria and
+//! outcome tracking, so the measured numbers never pass through the LLM.
 //! API reference: <https://docs.datadoghq.com/api/latest/metrics/#query-timeseries-points>
 
 use async_trait::async_trait;

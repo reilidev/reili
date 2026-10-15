@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::{
     knowledge::WebSearchPort,
     messaging::slack::{SlackCanvasMemoryPort, SlackFileDownloadPort, SlackMessageSearchPort},
-    metrics::MetricQueryPort,
     task::TaskCancellation,
 };
 
@@ -15,9 +14,6 @@ pub struct TaskResources {
     /// Optional channel memory backed by a Slack Canvas. `None` disables the memory
     /// feature: the loader yields no context and the `save_memory` tool is not registered.
     pub canvas_memory_port: Option<Arc<dyn SlackCanvasMemoryPort>>,
-    /// Direct metric queries for deterministic verification tools. `None` disables the
-    /// metric-fetching verification tools; computation-only tools stay available.
-    pub metric_query_port: Option<Arc<dyn MetricQueryPort>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

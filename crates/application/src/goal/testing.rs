@@ -564,7 +564,6 @@ pub(crate) enum ScriptedResponse {
     Report {
         report: Option<InvestigationReport>,
         tokens: u64,
-        verifications: Vec<reili_core::investigation::NewVerification>,
     },
     Fail(String),
     Hang,
@@ -579,7 +578,6 @@ impl ScriptedInvestigationRunner {
         self.push(ScriptedResponse::Report {
             report: Some(report),
             tokens,
-            verifications: Vec::new(),
         });
     }
 
@@ -635,14 +633,7 @@ impl InvestigationRunnerPort for ScriptedInvestigationRunner {
                     final_text: String::new(),
                 },
             ))),
-            Some(ScriptedResponse::Report {
-                report,
-                tokens,
-                verifications,
-            }) => {
-                for verification in verifications {
-                    input.verifications.record(verification, input.brief.now);
-                }
+            Some(ScriptedResponse::Report { report, tokens }) => {
                 input.budget.record_tokens(tokens);
                 Ok(InvestigationRunOutcome::Completed(Box::new(
                     InvestigationRunReport {

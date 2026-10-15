@@ -1,4 +1,4 @@
-//! Decide: map gated proposals onto existing work items (stable keys, then fuzzy matching),
+//! Decide: map screened proposals onto existing work items (stable keys, then fuzzy matching),
 //! enforce per-goal limits, and merge investigation results into durable state while respecting
 //! human decisions.
 
@@ -6,9 +6,8 @@ use chrono::{DateTime, Utc};
 use reili_core::goal::GoalDefinition;
 use reili_core::work::{
     EvidenceRef, Finding, HumanDecisionRequest, Hypothesis, InvestigationReport, NotificationState,
-    Recommendation, StatusActor, StoredWorkItem, VerificationRecord, WORK_ITEM_SCHEMA_VERSION,
-    WorkItemKey, WorkItemProposal, WorkItemState, WorkItemStatus, sanitize::sanitize_for_storage,
-    token_jaccard,
+    Recommendation, StatusActor, StoredWorkItem, WORK_ITEM_SCHEMA_VERSION, WorkItemKey,
+    WorkItemProposal, WorkItemState, WorkItemStatus, sanitize::sanitize_for_storage, token_jaccard,
 };
 
 const KEY_SIMILARITY_THRESHOLD: f64 = 0.75;
@@ -169,7 +168,6 @@ pub struct ApplyContext<'a> {
     pub run_id: &'a str,
     pub now: DateTime<Utc>,
     pub report: &'a InvestigationReport,
-    pub verifications: &'a [VerificationRecord],
 }
 
 impl ApplyContext<'_> {
@@ -208,7 +206,6 @@ pub fn new_work_item_state(
         findings: Vec::new(),
         recommendation: None,
         evidence: Vec::new(),
-        verifications: Vec::new(),
         open_questions: Vec::new(),
         human_decision: None,
         next_actions: Vec::new(),
@@ -233,7 +230,7 @@ pub fn new_work_item_state(
     Some(state)
 }
 
-/// Merges a gated proposal into `state`. Human-owned states win: `monitoring` stays until outcome
+/// Merges a screened proposal into `state`. Human-owned states win: `monitoring` stays until outcome
 /// evaluation decides, `needs-human` waits for a human answer, and `dismissed` is never reopened.
 pub fn apply_proposal(
     state: &mut WorkItemState,
@@ -256,7 +253,6 @@ pub fn apply_proposal(
     state.next_actions = sanitize_list(&proposal.next_actions);
 
     merge_evidence(state, proposal, context);
-    merge_verifications(state, proposal, context);
     merge_hypotheses(state, &proposal.hypotheses, context);
     merge_findings(state, &proposal.findings, context);
     if let Some(recommendation) = &proposal.recommendation {
@@ -371,44 +367,6 @@ fn merge_evidence(
     }
 }
 
-fn merge_verifications(
-    state: &mut WorkItemState,
-    proposal: &WorkItemProposal,
-    context: &ApplyContext<'_>,
-) {
-    let mut ids: Vec<&String> = proposal
-        .hypotheses
-        .iter()
-        .flat_map(|hypothesis| hypothesis.verification_ids.iter())
-        .chain(
-            proposal
-                .findings
-                .iter()
-                .flat_map(|finding| finding.verification_ids.iter()),
-        )
-        .collect();
-    ids.sort();
-    ids.dedup();
-    for id in ids {
-        let Some(record) = context.verifications.iter().find(|record| &record.id == id) else {
-            continue;
-        };
-        let scoped = context.scoped_id(&record.id);
-        if state
-            .verifications
-            .iter()
-            .any(|existing| existing.id == scoped)
-        {
-            continue;
-        }
-        let mut record = record.clone();
-        record.id = scoped;
-        record.claim = sanitize_for_storage(&record.claim, MAX_SHORT_TEXT_CHARS);
-        record.detail = sanitize_for_storage(&record.detail, MAX_SHORT_TEXT_CHARS);
-        state.verifications.push(record);
-    }
-}
-
 fn scope_ids(ids: &[String], context: &ApplyContext<'_>) -> Vec<String> {
     ids.iter().map(|id| context.scoped_id(id)).collect()
 }
@@ -420,26 +378,13 @@ fn merge_hypotheses(
 ) {
     for hypothesis in hypotheses {
         let statement = sanitize_for_storage(&hypothesis.statement, MAX_SHORT_TEXT_CHARS);
-        let verification_ids = scope_ids(&hypothesis.verification_ids, context);
         let evidence_ids = scope_ids(&hypothesis.evidence_ids, context);
         let rationale = sanitize_for_storage(&hypothesis.rationale, MAX_SHORT_TEXT_CHARS);
         match state.hypotheses.iter_mut().find(|existing| {
             token_jaccard(&existing.statement, &statement) >= STATEMENT_SIMILARITY_THRESHOLD
         }) {
             Some(existing) => {
-                // A previously decided hypothesis keeps its status unless new verifications
-                // decided it again.
-                if !verification_ids.is_empty()
-                    || !matches!(
-                        existing.status,
-                        reili_core::work::HypothesisStatus::Supported
-                            | reili_core::work::HypothesisStatus::Refuted
-                    )
-                {
-                    existing.status = hypothesis.status;
-                }
-                existing.verification_ids.extend(verification_ids);
-                existing.verification_ids.dedup();
+                existing.status = hypothesis.status;
                 existing.evidence_ids.extend(evidence_ids);
                 existing.evidence_ids.dedup();
                 if !rationale.is_empty() {
@@ -450,7 +395,6 @@ fn merge_hypotheses(
                 id: context.scoped_id(&hypothesis.id),
                 statement,
                 status: hypothesis.status,
-                verification_ids,
                 evidence_ids,
                 rationale,
             }),
@@ -461,20 +405,13 @@ fn merge_hypotheses(
 fn merge_findings(state: &mut WorkItemState, findings: &[Finding], context: &ApplyContext<'_>) {
     for finding in findings {
         let statement = sanitize_for_storage(&finding.statement, MAX_SHORT_TEXT_CHARS);
-        let verification_ids = scope_ids(&finding.verification_ids, context);
         let evidence_ids = scope_ids(&finding.evidence_ids, context);
         match state.findings.iter_mut().find(|existing| {
             token_jaccard(&existing.statement, &statement) >= STATEMENT_SIMILARITY_THRESHOLD
         }) {
-            Some(existing) => {
-                existing.verified = finding.verified;
-                existing.verification_ids = verification_ids;
-                existing.evidence_ids = evidence_ids;
-            }
+            Some(existing) => existing.evidence_ids = evidence_ids,
             None => state.findings.push(Finding {
                 statement,
-                verified: finding.verified,
-                verification_ids,
                 evidence_ids,
             }),
         }
@@ -486,15 +423,15 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use reili_core::goal::GoalDefinition;
     use reili_core::work::{
-        HypothesisStatus, IssueRef, Severity, StoredWorkItem, VerificationStatus, WorkItemKey,
-        WorkItemStatus, test_support::sample_work_item,
+        HypothesisStatus, IssueRef, Severity, StoredWorkItem, WorkItemKey, WorkItemStatus,
+        test_support::sample_work_item,
     };
 
     use super::{
         ApplyContext, PlanChangesInput, PlannedChange, apply_proposal, new_work_item_state,
         plan_changes,
     };
-    use crate::goal::gate::tests::{proposal, record, report};
+    use crate::goal::policy::tests::{proposal, report};
     use crate::goal::tests_support::sample_goal;
 
     fn stored(number: u64, key: &str, status: WorkItemStatus) -> StoredWorkItem {
@@ -524,7 +461,7 @@ mod tests {
             WorkItemStatus::Investigating,
         )];
         let goal = goal();
-        let proposals = vec![proposal(HypothesisStatus::Proposed, &[])];
+        let proposals = vec![proposal(HypothesisStatus::Proposed)];
 
         let changes = plan_changes(&PlanChangesInput {
             goal: &goal,
@@ -549,7 +486,7 @@ mod tests {
             WorkItemStatus::Dismissed,
         )];
         let goal = goal();
-        let proposals = vec![proposal(HypothesisStatus::Proposed, &[])];
+        let proposals = vec![proposal(HypothesisStatus::Proposed)];
 
         let changes = plan_changes(&PlanChangesInput {
             goal: &goal,
@@ -567,11 +504,11 @@ mod tests {
     fn enforces_new_item_limits_by_severity() {
         let mut goal = goal();
         goal.budget.max_new_work_items_per_cycle = 1;
-        let mut low = proposal(HypothesisStatus::Proposed, &[]);
+        let mut low = proposal(HypothesisStatus::Proposed);
         low.key = "a:low".to_string();
         low.title = "low thing".to_string();
         low.severity = Severity::Low;
-        let mut critical = proposal(HypothesisStatus::Proposed, &[]);
+        let mut critical = proposal(HypothesisStatus::Proposed);
         critical.key = "b:critical".to_string();
         critical.title = "critical thing".to_string();
         critical.severity = Severity::Critical;
@@ -591,31 +528,26 @@ mod tests {
     }
 
     #[test]
-    fn new_state_scopes_ids_and_keeps_only_cited_verifications() {
+    fn new_state_scopes_ids_and_keeps_only_cited_evidence() {
         let goal = goal();
-        let gated = proposal(HypothesisStatus::Supported, &["V1"]);
-        let report = report(vec![gated.clone()]);
-        let verifications = vec![
-            record("V1", VerificationStatus::Passed, true),
-            record("V2", VerificationStatus::Failed, true),
-        ];
+        let screened = proposal(HypothesisStatus::Supported);
+        let report = report(vec![screened.clone()]);
         let context = ApplyContext {
             run_id: "run-abc123",
             now: Utc.timestamp_opt(1_760_000_000, 0).single().expect("time"),
             report: &report,
-            verifications: &verifications,
         };
 
-        let state = new_work_item_state(&goal, &gated, &context).expect("state");
+        let state = new_work_item_state(&goal, &screened, &context).expect("state");
 
         assert_eq!(state.status, WorkItemStatus::NeedsHuman);
-        assert_eq!(state.verifications.len(), 1);
-        assert_eq!(state.verifications[0].id, "runabc-V1");
+        assert_eq!(state.hypotheses[0].status, HypothesisStatus::Supported);
         assert_eq!(
-            state.hypotheses[0].verification_ids,
-            vec!["runabc-V1".to_string()]
+            state.hypotheses[0].evidence_ids,
+            vec!["runabc-E1".to_string()]
         );
         assert_eq!(state.evidence.len(), 1);
+        assert_eq!(state.evidence[0].id, "runabc-E1");
         assert_eq!(
             state
                 .human_decision
@@ -632,14 +564,13 @@ mod tests {
             run_id: "run-2",
             now: Utc.timestamp_opt(1_760_000_000, 0).single().expect("time"),
             report: &report,
-            verifications: &[],
         };
-        let mut gated = proposal(HypothesisStatus::Proposed, &[]);
-        gated.proposed_status = WorkItemStatus::Investigating;
+        let mut screened = proposal(HypothesisStatus::Proposed);
+        screened.proposed_status = WorkItemStatus::Investigating;
         let mut monitoring = sample_work_item("checkout:5xx-after-deploy");
         monitoring.status = WorkItemStatus::Monitoring;
 
-        apply_proposal(&mut monitoring, &gated, &context);
+        apply_proposal(&mut monitoring, &screened, &context);
 
         assert_eq!(monitoring.status, WorkItemStatus::Monitoring);
         assert_eq!(
@@ -655,13 +586,12 @@ mod tests {
             run_id: "run-3",
             now: Utc.timestamp_opt(1_760_000_000, 0).single().expect("time"),
             report: &report,
-            verifications: &[],
         };
-        let gated = proposal(HypothesisStatus::Proposed, &[]);
+        let screened = proposal(HypothesisStatus::Proposed);
         let mut state = sample_work_item("checkout:5xx-after-deploy");
 
-        apply_proposal(&mut state, &gated, &context);
-        apply_proposal(&mut state, &gated, &context);
+        apply_proposal(&mut state, &screened, &context);
+        apply_proposal(&mut state, &screened, &context);
 
         assert_eq!(state.hypotheses.len(), 1);
         assert_eq!(state.findings.len(), 1);

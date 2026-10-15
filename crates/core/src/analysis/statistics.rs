@@ -1,6 +1,6 @@
-//! Deterministic descriptive and inferential statistics used to verify claims independently of
-//! the LLM. Every function is pure and returns `None` (or an error) instead of inventing a result
-//! when the input does not carry enough information.
+//! Deterministic descriptive and inferential statistics used to measure goal outcomes. Every
+//! function is pure and returns `None` instead of inventing a result when the input does not
+//! carry enough information.
 
 use serde::{Deserialize, Serialize};
 
@@ -85,21 +85,6 @@ pub fn quantile_sorted(sorted: &[f64], q: f64) -> Option<f64> {
     #[allow(clippy::cast_precision_loss)]
     let fraction = position - lower as f64;
     Some(sorted[lower] + (sorted[upper] - sorted[lower]) * fraction)
-}
-
-#[must_use]
-pub fn median(values: &[f64]) -> Option<f64> {
-    let mut sorted = finite_values(values);
-    sorted.sort_by(f64::total_cmp);
-    quantile_sorted(&sorted, 0.5)
-}
-
-/// Median absolute deviation (unscaled).
-#[must_use]
-pub fn median_absolute_deviation(values: &[f64]) -> Option<f64> {
-    let center = median(values)?;
-    let deviations: Vec<f64> = values.iter().map(|value| (value - center).abs()).collect();
-    median(&deviations)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -267,50 +252,6 @@ pub fn average_ranks(values: &[f64]) -> Vec<f64> {
     ranks
 }
 
-#[must_use]
-pub fn pearson_correlation(xs: &[f64], ys: &[f64]) -> Option<f64> {
-    if xs.len() != ys.len() || xs.len() < MIN_SAMPLES_PER_GROUP {
-        return None;
-    }
-    let mean_x = mean(xs)?;
-    let mean_y = mean(ys)?;
-    let mut covariance = 0.0;
-    let mut var_x = 0.0;
-    let mut var_y = 0.0;
-    for (x, y) in xs.iter().zip(ys) {
-        covariance += (x - mean_x) * (y - mean_y);
-        var_x += (x - mean_x).powi(2);
-        var_y += (y - mean_y).powi(2);
-    }
-    if var_x == 0.0 || var_y == 0.0 {
-        return None;
-    }
-    Some(covariance / (var_x.sqrt() * var_y.sqrt()))
-}
-
-#[must_use]
-pub fn spearman_correlation(xs: &[f64], ys: &[f64]) -> Option<f64> {
-    if xs.len() != ys.len() {
-        return None;
-    }
-    pearson_correlation(&average_ranks(xs), &average_ranks(ys))
-}
-
-/// Two-sided p-value for a Pearson correlation coefficient under H0: rho = 0.
-#[must_use]
-pub fn correlation_p_value(r: f64, n: usize) -> Option<f64> {
-    if n < 4 || !r.is_finite() {
-        return None;
-    }
-    if r.abs() >= 1.0 {
-        return Some(0.0);
-    }
-    #[allow(clippy::cast_precision_loss)]
-    let df = (n - 2) as f64;
-    let t = r * (df / (1.0 - r * r)).sqrt();
-    student_t_two_sided_p(t, df)
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LinearTrend {
     pub slope: f64,
@@ -468,9 +409,8 @@ fn beta_continued_fraction(a: f64, b: f64, x: f64) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        average_ranks, correlation_p_value, linear_regression, mann_whitney_u, median,
-        median_absolute_deviation, normal_cdf, pearson_correlation, spearman_correlation,
-        student_t_two_sided_p, summarize, welch_t_test,
+        average_ranks, linear_regression, mann_whitney_u, normal_cdf, student_t_two_sided_p,
+        summarize, welch_t_test,
     };
 
     fn assert_close(actual: f64, expected: f64, tolerance: f64) {
@@ -553,31 +493,11 @@ mod tests {
     }
 
     #[test]
-    fn correlations_detect_monotonic_relationships() {
-        let xs = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let ys = [1.0, 4.0, 9.0, 16.0, 25.0, 36.0];
-
-        assert_close(spearman_correlation(&xs, &ys).expect("rho"), 1.0, 1e-12);
-        assert!(pearson_correlation(&xs, &ys).expect("r") > 0.95);
-        assert!(correlation_p_value(0.98, 6).expect("p") < 0.01);
-        assert!(pearson_correlation(&xs, &[1.0; 6]).is_none());
-    }
-
-    #[test]
     fn regression_finds_slope() {
         let trend = linear_regression(&[0.0, 1.0, 2.0, 3.0], &[1.0, 3.0, 5.0, 7.0]).expect("trend");
 
         assert_close(trend.slope, 2.0, 1e-12);
         assert_close(trend.intercept, 1.0, 1e-12);
         assert_close(trend.r_squared, 1.0, 1e-12);
-    }
-
-    #[test]
-    fn robust_center_and_spread() {
-        assert_eq!(median(&[3.0, 1.0, 2.0]), Some(2.0));
-        assert_eq!(
-            median_absolute_deviation(&[1.0, 2.0, 3.0, 100.0]),
-            Some(1.0)
-        );
     }
 }

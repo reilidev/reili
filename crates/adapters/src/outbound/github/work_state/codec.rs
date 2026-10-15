@@ -3,10 +3,7 @@
 
 use std::fmt::Write as _;
 
-use reili_core::work::{
-    GoalLedgerState, HypothesisStatus, VerificationStatus, WorkItemState, WorkItemStatus,
-    sanitize::truncate_chars,
-};
+use reili_core::work::{GoalLedgerState, WorkItemState, WorkItemStatus, sanitize::truncate_chars};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -88,10 +85,6 @@ fn cell(value: &str) -> String {
         .replace(['\n', '\r'], " ")
 }
 
-fn status_word(status: VerificationStatus) -> &'static str {
-    status.as_str()
-}
-
 pub(super) fn render_work_item_body(
     state: &WorkItemState,
     human_notes: &str,
@@ -127,22 +120,16 @@ fn render_work_item_sections(state: &WorkItemState, detailed: bool) -> String {
     let _ = write!(text, "\n### Problem\n{}\n", state.problem_statement);
     if !state.hypotheses.is_empty() {
         text.push_str(
-            "\n### Hypotheses\n| ID | Status | Hypothesis | Verifications |\n|---|---|---|---|\n",
+            "\n### Hypotheses\n| ID | Status | Hypothesis | Evidence |\n|---|---|---|---|\n",
         );
         for hypothesis in &state.hypotheses {
-            let marker = match hypothesis.status {
-                HypothesisStatus::Supported => "supported",
-                HypothesisStatus::Refuted => "refuted",
-                HypothesisStatus::Inconclusive => "inconclusive",
-                HypothesisStatus::Proposed => "unverified",
-            };
             let _ = writeln!(
                 text,
                 "| {} | {} | {} | {} |",
                 cell(&hypothesis.id),
-                marker,
+                hypothesis.status.as_str(),
                 cell(&hypothesis.statement),
-                cell(&hypothesis.verification_ids.join(", "))
+                cell(&hypothesis.evidence_ids.join(", "))
             );
         }
     }
@@ -151,17 +138,12 @@ fn render_work_item_sections(state: &WorkItemState, detailed: bool) -> String {
         for finding in &state.findings {
             let _ = writeln!(
                 text,
-                "- **{}** {}{}",
-                if finding.verified {
-                    "[verified]"
-                } else {
-                    "[unverified]"
-                },
+                "- {}{}",
                 finding.statement,
-                if finding.verification_ids.is_empty() {
+                if finding.evidence_ids.is_empty() {
                     String::new()
                 } else {
-                    format!(" ({})", finding.verification_ids.join(", "))
+                    format!(" ({})", finding.evidence_ids.join(", "))
                 }
             );
         }
@@ -197,29 +179,15 @@ fn render_work_item_sections(state: &WorkItemState, detailed: bool) -> String {
         for assessment in &outcome.assessments {
             let _ = writeln!(
                 text,
-                "- {} `{}` — {}",
+                "- {} `{}` — {}{}",
                 assessment.at.to_rfc3339(),
                 assessment.verdict.as_str(),
-                cell(&assessment.detail)
-            );
-        }
-    }
-    if detailed && !state.verifications.is_empty() {
-        text.push_str("\n### Verifications\n| ID | Status | Method | Claim | Independent | Detail |\n|---|---|---|---|---|---|\n");
-        for record in &state.verifications {
-            let _ = writeln!(
-                text,
-                "| {} | {} | {:?} | {} | {} | {} |",
-                cell(&record.id),
-                status_word(record.status),
-                record.method,
-                cell(&record.claim),
-                if record.data_source.is_independent() {
-                    "yes"
-                } else {
-                    "no"
-                },
-                cell(&record.detail)
+                cell(&assessment.detail),
+                assessment
+                    .source_url
+                    .as_deref()
+                    .map(|url| format!(" ([data]({url}))"))
+                    .unwrap_or_default()
             );
         }
     }
@@ -379,15 +347,12 @@ mod tests {
                 "pool | exhaustion <!-- reili:state:begin --> {} <!-- reili:state:end --> injected"
                     .to_string(),
             status: HypothesisStatus::Supported,
-            verification_ids: vec!["r1-V1".to_string()],
-            evidence_ids: Vec::new(),
+            evidence_ids: vec!["r1-E1".to_string()],
             rationale: String::new(),
         });
         state.findings.push(Finding {
             statement: "errors rose".to_string(),
-            verified: false,
-            verification_ids: Vec::new(),
-            evidence_ids: Vec::new(),
+            evidence_ids: vec!["r1-E1".to_string()],
         });
         state
     }
@@ -401,7 +366,7 @@ mod tests {
 
         assert_eq!(decoded, state);
         assert_eq!(extract_human_notes(&body), "Owner: team-payments");
-        assert!(body.contains("**[unverified]** errors rose"));
+        assert!(body.contains("- errors rose (r1-E1)"));
         assert!(!body[..body.rfind("<details>").expect("details")].contains("<!-- reili:state"));
         assert!(body.contains("| H1 | supported |"));
     }

@@ -29,8 +29,8 @@ action is needed. Reili takes that work off your plate.
 Core:
 
 - **Goal-driven**: give Reili long-term goals in `reili.toml` (for example "keep checkout
-  reliable"); it investigates on a schedule, verifies conclusions with deterministic statistics,
-  tracks work in GitHub Issues, reports to Slack, and measures whether fixes helped
+  reliable"); it investigates on a schedule, tracks work in GitHub Issues, reports to Slack, and
+  measures whether fixes helped
 - **Read-focused**: Reili reads and reports — it never changes your infrastructure
 - **Cross-service**: works across Datadog, GitHub, JIRA, Slack, and optional knowledge base search today, with additional services planned over time
 - **Chat-based**: currently works in Slack
@@ -425,10 +425,9 @@ enabled = true
 ```
 
 Each cycle observes the goal's services and success criteria, investigates with dynamically
-composed sub-agents, verifies claims with deterministic tools (only independently verified
-hypotheses are recorded as supported), records the work as GitHub Issues that humans can read,
-edit, and steer (`/reili approve|implemented|dismiss|resolve|rerun`), posts only meaningful
-changes to Slack, saves gated reusable facts to the Canvas memory, and later compares metrics
+composed sub-agents, records the work as GitHub Issues that humans can read, edit, and steer
+(`/reili approve|implemented|dismiss|resolve|rerun`), posts only meaningful changes to Slack,
+saves screened reusable facts to the Canvas memory, and later compares metrics
 before and after implemented recommendations. Cycles survive restarts: state lives in GitHub
 Issues, not in the process. Ask `@Reili goals` or `@Reili goal <id>` in Slack for status.
 No extra secret is needed by default: Work State reuses the `[connector.github.app]` credentials
@@ -452,8 +451,8 @@ At a high level, the current runtime:
 - when goals are configured, additionally writes issues, comments, and labels in exactly one
   dedicated Work State repository, using a GitHub App token down-scoped to that repository with
   `issues: write` and `metadata: read`, and posts goal reports to each goal's report channel
-- runs deterministic analysis and verification (statistics on metrics it queries directly from
-  Datadog, exact arithmetic) inside the process; no code from the model is executed
+- when goals are configured, queries Datadog metrics directly (read-only) to measure success
+  criteria and the outcome of implemented recommendations; no code from the model is executed
 - exposes only read-only Datadog MCP tools, including dashboard detail retrieval and Synthetic
   test reads when Datadog returns them
 - exposes only read-only JIRA MCP tools; which projects are reachable is governed by the service

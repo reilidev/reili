@@ -2,10 +2,10 @@
 //! and baseline comparison for prompt/model changes.
 //!
 //! Two modes share the same fixtures and scorer:
-//! - *Recorded replay* (CI, deterministic): a recorded agent report plus the verifications the
-//!   tools would run are replayed through the real analysis code and verification gate.
-//! - *Live* (`reili eval`): the configured agent investigates the fixture with fixture-backed
-//!   metrics and no live connectors; its report is scored the same way.
+//! - *Recorded replay* (CI, deterministic): a recorded agent report is replayed through the real
+//!   report policy and scored.
+//! - *Live* (`reili eval`): the configured agent investigates the fixture with its metric data
+//!   and incident context in the brief and no live connectors; its report is scored the same way.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -14,26 +14,20 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use reili_core::analysis::{
-    ExpectedChange, SeriesPoint, ShiftCriteria, ShiftVerdict, assess_shift_around,
-};
+use reili_core::analysis::SeriesPoint;
 use reili_core::error::PortError;
 use reili_core::investigation::{
     BriefSection, BriefTrust, InvestigationBrief, InvestigationRunOutcome, InvestigationRunnerPort,
-    RunBudget, RunInvestigationInput, RunLimits, VerificationLedger,
+    RunBudget, RunInvestigationInput, RunLimits,
 };
-use reili_core::metrics::{MetricQueryInput, MetricQueryPort, MetricQueryResult, MetricSeries};
 use reili_core::task::{
     TaskCancellation, TaskProgressEventInput, TaskProgressEventPort, TaskResources,
 };
-use reili_core::work::{
-    HypothesisStatus, InvestigationReport, TimeRange, VerificationDataSource, VerificationMethod,
-    VerificationRecord, VerificationStatus,
-};
+use reili_core::work::{HypothesisStatus, InvestigationReport};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::gate::{GateOutcome, apply_verification_gate};
+use super::policy::{PolicyOutcome, apply_report_policy};
 use crate::TaskLogger;
 
 #[derive(Debug, Error)]
@@ -42,8 +36,6 @@ pub enum EvaluationError {
     InvalidCase(String),
     #[error("case `{case}` has no recorded run to replay")]
     NothingToReplay { case: String },
-    #[error("case `{case}` references unknown metric `{query}`")]
-    UnknownMetric { case: String, query: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -114,29 +106,18 @@ pub struct ContextDocument {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroundTruth {
-    /// A supported hypothesis or verified finding mentioning any of these identifies the cause.
+    /// A hypothesis or finding mentioning any of these identifies the cause.
     pub root_cause_keywords: Vec<String>,
-    /// Plausible but wrong explanations; confirming one is a false positive.
+    /// Plausible but wrong explanations; asserting one as a supported hypothesis or a finding is a
+    /// false positive.
     #[serde(default)]
     pub decoy_keywords: Vec<String>,
     pub expect_findings: bool,
 }
 
-/// A verification a tool would perform during the recorded run, replayed against fixture data.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RecordedVerification {
-    pub id: String,
-    pub claim: String,
-    pub query: String,
-    pub split_at: DateTime<Utc>,
-    pub expected: ExpectedChange,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordedRun {
     pub report: InvestigationReport,
-    #[serde(default)]
-    pub verifications: Vec<RecordedVerification>,
     #[serde(default)]
     pub llm_tokens: u64,
 }
@@ -165,14 +146,12 @@ pub fn parse_case(json: &str) -> Result<EvaluationCase, EvaluationError> {
 pub struct Scorecard {
     pub case_id: String,
     pub root_cause_identified: bool,
-    pub root_cause_verified: bool,
-    /// Decoy explanations recorded as supported/verified (false positives).
+    /// Decoy explanations recorded as supported hypotheses or findings (false positives).
     pub decoys_confirmed: u32,
-    /// Model claims the verification gate had to downgrade.
-    pub gate_downgrades: u32,
+    /// Report items the report policy had to adjust.
+    pub policy_adjustments: u32,
     pub findings_total: u32,
     pub findings_with_evidence: u32,
-    pub decisive_verifications: u32,
     pub false_alarm: bool,
     pub missed: bool,
     pub llm_tokens: u64,
@@ -194,8 +173,7 @@ impl Scorecard {
 pub fn score_case(
     case: &EvaluationCase,
     report: &InvestigationReport,
-    gate: &GateOutcome,
-    verifications: &[VerificationRecord],
+    policy: &PolicyOutcome,
     llm_tokens: u64,
     duration_ms: u64,
 ) -> Scorecard {
@@ -206,19 +184,19 @@ pub fn score_case(
             .any(|keyword| lower.contains(&keyword.to_lowercase()))
     };
     let mut identified = false;
-    let mut verified = false;
     let mut decoys = 0_u32;
     let mut findings_total = 0_u32;
     let mut findings_with_evidence = 0_u32;
-    for proposal in &gate.proposals {
+    for proposal in &policy.proposals {
         for hypothesis in &proposal.hypotheses {
             let supported = hypothesis.status == HypothesisStatus::Supported;
-            if mentions(
-                &hypothesis.statement,
-                &case.ground_truth.root_cause_keywords,
-            ) {
+            if supported
+                && mentions(
+                    &hypothesis.statement,
+                    &case.ground_truth.root_cause_keywords,
+                )
+            {
                 identified = true;
-                verified |= supported;
             }
             if supported && mentions(&hypothesis.statement, &case.ground_truth.decoy_keywords) {
                 decoys += 1;
@@ -236,29 +214,20 @@ pub fn score_case(
             }
             if mentions(&finding.statement, &case.ground_truth.root_cause_keywords) {
                 identified = true;
-                verified |= finding.verified;
             }
-            if finding.verified && mentions(&finding.statement, &case.ground_truth.decoy_keywords) {
+            if mentions(&finding.statement, &case.ground_truth.decoy_keywords) {
                 decoys += 1;
             }
         }
     }
-    let proposed = !gate.proposals.is_empty();
+    let proposed = !policy.proposals.is_empty();
     Scorecard {
         case_id: case.id.clone(),
         root_cause_identified: identified,
-        root_cause_verified: verified,
         decoys_confirmed: decoys,
-        gate_downgrades: u32::try_from(gate.notes.len()).unwrap_or(u32::MAX),
+        policy_adjustments: u32::try_from(policy.notes.len()).unwrap_or(u32::MAX),
         findings_total,
         findings_with_evidence,
-        decisive_verifications: u32::try_from(
-            verifications
-                .iter()
-                .filter(|record| record.is_decisive())
-                .count(),
-        )
-        .unwrap_or(u32::MAX),
         false_alarm: !case.ground_truth.expect_findings && proposed,
         missed: case.ground_truth.expect_findings && !proposed,
         llm_tokens,
@@ -266,8 +235,7 @@ pub fn score_case(
     }
 }
 
-/// Deterministically replays a recorded run: verifications are recomputed from fixture data with
-/// the production analysis code, then the production gate decides what counts.
+/// Deterministically replays a recorded run through the production report policy and scores it.
 pub fn replay_recorded_case(case: &EvaluationCase) -> Result<Scorecard, EvaluationError> {
     let recorded = case
         .recorded
@@ -276,117 +244,34 @@ pub fn replay_recorded_case(case: &EvaluationCase) -> Result<Scorecard, Evaluati
             case: case.id.clone(),
         })?;
     let started = Instant::now();
-    let mut records = Vec::new();
-    for request in &recorded.verifications {
-        let fixture = case
-            .metrics
-            .iter()
-            .find(|metric| metric.query == request.query)
-            .ok_or_else(|| EvaluationError::UnknownMetric {
-                case: case.id.clone(),
-                query: request.query.clone(),
-            })?;
-        records.push(replay_verification(fixture, request));
-    }
-    let gate = apply_verification_gate(&recorded.report, &records);
+    let policy = apply_report_policy(&recorded.report);
     Ok(score_case(
         case,
         &recorded.report,
-        &gate,
-        &records,
+        &policy,
         recorded.llm_tokens,
         u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     ))
 }
 
-fn replay_verification(
-    fixture: &MetricFixture,
-    request: &RecordedVerification,
-) -> VerificationRecord {
-    let points = fixture.points();
-    let assessment = assess_shift_around(
-        &points,
-        request.split_at.timestamp_millis(),
-        0,
-        request.expected,
-        ShiftCriteria::default(),
-    );
-    VerificationRecord {
-        id: request.id.clone(),
-        method: VerificationMethod::StatisticalShift,
-        claim: request.claim.clone(),
-        status: match assessment.verdict {
-            ShiftVerdict::Supported => VerificationStatus::Passed,
-            ShiftVerdict::Contradicted => VerificationStatus::Failed,
-            ShiftVerdict::Inconclusive => VerificationStatus::Inconclusive,
-        },
-        detail: assessment.reason,
-        data_source: VerificationDataSource::IndependentQuery {
-            query: fixture.query.clone(),
-            source_url: format!("fixture://{}", fixture.query),
-            time_range: TimeRange {
-                from: fixture.from,
-                to: fixture.to,
-            },
-        },
-        performed_at: request.split_at,
-        needed_to_settle: None,
-    }
-}
-
-/// Metric source backed by evaluation fixtures (used for live evaluation runs).
-pub struct FixtureMetricSource {
-    fixtures: Vec<MetricFixture>,
-}
-
-impl FixtureMetricSource {
-    #[must_use]
-    pub fn new(fixtures: Vec<MetricFixture>) -> Self {
-        Self { fixtures }
-    }
-}
-
-#[async_trait]
-impl MetricQueryPort for FixtureMetricSource {
-    async fn query(&self, input: MetricQueryInput) -> Result<MetricQueryResult, PortError> {
-        let fixture = self
-            .fixtures
-            .iter()
-            .find(|fixture| fixture.query.trim() == input.query.trim())
-            .ok_or_else(|| {
-                PortError::invalid_input(format!(
-                    "no fixture data for query `{}`; available: {}",
-                    input.query,
-                    self.fixtures
-                        .iter()
-                        .map(|fixture| fixture.query.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ))
-            })?;
-        let from_ms = input.from.timestamp_millis();
-        let to_ms = input.to.timestamp_millis();
-        Ok(MetricQueryResult {
-            query: input.query.clone(),
-            from: input.from,
-            to: input.to,
-            series: vec![MetricSeries {
-                label: fixture.query.clone(),
-                points: fixture
-                    .points()
-                    .into_iter()
-                    .filter(|point| point.timestamp_ms >= from_ms && point.timestamp_ms <= to_ms)
-                    .collect(),
-            }],
-            source_url: format!("fixture://{}", fixture.query),
+/// Renders a metric fixture as a compact table for the brief (offline evaluation has no metric
+/// tools; the data is presented to the agent directly).
+fn render_metric_fixture(fixture: &MetricFixture) -> String {
+    let rows = fixture
+        .points()
+        .iter()
+        .filter_map(|point| {
+            DateTime::<Utc>::from_timestamp_millis(point.timestamp_ms)
+                .map(|time| format!("{} {:.6}", time.to_rfc3339(), point.value))
         })
-    }
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("query: `{}`\n{rows}", fixture.query)
 }
 
 pub struct LiveEvaluationInput {
     pub case: EvaluationCase,
     pub runner: Arc<dyn InvestigationRunnerPort>,
-    /// Resources for the run; `metric_query_port` is replaced with fixture data.
     pub resources: TaskResources,
     pub limits: RunLimits,
     pub logger: Arc<dyn TaskLogger>,
@@ -396,39 +281,25 @@ pub struct LiveEvaluationInput {
 pub async fn run_live_case(input: LiveEvaluationInput) -> Scorecard {
     let case = input.case;
     let now = case.now.unwrap_or_else(Utc::now);
-    let mut resources = input.resources;
-    resources.metric_query_port = Some(Arc::new(FixtureMetricSource::new(case.metrics.clone())));
     let budget = RunBudget::new(input.limits);
-    let verifications = VerificationLedger::new();
     let started = Instant::now();
-    let metric_catalog = case
-        .metrics
-        .iter()
-        .map(|metric| {
-            format!(
-                "- `{}` from {} to {}",
-                metric.query,
-                metric.from.to_rfc3339(),
-                metric.to.to_rfc3339()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let mut sections = vec![
-        BriefSection {
-            heading: "Goal".to_string(),
-            body: format!(
-                "- objective: {}\n- This is an offline evaluation: only the metrics listed below and the incident context are available.",
-                case.objective
-            ),
-            trust: BriefTrust::Trusted,
-        },
-        BriefSection {
-            heading: "Available metrics (query them with the verification tools)".to_string(),
-            body: metric_catalog,
-            trust: BriefTrust::Trusted,
-        },
-    ];
+    let mut sections = vec![BriefSection {
+        heading: "Goal".to_string(),
+        body: format!(
+            "- objective: {}\n- This is an offline evaluation: only the metrics listed below and the incident context are available.",
+            case.objective
+        ),
+        trust: BriefTrust::Trusted,
+    }];
+    for metric in &case.metrics {
+        sections.push(BriefSection {
+            heading: "Metric data".to_string(),
+            body: render_metric_fixture(metric),
+            trust: BriefTrust::Untrusted {
+                source: "evaluation fixture".to_string(),
+            },
+        });
+    }
     for document in &case.context_documents {
         sections.push(BriefSection {
             heading: document.title.clone(),
@@ -449,8 +320,7 @@ pub async fn run_live_case(input: LiveEvaluationInput) -> Scorecard {
                 deadline: now + Duration::minutes(30),
             },
             budget: budget.clone(),
-            verifications: verifications.clone(),
-            resources,
+            resources: input.resources,
             cancellation: TaskCancellation::new(),
             on_progress_event: Arc::new(IgnoreProgress),
             logger: input.logger,
@@ -471,9 +341,8 @@ pub async fn run_live_case(input: LiveEvaluationInput) -> Scorecard {
         knowledge_candidates: Vec::new(),
         no_new_findings: true,
     });
-    let records = verifications.records();
-    let gate = apply_verification_gate(&report, &records);
-    score_case(&case, &report, &gate, &records, tokens, duration_ms)
+    let policy = apply_report_policy(&report);
+    score_case(&case, &report, &policy, tokens, duration_ms)
 }
 
 struct IgnoreProgress;
@@ -509,14 +378,12 @@ pub struct EvaluationSummary {
     pub cases: u32,
     /// Share of cases expecting findings whose root cause was identified.
     pub root_cause_accuracy: f64,
-    /// Share of cases expecting findings whose root cause was identified *and* verified.
-    pub verified_accuracy: f64,
-    /// Decoy explanations confirmed per case.
+    /// Decoy explanations asserted per case.
     pub false_positive_rate: f64,
     pub false_alarm_rate: f64,
     pub miss_rate: f64,
     pub mean_evidence_coverage: f64,
-    pub total_gate_downgrades: u32,
+    pub total_policy_adjustments: u32,
     pub total_llm_tokens: u64,
     pub mean_duration_ms: f64,
     pub passed: bool,
@@ -546,13 +413,6 @@ pub fn summarize(
         with_findings
             .iter()
             .filter(|card| card.root_cause_identified)
-            .count(),
-        with_findings.len(),
-    );
-    let verified_accuracy = ratio(
-        with_findings
-            .iter()
-            .filter(|card| card.root_cause_verified)
             .count(),
         with_findings.len(),
     );
@@ -619,12 +479,11 @@ pub fn summarize(
     EvaluationSummary {
         cases: u32::try_from(scorecards.len()).unwrap_or(u32::MAX),
         root_cause_accuracy,
-        verified_accuracy,
         false_positive_rate,
         false_alarm_rate,
         miss_rate,
         mean_evidence_coverage,
-        total_gate_downgrades: scorecards.iter().map(|card| card.gate_downgrades).sum(),
+        total_policy_adjustments: scorecards.iter().map(|card| card.policy_adjustments).sum(),
         total_llm_tokens: scorecards.iter().map(|card| card.llm_tokens).sum(),
         mean_duration_ms,
         passed: failures.is_empty(),
@@ -635,7 +494,6 @@ pub fn summarize(
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EvaluationComparison {
     pub accuracy_delta: f64,
-    pub verified_accuracy_delta: f64,
     pub false_positive_delta: f64,
     pub evidence_coverage_delta: f64,
     pub token_delta: i64,
@@ -650,7 +508,6 @@ pub fn compare_summaries(
 ) -> EvaluationComparison {
     let mut regressions = Vec::new();
     let accuracy_delta = candidate.root_cause_accuracy - baseline.root_cause_accuracy;
-    let verified_accuracy_delta = candidate.verified_accuracy - baseline.verified_accuracy;
     let false_positive_delta = candidate.false_positive_rate - baseline.false_positive_rate;
     let evidence_coverage_delta =
         candidate.mean_evidence_coverage - baseline.mean_evidence_coverage;
@@ -658,12 +515,6 @@ pub fn compare_summaries(
         regressions.push(format!(
             "root cause accuracy dropped by {:.2}",
             -accuracy_delta
-        ));
-    }
-    if verified_accuracy_delta < -f64::EPSILON {
-        regressions.push(format!(
-            "verified accuracy dropped by {:.2}",
-            -verified_accuracy_delta
         ));
     }
     if false_positive_delta > f64::EPSILON {
@@ -679,7 +530,6 @@ pub fn compare_summaries(
     }
     EvaluationComparison {
         accuracy_delta,
-        verified_accuracy_delta,
         false_positive_delta,
         evidence_coverage_delta,
         token_delta: i64::try_from(candidate.total_llm_tokens).unwrap_or(i64::MAX)
@@ -695,32 +545,30 @@ pub fn render_markdown(
     comparison: Option<&EvaluationComparison>,
 ) -> String {
     let mut text = format!(
-        "# Reili evaluation\n\n**Result:** {}\n\n| metric | value |\n|---|---|\n| cases | {} |\n| root cause accuracy | {:.2} |\n| verified accuracy | {:.2} |\n| false positive rate | {:.2} |\n| false alarm rate | {:.2} |\n| miss rate | {:.2} |\n| evidence coverage | {:.2} |\n| gate downgrades | {} |\n| LLM tokens | {} |\n| mean duration (ms) | {:.0} |\n",
+        "# Reili evaluation\n\n**Result:** {}\n\n| metric | value |\n|---|---|\n| cases | {} |\n| root cause accuracy | {:.2} |\n| false positive rate | {:.2} |\n| false alarm rate | {:.2} |\n| miss rate | {:.2} |\n| evidence coverage | {:.2} |\n| policy adjustments | {} |\n| LLM tokens | {} |\n| mean duration (ms) | {:.0} |\n",
         if summary.passed { "PASS" } else { "FAIL" },
         summary.cases,
         summary.root_cause_accuracy,
-        summary.verified_accuracy,
         summary.false_positive_rate,
         summary.false_alarm_rate,
         summary.miss_rate,
         summary.mean_evidence_coverage,
-        summary.total_gate_downgrades,
+        summary.total_policy_adjustments,
         summary.total_llm_tokens,
         summary.mean_duration_ms,
     );
     for failure in &summary.failures {
         let _ = writeln!(text, "\n- threshold failed: {failure}");
     }
-    text.push_str("\n## Cases\n\n| case | cause found | verified | decoys | downgrades | evidence | false alarm | missed |\n|---|---|---|---|---|---|---|---|\n");
+    text.push_str("\n## Cases\n\n| case | cause found | decoys | adjustments | evidence | false alarm | missed |\n|---|---|---|---|---|---|---|\n");
     for card in scorecards {
         let _ = writeln!(
             text,
-            "| {} | {} | {} | {} | {} | {:.2} | {} | {} |",
+            "| {} | {} | {} | {} | {:.2} | {} | {} |",
             card.case_id,
             card.root_cause_identified,
-            card.root_cause_verified,
             card.decoys_confirmed,
-            card.gate_downgrades,
+            card.policy_adjustments,
             card.evidence_coverage(),
             card.false_alarm,
             card.missed
@@ -729,9 +577,8 @@ pub fn render_markdown(
     if let Some(comparison) = comparison {
         let _ = write!(
             text,
-            "\n## Against baseline\n\n- accuracy Δ {:+.2}\n- verified accuracy Δ {:+.2}\n- false positive Δ {:+.2}\n- evidence coverage Δ {:+.2}\n- tokens Δ {:+}\n",
+            "\n## Against baseline\n\n- accuracy Δ {:+.2}\n- false positive Δ {:+.2}\n- evidence coverage Δ {:+.2}\n- tokens Δ {:+}\n",
             comparison.accuracy_delta,
-            comparison.verified_accuracy_delta,
             comparison.false_positive_delta,
             comparison.evidence_coverage_delta,
             comparison.token_delta
@@ -783,28 +630,49 @@ mod tests {
     }
 
     #[test]
-    fn deploy_regression_is_identified_and_verified_while_decoy_is_refuted() {
+    fn deploy_regression_is_identified_while_refuted_decoy_is_not_counted() {
         let case = parse_case(BUNDLED_CASES[0]).expect("parse");
 
         let card = replay_recorded_case(&case).expect("replay");
 
         assert!(card.root_cause_identified);
-        assert!(card.root_cause_verified);
         assert_eq!(card.decoys_confirmed, 0);
-        assert!(card.gate_downgrades >= 1, "the traffic claim is downgraded");
+        assert_eq!(card.policy_adjustments, 0);
     }
 
     #[test]
-    fn correlation_trap_is_not_confirmed() {
-        let case = parse_case(BUNDLED_CASES[1]).expect("parse");
+    fn supported_decoy_counts_as_false_positive() {
+        let mut case = parse_case(BUNDLED_CASES[1]).expect("parse");
+        let recorded = case.recorded.as_mut().expect("recorded");
+        recorded.report.work_items[0].hypotheses[0].status =
+            reili_core::work::HypothesisStatus::Supported;
 
         let card = replay_recorded_case(&case).expect("replay");
 
-        assert_eq!(
-            card.decoys_confirmed, 0,
-            "correlation alone never confirms a cause"
-        );
-        assert!(card.gate_downgrades >= 1);
+        assert!(card.root_cause_identified);
+        assert_eq!(card.decoys_confirmed, 1, "CPU asserted as the cause");
+    }
+
+    #[test]
+    fn decoy_mentioned_in_a_finding_counts_as_false_positive() {
+        let mut case = parse_case(BUNDLED_CASES[3]).expect("parse");
+        let recorded = case.recorded.as_mut().expect("recorded");
+        recorded.report.work_items[0].findings[0].statement =
+            "The 12:00 deploy made checkout slower".to_string();
+
+        let card = replay_recorded_case(&case).expect("replay");
+
+        assert_eq!(card.decoys_confirmed, 1);
+    }
+
+    #[test]
+    fn live_brief_carries_metric_data_as_untrusted_context() {
+        let case = parse_case(BUNDLED_CASES[0]).expect("parse");
+
+        let rendered = super::render_metric_fixture(&case.metrics[0]);
+
+        assert!(rendered.starts_with("query: `avg:checkout.error_rate{env:production}`"));
+        assert_eq!(rendered.lines().count(), 1 + case.metrics[0].points().len());
     }
 
     #[test]
@@ -833,35 +701,5 @@ mod tests {
         let markdown = render_markdown(&candidate, &worse_cards, Some(&comparison));
         assert!(markdown.contains("**Result:** FAIL"));
         assert!(markdown.contains("regression: root cause accuracy dropped"));
-    }
-
-    #[tokio::test]
-    async fn fixture_metric_source_serves_windows() {
-        use reili_core::metrics::{MetricQueryInput, MetricQueryPort};
-
-        let case = parse_case(BUNDLED_CASES[0]).expect("parse");
-        let source = super::FixtureMetricSource::new(case.metrics.clone());
-        let fixture = &case.metrics[0];
-
-        let result = source
-            .query(MetricQueryInput {
-                query: fixture.query.clone(),
-                from: fixture.from,
-                to: fixture.from + chrono::Duration::hours(1),
-            })
-            .await
-            .expect("query");
-
-        assert_eq!(result.series[0].points.len(), 7);
-        assert!(
-            source
-                .query(MetricQueryInput {
-                    query: "unknown".to_string(),
-                    from: fixture.from,
-                    to: fixture.to,
-                })
-                .await
-                .is_err()
-        );
     }
 }

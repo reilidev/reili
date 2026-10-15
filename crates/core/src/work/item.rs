@@ -6,9 +6,7 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::investigation::{
-    EvidenceRef, Finding, Hypothesis, OutcomeMetric, Recommendation, VerificationRecord,
-};
+use super::investigation::{EvidenceRef, Finding, Hypothesis, OutcomeMetric, Recommendation};
 use crate::goal::GoalId;
 
 pub const WORK_ITEM_SCHEMA_VERSION: u32 = 1;
@@ -16,7 +14,6 @@ const MAX_KEY_LENGTH: usize = 80;
 const MAX_HYPOTHESES: usize = 10;
 const MAX_FINDINGS: usize = 10;
 const MAX_EVIDENCE: usize = 30;
-const MAX_VERIFICATIONS: usize = 30;
 const MAX_FEEDBACK: usize = 20;
 const MAX_HISTORY: usize = 30;
 const MAX_LIST_ENTRIES: usize = 10;
@@ -271,8 +268,9 @@ pub struct OutcomeAssessment {
     pub at: DateTime<Utc>,
     pub verdict: OutcomeVerdict,
     pub detail: String,
+    /// Where the measured metric can be reproduced.
     #[serde(default)]
-    pub verification_id: Option<String>,
+    pub source_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -319,8 +317,6 @@ pub struct WorkItemState {
     pub recommendation: Option<Recommendation>,
     #[serde(default)]
     pub evidence: Vec<EvidenceRef>,
-    #[serde(default)]
-    pub verifications: Vec<VerificationRecord>,
     #[serde(default)]
     pub open_questions: Vec<String>,
     #[serde(default)]
@@ -376,7 +372,6 @@ impl WorkItemState {
         keep_last(&mut self.hypotheses, MAX_HYPOTHESES);
         keep_last(&mut self.findings, MAX_FINDINGS);
         keep_last(&mut self.evidence, MAX_EVIDENCE);
-        keep_last(&mut self.verifications, MAX_VERIFICATIONS);
         keep_last(&mut self.feedback, MAX_FEEDBACK);
         keep_last(&mut self.history, MAX_HISTORY);
         keep_last(&mut self.plan, MAX_LIST_ENTRIES);

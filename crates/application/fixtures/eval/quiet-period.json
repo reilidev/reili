@@ -9,7 +9,11 @@
       "from": "2026-09-03T00:00:00Z",
       "to": "2026-09-03T12:00:00Z",
       "step_minutes": 10,
-      "segments": [{ "value": 0.004 }],
+      "segments": [
+        {
+          "value": 0.004
+        }
+      ],
       "noise": 0.05
     }
   ],
@@ -20,7 +24,6 @@
   },
   "recorded": {
     "llm_tokens": 64000,
-    "verifications": [],
     "report": {
       "summary": "Error rate stable at ~0.4%; no deploys or alerts since the last cycle.",
       "no_new_findings": true

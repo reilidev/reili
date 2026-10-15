@@ -29,7 +29,6 @@ pub fn sample_work_item(key: &str) -> WorkItemState {
         findings: Vec::new(),
         recommendation: None,
         evidence: Vec::new(),
-        verifications: Vec::new(),
         open_questions: Vec::new(),
         human_decision: None,
         next_actions: Vec::new(),

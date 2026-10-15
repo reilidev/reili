@@ -103,7 +103,6 @@ where
         let selection = resolve_spawn_selection(&ResolveSpawnSelectionInput {
             prepared_connectors: &input.prepared_connectors,
             web_search_port: resources.web_search_port.as_ref(),
-            verification: &input.run_context.verification,
             tool_names: &input.spec.tool_names,
         });
         let preamble = compose_spawned_sub_agent_preamble(&ComposeSpawnedPreambleInput {

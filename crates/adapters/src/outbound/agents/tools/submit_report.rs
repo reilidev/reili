@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use reili_core::error::PortError;
-use reili_core::investigation::{ReportSlot, VerificationLedger};
+use reili_core::investigation::ReportSlot;
 use reili_core::work::InvestigationReport;
 use rig::tool::{Tool, ToolContext};
 use serde_json::{Value, json};
@@ -14,13 +14,12 @@ const MAX_WORK_ITEMS: usize = 10;
 #[derive(Clone)]
 pub struct SubmitInvestigationReportTool {
     slot: ReportSlot,
-    ledger: VerificationLedger,
 }
 
 impl SubmitInvestigationReportTool {
     #[must_use]
-    pub fn new(slot: ReportSlot, ledger: VerificationLedger) -> Self {
-        Self { slot, ledger }
+    pub fn new(slot: ReportSlot) -> Self {
+        Self { slot }
     }
 
     fn validate(&self, report: &InvestigationReport) -> Vec<String> {
@@ -44,12 +43,6 @@ impl SubmitInvestigationReportTool {
         if evidence_ids.len() != report.evidence.len() {
             problems.push("evidence ids must be unique".to_string());
         }
-        let verification_ids: BTreeSet<String> = self
-            .ledger
-            .records()
-            .into_iter()
-            .map(|record| record.id)
-            .collect();
         let mut keys = BTreeSet::new();
         for item in &report.work_items {
             if item.key.trim().is_empty() || !keys.insert(item.key.trim().to_lowercase()) {
@@ -85,23 +78,6 @@ impl SubmitInvestigationReportTool {
                     ));
                 }
             }
-            let cited_verifications = item
-                .hypotheses
-                .iter()
-                .flat_map(|hypothesis| hypothesis.verification_ids.iter())
-                .chain(
-                    item.findings
-                        .iter()
-                        .flat_map(|finding| finding.verification_ids.iter()),
-                );
-            for id in cited_verifications {
-                if !verification_ids.contains(id) {
-                    problems.push(format!(
-                        "work item `{}` cites verification `{id}` which no verification tool recorded in this run",
-                        item.key
-                    ));
-                }
-            }
         }
         problems
     }
@@ -115,7 +91,7 @@ impl Tool for SubmitInvestigationReportTool {
     type Output = String;
 
     fn description(&self) -> String {
-        "Submit the final structured report for this goal cycle. Call exactly once, at the end. Reili persists it to GitHub Issues after its own verification gate: only hypotheses and findings backed by verification ids recorded by the verification tools in this run are stored as supported/verified.".to_string()
+        "Submit the final structured report for this goal cycle. Call exactly once, at the end. Reili screens it with its report policy and persists it to GitHub Issues: cited evidence ids must exist in `evidence`, and `monitoring`/`dismissed` are set only by humans.".to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -196,7 +172,6 @@ fn hypothesis_schema() -> Value {
             "id": { "type": "string" },
             "statement": { "type": "string" },
             "status": { "type": "string", "enum": ["proposed", "supported", "refuted", "inconclusive"] },
-            "verification_ids": id_list(),
             "evidence_ids": id_list(),
             "rationale": { "type": "string" }
         },
@@ -247,7 +222,6 @@ fn work_item_schema() -> Value {
                     "type": "object",
                     "properties": {
                         "statement": { "type": "string" },
-                        "verification_ids": id_list(),
                         "evidence_ids": id_list()
                     },
                     "required": ["statement"]
@@ -271,7 +245,6 @@ fn knowledge_schema() -> Value {
             "evidence": { "type": "string" },
             "scope": { "type": "string" },
             "evidence_ids": id_list(),
-            "verification_ids": id_list(),
             "shared": { "type": "boolean" }
         },
         "required": ["fact", "evidence", "scope", "evidence_ids"]
@@ -280,15 +253,13 @@ fn knowledge_schema() -> Value {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
-    use reili_core::investigation::{NewVerification, ReportSlot, VerificationLedger};
-    use reili_core::work::{VerificationDataSource, VerificationMethod, VerificationStatus};
+    use reili_core::investigation::ReportSlot;
     use rig::tool::{Tool, ToolContext};
     use serde_json::json;
 
     use super::SubmitInvestigationReportTool;
 
-    fn item(verification: &str, evidence: &str) -> serde_json::Value {
+    fn item(evidence: &str) -> serde_json::Value {
         json!({
             "key": "checkout:errors",
             "title": "errors",
@@ -296,28 +267,13 @@ mod tests {
             "severity": "high",
             "proposed_status": "investigating",
             "problem_statement": "p",
-            "hypotheses": [{ "id": "H1", "statement": "s", "status": "supported", "verification_ids": [verification], "evidence_ids": [evidence] }]
+            "hypotheses": [{ "id": "H1", "statement": "s", "status": "supported", "evidence_ids": [evidence] }]
         })
     }
 
     fn tool() -> (SubmitInvestigationReportTool, ReportSlot) {
         let slot = ReportSlot::new();
-        let ledger = VerificationLedger::new();
-        ledger.record(
-            NewVerification {
-                method: VerificationMethod::Recalculation,
-                claim: "c".to_string(),
-                status: VerificationStatus::Passed,
-                detail: String::new(),
-                data_source: VerificationDataSource::Computation,
-                needed_to_settle: None,
-            },
-            Utc::now(),
-        );
-        (
-            SubmitInvestigationReportTool::new(slot.clone(), ledger),
-            slot,
-        )
+        (SubmitInvestigationReportTool::new(slot.clone()), slot)
     }
 
     #[tokio::test]
@@ -328,7 +284,7 @@ mod tests {
             "summary": "s",
             "no_new_findings": false,
             "evidence": [{ "id": "E1", "source": "datadog", "url": "https://x", "description": "d" }],
-            "work_items": [item("V1", "E1")]
+            "work_items": [item("E1")]
         }))
         .await
         .expect("accepted");
@@ -347,12 +303,11 @@ mod tests {
                     "summary": "s",
                     "no_new_findings": false,
                     "evidence": [],
-                    "work_items": [item("V7", "E9")]
+                    "work_items": [item("E9")]
                 }),
             )
             .await
             .expect_err("rejected");
-        assert!(error.message.contains("verification `V7`"));
         assert!(error.message.contains("evidence `E9`"));
 
         let schema_error = tool

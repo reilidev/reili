@@ -1,4 +1,4 @@
-//! Direct, read-only metric queries used for deterministic verification and outcome tracking.
+//! Direct, read-only metric queries used for goal success criteria and outcome tracking.
 //! Results come straight from the telemetry backend, never through the LLM.
 
 use async_trait::async_trait;

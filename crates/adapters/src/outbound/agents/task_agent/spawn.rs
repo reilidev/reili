@@ -14,11 +14,7 @@ use crate::outbound::agents::instructions_support::{
     sub_agent_reusable_notes_instruction,
 };
 use crate::outbound::agents::tool_adapter::into_dynamic_tool;
-use crate::outbound::agents::tools::{
-    AnalyzeMetricTool, AnalyzeSeriesTool, CalculateTool, CorrelateMetricsTool,
-    EvaluateErrorBudgetTool, SearchWebTool, VerificationToolset, VerifyMetricChangeTool,
-    verification_tool_summaries,
-};
+use crate::outbound::agents::tools::SearchWebTool;
 
 pub(super) struct ComposeSpawnedPreambleInput<'a> {
     pub(super) language: &'a str,
@@ -80,11 +76,6 @@ raw tool arguments or raw tool output.
     )
 }
 
-const VERIFICATION_GUARDRAILS: &str = "## Verification rules
-Use the verification tools to test claims instead of asserting them. Report every verification id
-you produced together with its status (passed, failed, inconclusive). A temporal coincidence or a
-correlation is never a confirmed cause: say so explicitly and name what evidence would settle it.";
-
 const SEARCH_WEB_CATALOG_SUMMARY: &str =
     "Search the public web for vendor outages, status pages, documentation, and error messages.";
 
@@ -105,47 +96,17 @@ pub(super) fn built_in_spawn_catalog_group(web_search_available: bool) -> ToolCa
     }
 }
 
-/// Catalog group for Reili's deterministic analysis and verification tools.
-pub(super) fn verification_catalog_group(verification: &VerificationToolset) -> ToolCatalogGroup {
-    ToolCatalogGroup {
-        source: "Analysis & verification (deterministic, run by Reili)".to_string(),
-        entries: verification_tool_summaries(verification.has_metrics())
-            .into_iter()
-            .map(|(name, summary)| ToolCatalogEntry::new(name, summary))
-            .collect(),
-    }
-}
-
-/// Every verification tool instance for this run, as dynamic tools.
-pub(super) fn verification_dynamic_tools(verification: &VerificationToolset) -> Vec<DynamicTool> {
-    let mut tools = vec![
-        into_dynamic_tool(CalculateTool::new(verification.clone())),
-        into_dynamic_tool(AnalyzeSeriesTool::new(verification.clone())),
-    ];
-    if verification.has_metrics() {
-        tools.extend([
-            into_dynamic_tool(VerifyMetricChangeTool::new(verification.clone())),
-            into_dynamic_tool(AnalyzeMetricTool::new(verification.clone())),
-            into_dynamic_tool(CorrelateMetricsTool::new(verification.clone())),
-            into_dynamic_tool(EvaluateErrorBudgetTool::new(verification.clone())),
-        ]);
-    }
-    tools
-}
-
-/// Full spawn catalog: every connector's group in registration order, then the built-in groups.
+/// Full spawn catalog: every connector's group in registration order, then the built-in group.
 pub(super) fn spawn_tool_catalog_groups(
     prepared_connectors: &[Arc<dyn PreparedConnector>],
     web_search_available: bool,
-    verification: &VerificationToolset,
 ) -> Vec<ToolCatalogGroup> {
     prepared_connectors
         .iter()
         .map(|prepared| prepared.spawn_tool_catalog())
-        .chain([
-            built_in_spawn_catalog_group(web_search_available),
-            verification_catalog_group(verification),
-        ])
+        .chain(std::iter::once(built_in_spawn_catalog_group(
+            web_search_available,
+        )))
         .collect()
 }
 
@@ -182,7 +143,6 @@ pub(super) fn spawn_catalog_tool_names(groups: &[ToolCatalogGroup]) -> Vec<Strin
 pub(super) struct ResolveSpawnSelectionInput<'a> {
     pub(super) prepared_connectors: &'a [Arc<dyn PreparedConnector>],
     pub(super) web_search_port: Option<&'a Arc<dyn WebSearchPort>>,
-    pub(super) verification: &'a VerificationToolset,
     pub(super) tool_names: &'a [String],
 }
 
@@ -234,15 +194,6 @@ pub(super) fn resolve_spawn_selection(
         tools.push(into_dynamic_tool(SearchWebTool::new(Arc::clone(
             web_search_port,
         ))));
-    }
-
-    let verification_tools: Vec<DynamicTool> = verification_dynamic_tools(input.verification)
-        .into_iter()
-        .filter(|tool| requested.contains(tool.name()))
-        .collect();
-    if !verification_tools.is_empty() {
-        tools.extend(verification_tools);
-        guardrails.push(VERIFICATION_GUARDRAILS.to_string());
     }
 
     ResolvedSpawnSelection { tools, guardrails }

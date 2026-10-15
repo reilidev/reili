@@ -14,8 +14,7 @@ pub mod test_support;
 pub use feedback::{HumanCommand, HumanComment, ParsedHumanComment, parse_human_comment};
 pub use investigation::{
     EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus, Observation, OutcomeMetric,
-    Recommendation, TimeRange, VerificationDataSource, VerificationMethod, VerificationRecord,
-    VerificationStatus,
+    Recommendation, TimeRange,
 };
 pub use item::{
     FeedbackNote, HumanDecisionRequest, NotificationState, OutcomeAssessment, OutcomeTracking,

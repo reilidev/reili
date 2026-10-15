@@ -1,13 +1,11 @@
-//! Time-series analyses: window comparison around a split time (e.g. a deploy), change point
-//! detection, robust anomaly detection, lagged correlation, and a deterministic verdict for
-//! "metric X shifted in direction D" claims.
+//! Time-series analyses: window comparison around a split time (e.g. when a recommendation was
+//! implemented) and a deterministic verdict for "metric X shifted in direction D".
 
 use serde::{Deserialize, Serialize};
 
 use super::statistics::{
-    LinearTrend, MannWhitneyResult, SampleSummary, WelchTestResult, correlation_p_value,
-    linear_regression, mann_whitney_u, median, median_absolute_deviation, pearson_correlation,
-    spearman_correlation, summarize, welch_t_test,
+    LinearTrend, MannWhitneyResult, SampleSummary, WelchTestResult, linear_regression,
+    mann_whitney_u, summarize, welch_t_test,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -247,134 +245,6 @@ fn format_relative(relative: Option<f64>) -> String {
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ChangePoint {
-    pub index: usize,
-    pub timestamp_ms: i64,
-    pub mean_before: f64,
-    pub mean_after: f64,
-    /// Welch p-value Bonferroni-adjusted for the number of candidate split positions scanned.
-    pub adjusted_p_value: f64,
-}
-
-/// Binary segmentation over mean shifts. A split is accepted only when its Bonferroni-adjusted
-/// Welch p-value is below `alpha`, which keeps the scan from "finding" changes in pure noise.
-#[must_use]
-pub fn detect_change_points(
-    points: &[SeriesPoint],
-    max_change_points: usize,
-    min_segment: usize,
-    alpha: f64,
-) -> Vec<ChangePoint> {
-    let min_segment = min_segment.max(3);
-    let mut found = Vec::new();
-    let mut segments = vec![(0usize, points.len())];
-
-    while found.len() < max_change_points {
-        let mut best: Option<(usize, ChangePoint)> = None;
-        for (segment_index, (start, end)) in segments.iter().enumerate() {
-            if let Some(candidate) = best_split(points, *start, *end, min_segment)
-                && candidate.adjusted_p_value < alpha
-                && best.as_ref().is_none_or(|(_, current)| {
-                    candidate.adjusted_p_value < current.adjusted_p_value
-                })
-            {
-                best = Some((segment_index, candidate));
-            }
-        }
-        let Some((segment_index, change_point)) = best else {
-            break;
-        };
-        let (start, end) = segments.remove(segment_index);
-        segments.push((start, change_point.index));
-        segments.push((change_point.index, end));
-        found.push(change_point);
-    }
-
-    found.sort_by_key(|change_point| change_point.index);
-    found
-}
-
-fn best_split(
-    points: &[SeriesPoint],
-    start: usize,
-    end: usize,
-    min_segment: usize,
-) -> Option<ChangePoint> {
-    if end < start + 2 * min_segment {
-        return None;
-    }
-    let values: Vec<f64> = points[start..end].iter().map(|point| point.value).collect();
-    let candidates = values.len() - 2 * min_segment + 1;
-    let mut best: Option<(usize, f64)> = None;
-    for split in min_segment..=(values.len() - min_segment) {
-        let left = &values[..split];
-        let right = &values[split..];
-        let Some(left_mean) = super::statistics::mean(left) else {
-            continue;
-        };
-        let Some(right_mean) = super::statistics::mean(right) else {
-            continue;
-        };
-        #[allow(clippy::cast_precision_loss)]
-        let score = (right_mean - left_mean).abs()
-            * ((left.len() * right.len()) as f64 / values.len() as f64).sqrt();
-        if best.is_none_or(|(_, best_score)| score > best_score) {
-            best = Some((split, score));
-        }
-    }
-    let (split, _) = best?;
-    let test = welch_t_test(&values[..split], &values[split..])?;
-    #[allow(clippy::cast_precision_loss)]
-    let adjusted_p_value = (test.p_value_two_sided * candidates as f64).min(1.0);
-
-    Some(ChangePoint {
-        index: start + split,
-        timestamp_ms: points[start + split].timestamp_ms,
-        mean_before: test.mean_before,
-        mean_after: test.mean_after,
-        adjusted_p_value,
-    })
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Anomaly {
-    pub timestamp_ms: i64,
-    pub value: f64,
-    pub robust_z_score: f64,
-}
-
-/// Modified z-score outliers (Iglewicz & Hoaglin); threshold 3.5 is the conventional choice.
-#[must_use]
-pub fn detect_anomalies(points: &[SeriesPoint], threshold: f64) -> Vec<Anomaly> {
-    let values = values_of(points);
-    let (Some(center), Some(mad)) = (median(&values), median_absolute_deviation(&values)) else {
-        return Vec::new();
-    };
-    if mad == 0.0 {
-        return points
-            .iter()
-            .filter(|point| point.value != center)
-            .map(|point| Anomaly {
-                timestamp_ms: point.timestamp_ms,
-                value: point.value,
-                robust_z_score: f64::INFINITY.copysign(point.value - center),
-            })
-            .collect();
-    }
-    points
-        .iter()
-        .filter_map(|point| {
-            let robust_z_score = 0.6745 * (point.value - center) / mad;
-            (robust_z_score.abs() > threshold).then_some(Anomaly {
-                timestamp_ms: point.timestamp_ms,
-                value: point.value,
-                robust_z_score,
-            })
-        })
-        .collect()
-}
-
 #[must_use]
 pub fn trend(points: &[SeriesPoint]) -> Option<LinearTrend> {
     let first = points.first()?.timestamp_ms;
@@ -386,75 +256,11 @@ pub fn trend(points: &[SeriesPoint]) -> Option<LinearTrend> {
     linear_regression(&hours, &values_of(points))
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LaggedCorrelation {
-    /// Positive lag means `right` follows `left` by this many aligned steps.
-    pub lag_steps: i64,
-    pub pearson: f64,
-    pub spearman: Option<f64>,
-    pub p_value: Option<f64>,
-    pub sample_count: usize,
-}
-
-/// Correlates two series aligned by timestamp across lags in `[-max_lag, max_lag]` and returns
-/// the strongest absolute Pearson correlation. Correlation never establishes causation; callers
-/// must present it as association only.
-#[must_use]
-pub fn strongest_lagged_correlation(
-    left: &[SeriesPoint],
-    right: &[SeriesPoint],
-    max_lag: i64,
-) -> Option<LaggedCorrelation> {
-    let right_by_time: std::collections::BTreeMap<i64, f64> = right
-        .iter()
-        .map(|point| (point.timestamp_ms, point.value))
-        .collect();
-    let step = infer_step_ms(left)?;
-    let mut best: Option<LaggedCorrelation> = None;
-    for lag in -max_lag..=max_lag {
-        let (xs, ys): (Vec<f64>, Vec<f64>) = left
-            .iter()
-            .filter_map(|point| {
-                right_by_time
-                    .get(&(point.timestamp_ms + lag * step))
-                    .map(|value| (point.value, *value))
-            })
-            .unzip();
-        let Some(pearson) = pearson_correlation(&xs, &ys) else {
-            continue;
-        };
-        if best
-            .as_ref()
-            .is_none_or(|current| pearson.abs() > current.pearson.abs())
-        {
-            best = Some(LaggedCorrelation {
-                lag_steps: lag,
-                pearson,
-                spearman: spearman_correlation(&xs, &ys),
-                p_value: correlation_p_value(pearson, xs.len()),
-                sample_count: xs.len(),
-            });
-        }
-    }
-    best
-}
-
-fn infer_step_ms(points: &[SeriesPoint]) -> Option<i64> {
-    let mut steps: Vec<i64> = points
-        .windows(2)
-        .map(|pair| pair[1].timestamp_ms - pair[0].timestamp_ms)
-        .filter(|step| *step > 0)
-        .collect();
-    steps.sort_unstable();
-    steps.get(steps.len() / 2).copied()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         ExpectedChange, SeriesPoint, ShiftCriteria, ShiftVerdict, assess_shift,
-        assess_shift_around, compare_around, detect_anomalies, detect_change_points,
-        strongest_lagged_correlation, trend,
+        assess_shift_around, compare_around, trend,
     };
 
     fn series(values: &[f64]) -> Vec<SeriesPoint> {
@@ -554,52 +360,12 @@ mod tests {
     }
 
     #[test]
-    fn finds_single_change_point_and_ignores_noise() {
-        let points = series(&noisy_step(10.0, 30.0, 15));
-
-        let change_points = detect_change_points(&points, 3, 5, 0.01);
-
-        assert_eq!(change_points.len(), 1);
-        assert_eq!(change_points[0].index, 15);
-
-        let flat = series(&noisy_step(10.0, 10.0, 15));
-        assert!(detect_change_points(&flat, 3, 5, 0.01).is_empty());
-    }
-
-    #[test]
-    fn detects_robust_outliers() {
-        let mut values = vec![10.0, 11.0, 9.0, 10.0, 10.5, 9.5, 10.0, 11.0];
-        values.push(80.0);
-        let anomalies = detect_anomalies(&series(&values), 3.5);
-
-        assert_eq!(anomalies.len(), 1);
-        assert_eq!(anomalies[0].value, 80.0);
-    }
-
-    #[test]
     fn computes_hourly_trend() {
         let points = series(&[0.0, 1.0, 2.0, 3.0]);
 
         let slope = trend(&points).expect("trend").slope;
 
         assert!((slope - 60.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn finds_lag_between_series() {
-        let left = series(&[1.0, 5.0, 2.0, 8.0, 3.0, 9.0, 4.0, 7.0, 2.0, 6.0]);
-        let right: Vec<SeriesPoint> = left
-            .iter()
-            .map(|point| SeriesPoint {
-                timestamp_ms: point.timestamp_ms + 2 * 60_000,
-                value: point.value * 2.0,
-            })
-            .collect();
-
-        let correlation = strongest_lagged_correlation(&left, &right, 3).expect("correlation");
-
-        assert_eq!(correlation.lag_steps, 2);
-        assert!((correlation.pearson - 1.0).abs() < 1e-9);
     }
 
     #[test]

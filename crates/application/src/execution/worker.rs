@@ -661,7 +661,6 @@ mod tests {
             slack_file_download_port,
             web_search_port: Some(web_search_port),
             canvas_memory_port: None,
-            metric_query_port: None,
         }
     }
 

@@ -19,8 +19,7 @@ use reili_core::goal::{
     GoalBudget, GoalDefinition, GoalId, GoalPermissions, GoalReportPolicy, GoalSchedule, GoalScope,
 };
 use reili_core::investigation::{
-    InvestigationRunOutcome, InvestigationRunReport, InvestigationRunnerPort, NewVerification,
-    RunInvestigationInput,
+    InvestigationRunOutcome, InvestigationRunReport, InvestigationRunnerPort, RunInvestigationInput,
 };
 use reili_core::logger::LogEntry;
 use reili_core::messaging::slack::{
@@ -31,8 +30,7 @@ use reili_core::secret::SecretString;
 use reili_core::task::{LlmExecutionMetadata, LlmUsageSnapshot, TaskResources};
 use reili_core::work::{
     CycleTrigger, EvidenceRef, EvidenceSource, Hypothesis, HypothesisStatus, InvestigationReport,
-    Severity, TimeRange, VerificationDataSource, VerificationMethod, VerificationStatus,
-    WorkItemKind, WorkItemProposal, WorkItemStatus,
+    Severity, WorkItemKind, WorkItemProposal, WorkItemStatus,
 };
 use serde_json::{Value, json};
 
@@ -278,24 +276,6 @@ impl InvestigationRunnerPort for ScriptedRunner {
                 .collect::<Vec<_>>()
                 .join("\n"),
         );
-        input.verifications.record(
-            NewVerification {
-                method: VerificationMethod::StatisticalShift,
-                claim: "error rate rose after deploy 42".to_string(),
-                status: VerificationStatus::Passed,
-                detail: "welch p<1e-6".to_string(),
-                data_source: VerificationDataSource::IndependentQuery {
-                    query: "avg:checkout.error_rate{*}".to_string(),
-                    source_url: "https://app.datadoghq.com/metric/explorer".to_string(),
-                    time_range: TimeRange {
-                        from: input.brief.now,
-                        to: input.brief.now,
-                    },
-                },
-                needed_to_settle: None,
-            },
-            input.brief.now,
-        );
         let report = {
             let mut reports = self.reports.lock().expect("lock");
             if reports.is_empty() {
@@ -418,7 +398,6 @@ fn report() -> InvestigationReport {
                 id: "H1".to_string(),
                 statement: "deploy 42 caused the regression".to_string(),
                 status: HypothesisStatus::Supported,
-                verification_ids: vec!["V1".to_string()],
                 evidence_ids: vec!["E1".to_string()],
                 rationale: String::new(),
             }],
@@ -468,8 +447,8 @@ fn process(
             slack_file_download_port: Arc::new(MockSlackFileDownloadPort::new()),
             web_search_port: None,
             canvas_memory_port: None,
-            metric_query_port: None,
         },
+        metric_query_port: None,
         report_port: Arc::clone(slack) as Arc<dyn GoalReportPort>,
         logger: Arc::new(QuietLogger),
         instance_id: instance_id.to_string(),

@@ -1,5 +1,5 @@
-//! The structured report a goal investigation submits. Everything in it is a *claim* from the
-//! model; Reili's verification gate decides what is recorded as verified.
+//! The structured report a goal investigation submits. Reili's report policy screens it before
+//! anything is recorded.
 
 use serde::{Deserialize, Serialize};
 
@@ -42,8 +42,6 @@ pub struct KnowledgeCandidate {
     pub scope: String,
     #[serde(default)]
     pub evidence_ids: Vec<String>,
-    #[serde(default)]
-    pub verification_ids: Vec<String>,
     #[serde(default)]
     pub shared: bool,
 }
@@ -95,7 +93,7 @@ mod tests {
               "work_items":[{
                 "key":"checkout:5xx","title":"5xx","kind":"incident","severity":"high",
                 "proposed_status":"needs_human","problem_statement":"p",
-                "hypotheses":[{"id":"H1","statement":"deploy","status":"supported","verification_ids":["V1"]}]
+                "hypotheses":[{"id":"H1","statement":"deploy","status":"supported"}]
               }]
             }"#,
         )

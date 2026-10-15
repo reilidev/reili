@@ -239,7 +239,7 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
 #max_concurrent_cycles = 1
 #lease_minutes = 15
 #feedback_poll_minutes = 10
-# Direct Datadog metric queries for verification tools, success criteria, and outcome tracking.
+# Direct Datadog metric queries for goal success criteria and outcome tracking.
 # Requires the `timeseries_query` permission on the Datadog application key.
 #metric_queries = true
 

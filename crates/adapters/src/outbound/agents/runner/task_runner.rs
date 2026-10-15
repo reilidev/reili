@@ -20,8 +20,6 @@ use rig::prelude::CompletionClient;
 use super::execution_hook::AgentExecutionHook;
 use super::provider_settings::LlmProviderSettings;
 use super::usage_collector::LlmUsageCollector;
-use reili_core::investigation::VerificationLedger;
-
 use crate::outbound::agents::connector::{
     ConnectorPrepareError, ConnectorPromptFact, ConnectorSet,
 };
@@ -30,7 +28,6 @@ use crate::outbound::agents::task_agent::{
     CreateTaskAgentFactoryInput, TaskAgentConfig, TaskAgentExecutionContext, TaskAgentFactory,
     TaskAgentRunContext, build_task_prompt,
 };
-use crate::outbound::agents::tools::VerificationToolset;
 
 pub struct RunLlmTaskRunnerInput<C>
 where
@@ -114,10 +111,6 @@ where
             },
         },
     });
-    let verification = VerificationToolset::new(
-        VerificationLedger::new(),
-        input.run.context.resources.metric_query_port.clone(),
-    );
     let task_agent = task_agent_factory.build(BuildTaskAgentInput {
         run_context: TaskAgentRunContext {
             resources: Arc::new(input.run.context.resources),
@@ -131,7 +124,6 @@ where
             },
             slack_action_token,
             memory_items,
-            verification,
         },
         prepared_connectors,
     });

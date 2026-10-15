@@ -10,7 +10,6 @@ use reili_core::goal::{GoalDefinition, SuccessCriterion};
 use reili_core::metrics::{MetricQueryInput, MetricQueryPort, aggregate_points};
 use reili_core::work::{
     CriterionObservation, OutcomeAssessment, OutcomeTracking, OutcomeVerdict, StatusActor,
-    TimeRange, VerificationDataSource, VerificationMethod, VerificationRecord, VerificationStatus,
     WorkItemState, WorkItemStatus,
 };
 
@@ -87,20 +86,14 @@ pub async fn assess_outcome(
     tracking: &OutcomeTracking,
     metric_port: Option<&Arc<dyn MetricQueryPort>>,
     now: DateTime<Utc>,
-    verification_id: String,
-) -> (OutcomeAssessment, Option<VerificationRecord>) {
+) -> OutcomeAssessment {
     let window = Duration::hours(i64::from(tracking.metric.window_hours.max(1)));
     let minimum_after = (window / 2).max(Duration::hours(MIN_POST_CHANGE_HOURS));
-    let pending = |detail: String| {
-        (
-            OutcomeAssessment {
-                at: now,
-                verdict: OutcomeVerdict::Pending,
-                detail,
-                verification_id: None,
-            },
-            None,
-        )
+    let pending = |detail: String| OutcomeAssessment {
+        at: now,
+        verdict: OutcomeVerdict::Pending,
+        detail,
+        source_url: None,
     };
     if now < tracking.implemented_at + minimum_after {
         return pending(format!(
@@ -123,15 +116,12 @@ pub async fn assess_outcome(
     {
         Ok(result) => result,
         Err(error) => {
-            return (
-                OutcomeAssessment {
-                    at: now,
-                    verdict: OutcomeVerdict::Inconclusive,
-                    detail: format!("metric query failed: {}", error.message),
-                    verification_id: None,
-                },
-                None,
-            );
+            return OutcomeAssessment {
+                at: now,
+                verdict: OutcomeVerdict::Inconclusive,
+                detail: format!("metric query failed: {}", error.message),
+                source_url: None,
+            };
         }
     };
     let points = result.combined_points();
@@ -157,51 +147,24 @@ pub async fn assess_outcome(
         }
         ShiftVerdict::Inconclusive => OutcomeVerdict::Inconclusive,
     };
-    let status = match verdict {
-        OutcomeVerdict::Improved => VerificationStatus::Passed,
-        OutcomeVerdict::NoChange | OutcomeVerdict::Regressed => VerificationStatus::Failed,
-        OutcomeVerdict::Inconclusive | OutcomeVerdict::Pending => VerificationStatus::Inconclusive,
-    };
     let detail = format!(
         "{} (before/after {}h windows around {}); observed association only — other changes in the same period are not ruled out",
         assessment.reason,
         tracking.metric.window_hours,
         tracking.implemented_at.to_rfc3339()
     );
-    let record = VerificationRecord {
-        id: verification_id.clone(),
-        method: VerificationMethod::OutcomeComparison,
-        claim: format!(
-            "`{}` shows the expected {:?} after the change",
-            tracking.metric.query, tracking.metric.expected
-        ),
-        status,
-        detail: detail.clone(),
-        data_source: VerificationDataSource::IndependentQuery {
-            query: tracking.metric.query.clone(),
-            source_url: result.source_url.clone(),
-            time_range: TimeRange { from, to },
-        },
-        performed_at: now,
-        needed_to_settle: (status == VerificationStatus::Inconclusive)
-            .then(|| "more post-change data points or a less noisy outcome metric".to_string()),
-    };
-    (
-        OutcomeAssessment {
-            at: now,
-            verdict,
-            detail,
-            verification_id: Some(verification_id),
-        },
-        Some(record),
-    )
+    OutcomeAssessment {
+        at: now,
+        verdict,
+        detail,
+        source_url: Some(result.source_url),
+    }
 }
 
 /// Applies an outcome assessment to a monitored work item and decides the follow-up status.
 pub fn apply_outcome_assessment(
     state: &mut WorkItemState,
     assessment: OutcomeAssessment,
-    record: Option<VerificationRecord>,
     now: DateTime<Utc>,
 ) {
     let Some(tracking) = state.outcome.as_mut() else {
@@ -212,9 +175,6 @@ pub fn apply_outcome_assessment(
     let previous = tracking.latest_verdict();
     let verdict = assessment.verdict;
     tracking.assessments.push(assessment);
-    if let Some(record) = record {
-        state.verifications.push(record);
-    }
     if state.status != WorkItemStatus::Monitoring {
         return;
     }
@@ -314,40 +274,37 @@ mod tests {
     #[tokio::test]
     async fn detects_improvement_and_resolves_after_window() {
         let port = step_source(0.05, 0.01);
-        let (assessment, record) = assess_outcome(
+        let assessment = assess_outcome(
             &tracking(ExpectedChange::Decrease),
             Some(&port),
             at("2026-10-11T06:00:00Z"),
-            "outcome-1".to_string(),
         )
         .await;
 
         assert_eq!(assessment.verdict, OutcomeVerdict::Improved);
-        let record = record.expect("verification record");
-        assert!(record.data_source.is_independent());
+        assert!(assessment.source_url.is_some());
         assert!(assessment.detail.contains("observed association only"));
 
         let mut item = sample_work_item("checkout:errors");
         item.status = WorkItemStatus::Monitoring;
         item.outcome = Some(tracking(ExpectedChange::Decrease));
-        apply_outcome_assessment(
-            &mut item,
-            assessment,
-            Some(record),
-            at("2026-10-11T06:00:00Z"),
-        );
+        apply_outcome_assessment(&mut item, assessment, at("2026-10-11T06:00:00Z"));
         assert_eq!(item.status, WorkItemStatus::Resolved);
-        assert_eq!(item.verifications.len(), 1);
+        assert_eq!(
+            item.outcome
+                .as_ref()
+                .map(|outcome| outcome.assessments.len()),
+            Some(1)
+        );
     }
 
     #[tokio::test]
     async fn detects_regression_and_asks_humans() {
         let port = step_source(0.01, 0.05);
-        let (assessment, record) = assess_outcome(
+        let assessment = assess_outcome(
             &tracking(ExpectedChange::Decrease),
             Some(&port),
             at("2026-10-10T18:00:00Z"),
-            "outcome-1".to_string(),
         )
         .await;
 
@@ -355,7 +312,7 @@ mod tests {
         let mut item = sample_work_item("checkout:errors");
         item.status = WorkItemStatus::Monitoring;
         item.outcome = Some(tracking(ExpectedChange::Decrease));
-        apply_outcome_assessment(&mut item, assessment, record, at("2026-10-10T18:00:00Z"));
+        apply_outcome_assessment(&mut item, assessment, at("2026-10-10T18:00:00Z"));
         assert_eq!(item.status, WorkItemStatus::NeedsHuman);
         assert!(item.human_decision.is_some());
     }
@@ -363,24 +320,22 @@ mod tests {
     #[tokio::test]
     async fn reports_no_change_and_pending() {
         let port = step_source(0.02, 0.02);
-        let (no_change, _) = assess_outcome(
+        let no_change = assess_outcome(
             &tracking(ExpectedChange::Decrease),
             Some(&port),
             at("2026-10-11T06:00:00Z"),
-            "outcome-1".to_string(),
         )
         .await;
-        let (pending, record) = assess_outcome(
+        let pending = assess_outcome(
             &tracking(ExpectedChange::Decrease),
             Some(&port),
             at("2026-10-10T02:00:00Z"),
-            "outcome-2".to_string(),
         )
         .await;
 
         assert_eq!(no_change.verdict, OutcomeVerdict::NoChange);
         assert_eq!(pending.verdict, OutcomeVerdict::Pending);
-        assert!(record.is_none());
+        assert!(pending.source_url.is_none());
     }
 
     #[tokio::test]

@@ -37,7 +37,7 @@ pub(crate) struct AutonomyFileConfig {
     pub max_concurrent_cycles: u32,
     pub lease_minutes: u32,
     pub feedback_poll_minutes: u32,
-    /// Direct Datadog metric queries for deterministic verification and outcome tracking.
+    /// Direct Datadog metric queries for goal success criteria and outcome tracking.
     pub metric_queries: bool,
 }
 

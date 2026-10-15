@@ -1,13 +1,13 @@
-//! Goal-driven autonomous work: scheduling, the durable Observe → Investigate → Verify → Decide →
-//! Report → Learn cycle, human collaboration, and outcome evaluation.
+//! Goal-driven autonomous work: scheduling, the durable Observe → Investigate → Decide → Report →
+//! Learn cycle, human collaboration, and outcome evaluation.
 
 pub mod brief;
 pub mod clock;
 pub mod cycle;
 pub mod decide;
 pub mod evaluation;
-pub mod gate;
 pub mod outcome;
+pub mod policy;
 pub mod reconcile;
 pub mod report;
 pub mod scheduler;
@@ -23,7 +23,7 @@ pub(crate) mod tests_support;
 
 pub use clock::{Clock, SystemClock};
 pub use cycle::{CycleRunOutcome, CycleStart, GoalCycleDeps, GoalCycleError, GoalCycleRunner};
-pub use gate::{GateOutcome, apply_verification_gate};
+pub use policy::{PolicyOutcome, apply_report_policy};
 pub use scheduler::{GoalScheduler, GoalSchedulerDeps, RunRequestAck, RunRequestError, decide_due};
 pub use slack::{
     GoalCommand, SlackGoalAlertTriggerHandler, SlackGoalCommandHandler,

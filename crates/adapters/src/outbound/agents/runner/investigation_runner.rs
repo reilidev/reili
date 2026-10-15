@@ -1,6 +1,6 @@
 //! Runs a goal cycle investigation on any rig completion client: the lead agent works the brief,
-//! sub-agents and verification tools share one budget and one verification ledger, and the
-//! structured report submitted through `submit_investigation_report` is returned.
+//! sub-agents share one budget, and the structured report submitted through
+//! `submit_investigation_report` is returned.
 
 use std::sync::Arc;
 
@@ -23,7 +23,6 @@ use crate::outbound::agents::task_agent::{
     CreateTaskAgentFactoryInput, TaskAgentConfig, TaskAgentExecutionContext, TaskAgentFactory,
     TaskAgentRunContext, build_goal_prompt,
 };
-use crate::outbound::agents::tools::VerificationToolset;
 
 pub struct RunLlmInvestigationInput<C>
 where
@@ -77,10 +76,6 @@ where
         prompt_facts: &prompt_facts,
     });
     let report_slot = ReportSlot::new();
-    let verification = VerificationToolset::new(
-        run.verifications.clone(),
-        run.resources.metric_query_port.clone(),
-    );
     let max_parallel_tools = run.budget.limits().max_parallel_tools;
     let execution = TaskAgentExecutionContext {
         logger: Arc::clone(&run.logger),
@@ -107,7 +102,6 @@ where
             execution,
             slack_action_token: None,
             memory_items: Vec::new(),
-            verification,
         },
         prepared_connectors,
         report_slot: report_slot.clone(),

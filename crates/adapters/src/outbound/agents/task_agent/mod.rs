@@ -25,14 +25,11 @@ use super::runner::usage_collector::LlmUsageCollector;
 use super::tools::{
     ReportProgressTool, ReportProgressToolInput, SaveMemoryTool, SaveMemoryToolInput,
     SaveSharedMemoryTool, SearchSlackMessagesTool, SearchWebTool, SpawnAgentTool,
-    SpawnAgentToolInput, SpawnedSubAgentSpec, SubmitInvestigationReportTool, VerificationToolset,
+    SpawnAgentToolInput, SpawnedSubAgentSpec, SubmitInvestigationReportTool,
 };
 use goal_instructions::{BuildGoalInstructionsInput, build_goal_instructions};
 use instructions::{BuildTaskInstructionsInput, build_task_instructions};
-use spawn::{
-    render_spawn_tool_catalog, spawn_catalog_tool_names, spawn_tool_catalog_groups,
-    verification_dynamic_tools,
-};
+use spawn::{render_spawn_tool_catalog, spawn_catalog_tool_names, spawn_tool_catalog_groups};
 use sub_agent::{
     BuildSpawnedSubAgentInput, CreateSubAgentFactoryInput, SubAgentConfig, SubAgentFactory,
 };
@@ -88,7 +85,6 @@ where
         let catalog_groups = spawn_tool_catalog_groups(
             &input.prepared_connectors,
             input.run_context.resources.web_search_port.is_some(),
-            &input.run_context.verification,
         );
 
         let builder = self
@@ -135,8 +131,7 @@ where
                 tool_concurrency: self.config.settings.tool_concurrency,
                 shared_prompt_context: memory_context_section,
                 budget: None,
-            }))
-            .dynamic_tools(verification_dynamic_tools(&input.run_context.verification));
+            }));
 
         let builder = match &input.run_context.resources.web_search_port {
             Some(web_search_port) => builder.tool(SearchWebTool::new(Arc::clone(web_search_port))),
@@ -165,8 +160,8 @@ where
         builder.build()
     }
 
-    /// Builds the lead agent for a goal cycle: goal-mode instructions, the verification tools,
-    /// `spawn_agent` bounded by the run budget, and the structured report tool as the only exit.
+    /// Builds the lead agent for a goal cycle: goal-mode instructions, `spawn_agent` bounded by the
+    /// run budget, and the structured report tool as the only exit.
     #[must_use]
     pub fn build_goal_agent(&self, input: BuildGoalAgentInput) -> Agent {
         let sub_agent_factory = SubAgentFactory::new(CreateSubAgentFactoryInput {
@@ -176,7 +171,6 @@ where
         let catalog_groups = spawn_tool_catalog_groups(
             &input.prepared_connectors,
             input.run_context.resources.web_search_port.is_some(),
-            &input.run_context.verification,
         );
         let tool_concurrency = usize::try_from(input.max_parallel_tools)
             .unwrap_or(1)
@@ -221,11 +215,7 @@ where
                 shared_prompt_context: None,
                 budget: input.run_context.execution.budget.clone(),
             }))
-            .tool(SubmitInvestigationReportTool::new(
-                input.report_slot,
-                input.run_context.verification.ledger(),
-            ))
-            .dynamic_tools(verification_dynamic_tools(&input.run_context.verification));
+            .tool(SubmitInvestigationReportTool::new(input.report_slot));
 
         let builder = match &input.run_context.resources.web_search_port {
             Some(web_search_port) => builder.tool(SearchWebTool::new(Arc::clone(web_search_port))),
@@ -269,7 +259,6 @@ pub struct TaskAgentRunContext {
     pub execution: TaskAgentExecutionContext,
     pub slack_action_token: Option<SecretString>,
     pub memory_items: Vec<reili_core::task::TaskMemoryItem>,
-    pub verification: VerificationToolset,
 }
 
 #[derive(Clone)]

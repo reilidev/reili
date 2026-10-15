@@ -4,21 +4,17 @@
 use std::sync::Arc;
 
 use chrono::Duration;
-use reili_core::analysis::{
-    ExpectedChange, SeriesPoint, ShiftCriteria, ShiftVerdict, assess_shift, compare_around,
-};
+use reili_core::analysis::ExpectedChange;
 use reili_core::goal::{
     CriterionMetric, GoalDefinition, MetricAggregation, SuccessCriterion, TargetComparator,
 };
-use reili_core::investigation::NewVerification;
 use reili_core::messaging::slack::{SlackFileDownloadPort, SlackMessageSearchPort};
 use reili_core::metrics::MetricQueryPort;
 use reili_core::task::TaskResources;
 use reili_core::work::{
     CycleResult, CycleTrigger, EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus,
-    InvestigationReport, KnowledgeCandidate, OutcomeMetric, Recommendation, Severity, TimeRange,
-    VerificationDataSource, VerificationMethod, VerificationStatus, WorkItemKind, WorkItemProposal,
-    WorkItemStatus,
+    InvestigationReport, KnowledgeCandidate, OutcomeMetric, Recommendation, Severity, WorkItemKind,
+    WorkItemProposal, WorkItemStatus,
 };
 
 use super::cycle::{GoalCycleDeps, GoalCycleRunner};
@@ -72,13 +68,13 @@ impl Harness {
             ) as Arc<dyn SlackFileDownloadPort>,
             web_search_port: None,
             canvas_memory_port: Some(Arc::new(self.canvas.clone())),
-            metric_query_port: self.metrics.clone(),
         };
         let runner = Arc::new(GoalCycleRunner::new(GoalCycleDeps {
             store: store.clone(),
             investigation_runner: Arc::new(self.runner.clone()),
             report_port: Arc::new(self.reports.clone()),
             task_resources: resources,
+            metric_query_port: self.metrics.clone(),
             clock: Arc::new(self.clock.clone()),
             logger: Arc::new(NoopLogger),
             instance_id: instance_id.to_string(),
@@ -132,14 +128,11 @@ fn proposal(key: &str, status: WorkItemStatus) -> WorkItemProposal {
             id: "H1".to_string(),
             statement: "deploy 42 exhausted the DB connection pool".to_string(),
             status: HypothesisStatus::Supported,
-            verification_ids: vec!["V1".to_string()],
             evidence_ids: vec!["E1".to_string()],
             rationale: "errors are pool timeouts".to_string(),
         }],
         findings: vec![Finding {
             statement: "error rate rose after the deploy".to_string(),
-            verified: true,
-            verification_ids: vec!["V1".to_string()],
             evidence_ids: vec!["E1".to_string()],
         }],
         recommendation: Some(Recommendation {
@@ -175,41 +168,14 @@ fn report(work_items: Vec<WorkItemProposal>) -> InvestigationReport {
             evidence: "acme/checkout config/database.yml".to_string(),
             scope: "checkout-api".to_string(),
             evidence_ids: vec!["E1".to_string()],
-            verification_ids: Vec::new(),
             shared: false,
         }],
         no_new_findings: false,
     }
 }
 
-fn independent(status: VerificationStatus, claim: &str) -> NewVerification {
-    NewVerification {
-        method: VerificationMethod::StatisticalShift,
-        claim: claim.to_string(),
-        status,
-        detail: "computed from Datadog data fetched by Reili".to_string(),
-        data_source: VerificationDataSource::IndependentQuery {
-            query: "avg:checkout.error_rate{env:production}".to_string(),
-            source_url: "https://app.datadoghq.com/metric/explorer".to_string(),
-            time_range: TimeRange {
-                from: at(START),
-                to: at(START),
-            },
-        },
-        needed_to_settle: None,
-    }
-}
-
-fn push_report(
-    harness: &Harness,
-    report: InvestigationReport,
-    verifications: Vec<NewVerification>,
-) {
-    harness.runner.push(ScriptedResponse::Report {
-        report: Some(report),
-        tokens: 1_000,
-        verifications,
-    });
+fn push_report(harness: &Harness, report: InvestigationReport) {
+    harness.runner.push_report(report, 1_000);
 }
 
 fn goal_with_criterion() -> GoalDefinition {
@@ -245,10 +211,6 @@ async fn scenario_a_continuous_goal_persists_reports_and_continues_from_work_sta
             "checkout:5xx-after-deploy",
             WorkItemStatus::NeedsHuman,
         )]),
-        vec![independent(
-            VerificationStatus::Passed,
-            "error rate rose after deploy 42",
-        )],
     );
 
     assert_eq!(
@@ -276,7 +238,6 @@ async fn scenario_a_continuous_goal_persists_reports_and_continues_from_work_sta
     let (number, item) = &items[0];
     assert_eq!(item.status, WorkItemStatus::NeedsHuman);
     assert_eq!(item.hypotheses[0].status, HypothesisStatus::Supported);
-    assert!(item.findings[0].verified);
     assert!(
         harness
             .repository
@@ -307,14 +268,7 @@ async fn scenario_a_continuous_goal_persists_reports_and_continues_from_work_sta
     harness.clock.advance(Duration::hours(6));
     let mut follow_up = proposal("checkout:5xx-after-deploy", WorkItemStatus::NeedsHuman);
     follow_up.existing_issue_number = Some(*number);
-    push_report(
-        &harness,
-        report(vec![follow_up]),
-        vec![independent(
-            VerificationStatus::Passed,
-            "error rate still elevated",
-        )],
-    );
+    push_report(&harness, report(vec![follow_up]));
     assert_eq!(tick(&scheduler).await, 1);
 
     let brief = harness.runner.last_brief();
@@ -362,108 +316,64 @@ async fn scenario_a_no_new_findings_completes_quietly() {
 
 // B. Deep incident investigation -------------------------------------------------------------
 
-fn step_points(before: f64, after: f64) -> Vec<SeriesPoint> {
-    (0..48)
-        .map(|index| SeriesPoint {
-            timestamp_ms: i64::from(index) * 600_000,
-            value: if index < 24 { before } else { after }
-                * (1.0 + [0.0, 0.02, -0.02][index as usize % 3]),
-        })
-        .collect()
-}
-
 #[tokio::test]
-async fn scenario_b_multiple_hypotheses_are_verified_independently() {
+async fn scenario_b_competing_hypotheses_are_kept_separately_with_their_evidence() {
     let harness = Harness::new();
     let scheduler = harness.process(vec![sample_goal("checkout")], "instance-a");
 
-    // Deterministic verifications as the analysis tools would record them.
-    let deploy_shift = assess_shift(
-        &compare_around(&step_points(0.01, 0.04), 24 * 600_000, 0),
-        ExpectedChange::Increase,
-        ShiftCriteria::default(),
-    );
-    let traffic_shift = assess_shift(
-        &compare_around(&step_points(1_000.0, 1_000.0), 24 * 600_000, 0),
-        ExpectedChange::Increase,
-        ShiftCriteria::default(),
-    );
-    assert_eq!(deploy_shift.verdict, ShiftVerdict::Supported);
-    assert_eq!(traffic_shift.verdict, ShiftVerdict::Contradicted);
-
-    let mut incident = proposal(
-        "checkout:incident-2026-10-15",
-        WorkItemStatus::Investigating,
-    );
+    let mut incident = proposal("checkout:incident-2026-10-15", WorkItemStatus::Resolved);
     incident.hypotheses = vec![
         Hypothesis {
             id: "H1".to_string(),
             statement: "deploy 42 raised the error rate".to_string(),
             status: HypothesisStatus::Supported,
-            verification_ids: vec!["V1".to_string()],
             evidence_ids: vec!["E1".to_string()],
-            rationale: String::new(),
+            rationale: "errors start at the deploy".to_string(),
         },
         Hypothesis {
             id: "H2".to_string(),
             statement: "a traffic surge overloaded checkout".to_string(),
-            status: HypothesisStatus::Supported,
-            verification_ids: vec!["V2".to_string()],
+            status: HypothesisStatus::Refuted,
             evidence_ids: vec!["E1".to_string()],
-            rationale: "timing matches".to_string(),
+            rationale: "request rate stayed flat".to_string(),
         },
         Hypothesis {
             id: "H3".to_string(),
             statement: "an upstream payment provider outage".to_string(),
-            status: HypothesisStatus::Supported,
-            verification_ids: Vec::new(),
-            evidence_ids: Vec::new(),
-            rationale: "errors coincide in time".to_string(),
+            status: HypothesisStatus::Inconclusive,
+            evidence_ids: vec!["E9".to_string()],
+            rationale: "provider status page not checked".to_string(),
         },
     ];
     incident.findings = vec![Finding {
         statement: "the payment provider caused the outage".to_string(),
-        verified: true,
-        verification_ids: Vec::new(),
-        evidence_ids: vec!["E1".to_string()],
+        evidence_ids: vec!["E9".to_string()],
     }];
-    let mut traffic = independent(
-        VerificationStatus::Failed,
-        "request rate increased before errors",
-    );
-    traffic.detail = traffic_shift.reason.clone();
-    let mut deploy = independent(
-        VerificationStatus::Passed,
-        "error rate increased after deploy 42",
-    );
-    deploy.detail = deploy_shift.reason.clone();
-    push_report(&harness, report(vec![incident]), vec![deploy, traffic]);
+    push_report(&harness, report(vec![incident]));
 
     tick(&scheduler).await;
 
     let (number, item) = harness.repository.open_work_items().remove(0);
-    let status = |statement: &str| {
+    let hypothesis = |statement: &str| {
         item.hypotheses
             .iter()
             .find(|hypothesis| hypothesis.statement.contains(statement))
-            .map(|hypothesis| hypothesis.status)
+            .cloned()
+            .expect("hypothesis")
     };
-    assert_eq!(status("deploy 42"), Some(HypothesisStatus::Supported));
-    assert_eq!(status("traffic surge"), Some(HypothesisStatus::Refuted));
+    assert_eq!(hypothesis("deploy 42").status, HypothesisStatus::Supported);
     assert_eq!(
-        status("payment provider"),
-        Some(HypothesisStatus::Proposed),
-        "temporal coincidence alone is not accepted as support"
+        hypothesis("traffic surge").status,
+        HypothesisStatus::Refuted
     );
     assert!(
-        !item.findings[0].verified,
-        "unverified causal finding stays a hypothesis"
+        hypothesis("payment provider").evidence_ids.is_empty(),
+        "citations to evidence the report does not contain are dropped"
     );
-    assert_eq!(item.verifications.len(), 2);
-    assert!(
-        item.verifications
-            .iter()
-            .all(|record| record.id.contains("-V"))
+    assert_eq!(
+        item.status,
+        WorkItemStatus::Investigating,
+        "`resolved` needs a finding backed by cited evidence"
     );
     let ledger_number = harness
         .repository
@@ -477,8 +387,8 @@ async fn scenario_b_multiple_hypotheses_are_verified_independently() {
             .repository
             .comments(ledger_number)
             .iter()
-            .any(|comment| comment.body.contains("verification gate")),
-        "downgrades are audited on the ledger"
+            .any(|comment| comment.body.contains("report policy")),
+        "policy adjustments are audited on the ledger"
     );
     assert_ne!(number, ledger_number);
 }
@@ -524,7 +434,6 @@ async fn scenario_c_crash_during_investigation_resumes_after_lease_expiry() {
             "checkout:5xx-after-deploy",
             WorkItemStatus::NeedsHuman,
         )]),
-        vec![independent(VerificationStatus::Passed, "error rate rose")],
     );
     assert_eq!(tick(&second).await, 1);
 
@@ -549,7 +458,6 @@ async fn scenario_c_resume_after_decide_does_not_repeat_the_investigation() {
             "checkout:5xx-after-deploy",
             WorkItemStatus::NeedsHuman,
         )]),
-        vec![independent(VerificationStatus::Passed, "error rate rose")],
     );
     let first = harness.process(vec![goal.clone()], "instance-1");
     tick(&first).await;
@@ -590,7 +498,6 @@ async fn scenario_c_create_races_and_write_conflicts_do_not_duplicate_items() {
             "checkout:5xx-after-deploy",
             WorkItemStatus::NeedsHuman,
         )]),
-        vec![independent(VerificationStatus::Passed, "error rate rose")],
     );
     let scheduler = harness.process(vec![goal], "instance-1");
 
@@ -645,7 +552,6 @@ async fn scenario_d_feedback_is_used_and_outcome_is_measured() {
             "checkout:5xx-after-deploy",
             WorkItemStatus::NeedsHuman,
         )]),
-        vec![independent(VerificationStatus::Passed, "error rate rose")],
     );
     tick(&scheduler).await;
     let (number, _) = harness.repository.open_work_items().remove(0);
@@ -829,14 +735,9 @@ async fn scenario_e_untrusted_instructions_are_not_obeyed() {
         evidence: "issue comment".to_string(),
         scope: "all".to_string(),
         evidence_ids: vec!["E1".to_string()],
-        verification_ids: Vec::new(),
         shared: true,
     });
-    push_report(
-        &harness,
-        injected,
-        vec![independent(VerificationStatus::Passed, "error rate rose")],
-    );
+    push_report(&harness, injected);
     tick(&scheduler).await;
     let (number, _) = harness.repository.open_work_items().remove(0);
 
@@ -928,7 +829,6 @@ async fn scenario_slack_commands_show_status_and_queue_runs() {
             "checkout:5xx-after-deploy",
             WorkItemStatus::NeedsHuman,
         )]),
-        vec![independent(VerificationStatus::Passed, "error rate rose")],
     );
     tick(&scheduler).await;
 

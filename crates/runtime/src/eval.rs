@@ -1,9 +1,9 @@
 //! `reili eval`: score investigations against replayable fixtures.
 //!
-//! - `--replay` (default in CI): recorded runs are replayed through the production analysis code
-//!   and verification gate. Deterministic, no credentials needed.
-//! - live (no `--replay`): the configured AI backend investigates each fixture with fixture-backed
-//!   metrics and no live connectors, then the same scorer runs.
+//! - `--replay` (default in CI): recorded runs are replayed through the production report policy
+//!   and scored. Deterministic, no credentials needed.
+//! - live (no `--replay`): the configured AI backend investigates each fixture with its metric
+//!   data in the brief and no live connectors, then the same scorer runs.
 //!
 //! Results are written as JSON (for baselines) and Markdown (for CI summaries/artifacts).
 
@@ -214,7 +214,6 @@ fn offline_resources() -> TaskResources {
         slack_file_download_port: Arc::new(OfflineSlack),
         web_search_port: None,
         canvas_memory_port: None,
-        metric_query_port: None,
     }
 }
 

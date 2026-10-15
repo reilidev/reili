@@ -17,8 +17,13 @@
       "to": "2026-09-02T06:00:00Z",
       "step_minutes": 10,
       "segments": [
-        { "until": "2026-09-02T02:00:00Z", "value": 0.008 },
-        { "value": 0.03 }
+        {
+          "until": "2026-09-02T02:00:00Z",
+          "value": 0.008
+        },
+        {
+          "value": 0.03
+        }
       ],
       "noise": 0.04
     },
@@ -28,33 +33,44 @@
       "to": "2026-09-02T06:00:00Z",
       "step_minutes": 10,
       "segments": [
-        { "until": "2026-09-02T02:00:00Z", "value": 35 },
-        { "value": 62 }
+        {
+          "until": "2026-09-02T02:00:00Z",
+          "value": 35
+        },
+        {
+          "value": 62
+        }
       ],
       "noise": 0.03
     }
   ],
   "ground_truth": {
-    "root_cause_keywords": ["batch job", "orders-reconcile"],
-    "decoy_keywords": ["cpu"],
+    "root_cause_keywords": [
+      "batch job",
+      "orders-reconcile"
+    ],
+    "decoy_keywords": [
+      "cpu"
+    ],
     "expect_findings": true
   },
   "recorded": {
     "llm_tokens": 151000,
-    "verifications": [
-      {
-        "id": "V1",
-        "claim": "error rate increased when the orders-reconcile batch job started at 02:00",
-        "query": "avg:checkout.error_rate{env:production}",
-        "split_at": "2026-09-02T02:00:00Z",
-        "expected": "increase"
-      }
-    ],
     "report": {
       "summary": "Errors start at 02:00 together with the orders-reconcile batch job; CPU also rises.",
       "evidence": [
-        { "id": "E1", "source": "datadog", "url": "https://app.datadoghq.com/apm/services/checkout-api", "description": "checkout-api error rate" },
-        { "id": "E2", "source": "other", "url": "https://wiki.example.com/runbooks/orders-reconcile", "description": "batch schedule" }
+        {
+          "id": "E1",
+          "source": "datadog",
+          "url": "https://app.datadoghq.com/apm/services/checkout-api",
+          "description": "checkout-api error rate"
+        },
+        {
+          "id": "E2",
+          "source": "other",
+          "url": "https://wiki.example.com/runbooks/orders-reconcile",
+          "description": "batch schedule"
+        }
       ],
       "work_items": [
         {
@@ -65,15 +81,41 @@
           "proposed_status": "proposed",
           "problem_statement": "5xx rises every night at 02:00.",
           "hypotheses": [
-            { "id": "H1", "statement": "High CPU on checkout hosts causes the errors", "status": "supported", "verification_ids": [], "evidence_ids": ["E1"], "rationale": "CPU and errors are strongly correlated (r=0.97)" },
-            { "id": "H2", "statement": "The orders-reconcile batch job saturates the shared orders DB", "status": "supported", "verification_ids": ["V1"], "evidence_ids": ["E1", "E2"] }
+            {
+              "id": "H1",
+              "statement": "High CPU on checkout hosts causes the errors",
+              "status": "inconclusive",
+              "evidence_ids": [
+                "E1"
+              ],
+              "rationale": "CPU and errors are strongly correlated (r=0.97), but both rise when the batch job starts; correlation alone does not show which one drives the other"
+            },
+            {
+              "id": "H2",
+              "statement": "The orders-reconcile batch job saturates the shared orders DB",
+              "status": "supported",
+              "evidence_ids": [
+                "E1",
+                "E2"
+              ]
+            }
           ],
           "findings": [
-            { "statement": "Errors increase when the orders-reconcile batch job starts", "verified": true, "verification_ids": ["V1"], "evidence_ids": ["E1", "E2"] },
-            { "statement": "CPU saturation causes the errors", "verified": true, "verification_ids": [], "evidence_ids": ["E1"] }
+            {
+              "statement": "Errors increase when the orders-reconcile batch job starts",
+              "evidence_ids": [
+                "E1",
+                "E2"
+              ]
+            }
           ],
-          "recommendation": { "action": "Move orders-reconcile to a read replica" },
-          "evidence_ids": ["E1", "E2"]
+          "recommendation": {
+            "action": "Move orders-reconcile to a read replica"
+          },
+          "evidence_ids": [
+            "E1",
+            "E2"
+          ]
         }
       ],
       "no_new_findings": false

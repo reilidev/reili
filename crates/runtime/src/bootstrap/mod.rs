@@ -217,12 +217,12 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         slack_file_download_port,
         web_search_port,
         canvas_memory_port,
-        metric_query_port,
     };
     let goal_scheduler = goals::build_goal_scheduler(goals::BuildGoalSchedulerInput {
         config,
         investigation_runner: runners.investigation,
         task_resources: task_resources.clone(),
+        metric_query_port,
         report_port: goals::build_goal_report_port(Arc::clone(&slack_web_api_client)),
         logger: Arc::clone(&logger),
     })?;

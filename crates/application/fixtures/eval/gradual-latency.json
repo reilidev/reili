@@ -21,31 +21,43 @@
       "from": "2026-09-04T00:00:00Z",
       "to": "2026-09-05T00:00:00Z",
       "step_minutes": 15,
-      "segments": [{ "value": 250, "slope_per_hour": 4 }],
+      "segments": [
+        {
+          "value": 250,
+          "slope_per_hour": 4
+        }
+      ],
       "noise": 0.01
     }
   ],
   "ground_truth": {
-    "root_cause_keywords": ["missing index", "customer_id"],
-    "decoy_keywords": ["pr #830", "deploy"],
+    "root_cause_keywords": [
+      "missing index",
+      "customer_id"
+    ],
+    "decoy_keywords": [
+      "pr #830",
+      "deploy"
+    ],
     "expect_findings": true
   },
   "recorded": {
     "llm_tokens": 203000,
-    "verifications": [
-      {
-        "id": "V1",
-        "claim": "p95 latency increased after the 12:00 deploy of PR #830",
-        "query": "p95:trace.http.request.duration{service:checkout-api}",
-        "split_at": "2026-09-04T12:00:00Z",
-        "expected": "increase"
-      }
-    ],
     "report": {
       "summary": "p95 latency climbed from 250ms to ~340ms over 24h.",
       "evidence": [
-        { "id": "E1", "source": "datadog", "url": "https://app.datadoghq.com/apm/services/checkout-api", "description": "p95 latency" },
-        { "id": "E2", "source": "other", "url": "https://db.example.com/dashboards/orders", "description": "orders table growth and query plan" }
+        {
+          "id": "E1",
+          "source": "datadog",
+          "url": "https://app.datadoghq.com/apm/services/checkout-api",
+          "description": "p95 latency"
+        },
+        {
+          "id": "E2",
+          "source": "other",
+          "url": "https://db.example.com/dashboards/orders",
+          "description": "orders table growth and query plan"
+        }
       ],
       "work_items": [
         {
@@ -56,14 +68,40 @@
           "proposed_status": "proposed",
           "problem_statement": "p95 latency is trending up and will breach 400ms within ~2 days.",
           "hypotheses": [
-            { "id": "H1", "statement": "The PR #830 deploy at 12:00 increased latency", "status": "supported", "verification_ids": ["V1"], "evidence_ids": ["E1"] },
-            { "id": "H2", "statement": "A missing index on orders.customer_id makes lookups scale with table size", "status": "proposed", "verification_ids": [], "evidence_ids": ["E2"] }
+            {
+              "id": "H1",
+              "statement": "The PR #830 deploy at 12:00 increased latency",
+              "status": "refuted",
+              "evidence_ids": [
+                "E1"
+              ],
+              "rationale": "latency was already rising at the same rate before 12:00"
+            },
+            {
+              "id": "H2",
+              "statement": "A missing index on orders.customer_id makes lookups scale with table size",
+              "status": "supported",
+              "evidence_ids": [
+                "E2"
+              ]
+            }
           ],
           "findings": [
-            { "statement": "Latency rises steadily, consistent with a missing index as the orders table grows", "verified": false, "verification_ids": [], "evidence_ids": ["E1", "E2"] }
+            {
+              "statement": "Latency rises steadily, consistent with a missing index as the orders table grows",
+              "evidence_ids": [
+                "E1",
+                "E2"
+              ]
+            }
           ],
-          "recommendation": { "action": "Add an index on orders.customer_id" },
-          "evidence_ids": ["E1", "E2"]
+          "recommendation": {
+            "action": "Add an index on orders.customer_id"
+          },
+          "evidence_ids": [
+            "E1",
+            "E2"
+          ]
         }
       ],
       "no_new_findings": false

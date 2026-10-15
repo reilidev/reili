@@ -1,5 +1,5 @@
-//! Structured investigation vocabulary: Observation, Evidence, Hypothesis, Verification, Finding,
-//! and Recommendation are kept distinct so facts, inferences, and unknowns never blur together.
+//! Structured investigation vocabulary: Observation, Evidence, Hypothesis, Finding, and
+//! Recommendation are kept distinct so facts, inferences, and unknowns never blur together.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -55,88 +55,6 @@ pub struct Observation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum VerificationStatus {
-    Passed,
-    Failed,
-    Inconclusive,
-    NotRun,
-}
-
-impl VerificationStatus {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Passed => "passed",
-            Self::Failed => "failed",
-            Self::Inconclusive => "inconclusive",
-            Self::NotRun => "not_run",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerificationMethod {
-    StatisticalShift,
-    ChangePointDetection,
-    AnomalyDetection,
-    Correlation,
-    Recalculation,
-    ErrorBudget,
-    OutcomeComparison,
-}
-
-/// Where the numbers a verification used came from. Only data fetched by Reili itself or a pure
-/// computation counts as independent of the LLM.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum VerificationDataSource {
-    IndependentQuery {
-        query: String,
-        source_url: String,
-        time_range: TimeRange,
-    },
-    Computation,
-    AgentSuppliedData {
-        point_count: usize,
-    },
-}
-
-impl VerificationDataSource {
-    #[must_use]
-    pub fn is_independent(&self) -> bool {
-        matches!(self, Self::IndependentQuery { .. } | Self::Computation)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VerificationRecord {
-    pub id: String,
-    pub method: VerificationMethod,
-    pub claim: String,
-    pub status: VerificationStatus,
-    pub detail: String,
-    pub data_source: VerificationDataSource,
-    pub performed_at: DateTime<Utc>,
-    /// What additional data or method would settle an inconclusive or not-run verification.
-    #[serde(default)]
-    pub needed_to_settle: Option<String>,
-}
-
-impl VerificationRecord {
-    /// A verification that may upgrade or refute a hypothesis.
-    #[must_use]
-    pub fn is_decisive(&self) -> bool {
-        self.data_source.is_independent()
-            && matches!(
-                self.status,
-                VerificationStatus::Passed | VerificationStatus::Failed
-            )
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum HypothesisStatus {
     Proposed,
     Supported,
@@ -162,8 +80,6 @@ pub struct Hypothesis {
     pub statement: String,
     pub status: HypothesisStatus,
     #[serde(default)]
-    pub verification_ids: Vec<String>,
-    #[serde(default)]
     pub evidence_ids: Vec<String>,
     #[serde(default)]
     pub rationale: String,
@@ -172,12 +88,6 @@ pub struct Hypothesis {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
     pub statement: String,
-    /// Set by Reili's verification gate, never by the model: true only when at least one
-    /// independent verification passed for this finding.
-    #[serde(default)]
-    pub verified: bool,
-    #[serde(default)]
-    pub verification_ids: Vec<String>,
     #[serde(default)]
     pub evidence_ids: Vec<String>,
 }
@@ -228,7 +138,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{EvidenceRef, VerificationDataSource};
+    use super::EvidenceRef;
 
     #[test]
     fn tolerates_malformed_evidence_timestamps() {
@@ -239,11 +149,5 @@ mod tests {
 
         assert_eq!(evidence.observed_at, None);
         assert_eq!(evidence.time_range, None);
-    }
-
-    #[test]
-    fn only_reili_fetched_data_is_independent() {
-        assert!(VerificationDataSource::Computation.is_independent());
-        assert!(!VerificationDataSource::AgentSuppliedData { point_count: 3 }.is_independent());
     }
 }

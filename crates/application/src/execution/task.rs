@@ -452,7 +452,6 @@ mod tests {
             slack_file_download_port,
             web_search_port: Some(web_search_port),
             canvas_memory_port: None,
-            metric_query_port: None,
         }
     }
 
@@ -599,7 +598,6 @@ mod tests {
                 slack_file_download_port: create_resources().slack_file_download_port,
                 web_search_port: create_resources().web_search_port,
                 canvas_memory_port,
-                metric_query_port: None,
             },
             task_runner: Arc::new(task_runner) as Arc<dyn TaskRunnerPort>,
             logger: Arc::new(NoopLogger) as Arc<dyn TaskLogger>,

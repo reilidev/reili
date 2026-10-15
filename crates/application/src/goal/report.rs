@@ -17,11 +17,6 @@ const MAX_REPORT_CHARS: usize = 3_500;
 #[must_use]
 pub fn notification_digest(item: &StoredWorkItem) -> String {
     let state = &item.state;
-    let verified = state
-        .findings
-        .iter()
-        .filter(|finding| finding.verified)
-        .count();
     stable_fingerprint(&format!(
         "{}|{}|{}|{}|{}|{}",
         state.status.as_str(),
@@ -36,7 +31,7 @@ pub fn notification_digest(item: &StoredWorkItem) -> String {
             .as_ref()
             .and_then(|outcome| outcome.latest_verdict())
             .map_or("", |verdict| verdict.as_str()),
-        verified,
+        state.findings.len(),
     ))
 }
 
@@ -176,23 +171,15 @@ fn render_report(
     if !updates.is_empty() {
         text.push_str("\n*Updates*\n");
         for item in updates {
-            let verified = item
-                .state
-                .findings
-                .iter()
-                .filter(|finding| finding.verified)
-                .count();
-            let unverified = item.state.findings.len() - verified;
             let _ = writeln!(
                 text,
-                "• <{}|#{}> [{} · {}] {} — {} verified / {} unverified finding(s){}",
+                "• <{}|#{}> [{} · {}] {} — {} finding(s){}",
                 item.issue.url,
                 item.issue.number,
                 item.state.status.as_str(),
                 item.state.severity.as_str(),
                 item.state.title,
-                verified,
-                unverified,
+                item.state.findings.len(),
                 item.state
                     .outcome
                     .as_ref()
@@ -219,7 +206,7 @@ fn render_report(
     }
     let _ = write!(
         text,
-        "\nUnverified items are hypotheses, not conclusions. Details: <{}|goal ledger> · run `{}`",
+        "\nHypotheses are not conclusions. Details: <{}|goal ledger> · run `{}`",
         input.ledger_url, input.run_id
     );
     truncate_chars(
@@ -295,7 +282,7 @@ mod tests {
             !text.contains("<!channel>"),
             "broadcast mentions are neutralized"
         );
-        assert!(text.contains("hypotheses, not conclusions"));
+        assert!(text.contains("Hypotheses are not conclusions"));
     }
 
     #[test]

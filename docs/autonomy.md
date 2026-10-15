@@ -1,12 +1,11 @@
 # Goal-driven autonomy
 
 Reili can pursue long-term goals on its own: it periodically observes the services a goal covers,
-decides what to investigate, verifies its conclusions with deterministic tools, records the work
-as GitHub Issues, reports what matters to Slack, learns reusable facts into the Slack Canvas
-memory, and measures whether implemented recommendations actually helped.
+decides what to investigate, records the work as GitHub Issues, reports what matters to Slack,
+learns reusable facts into the Slack Canvas memory, and measures whether implemented
+recommendations actually helped.
 
-The existing Slack-triggered, single-shot investigations keep working unchanged and now also get
-the deterministic verification tools described below.
+The existing Slack-triggered, single-shot investigations keep working unchanged.
 
 - Goals live in `reili.toml` (the source of truth for *what* to pursue).
 - Work State lives in GitHub Issues of one dedicated management repository (the source of truth
@@ -20,7 +19,7 @@ the deterministic verification tools described below.
 - [The cycle](#the-cycle)
 - [Work State on GitHub Issues](#work-state-on-github-issues)
 - [Durability and what is not guaranteed](#durability-and-what-is-not-guaranteed)
-- [Verification: the outside judge](#verification-the-outside-judge)
+- [Report policy](#report-policy)
 - [Learning and outcome evaluation](#learning-and-outcome-evaluation)
 - [Working with Reili from Slack and GitHub](#working-with-reili-from-slack-and-github)
 - [Safety, permissions, and limits](#safety-permissions-and-limits)
@@ -48,7 +47,7 @@ tick_interval_seconds = 60   # how often goals are evaluated
 max_concurrent_cycles = 1    # cycles running at once across goals
 lease_minutes = 15           # cycle lease; renewed while the agent runs
 feedback_poll_minutes = 10   # how often issues are scanned for `/reili rerun`
-metric_queries = true        # direct Datadog metric queries for verification/outcomes
+metric_queries = true        # direct Datadog metric queries for success criteria/outcomes
 
 [[goals]]
 id = "checkout-reliability"           # 1-39 chars: a-z 0-9 - _
@@ -81,7 +80,7 @@ max_open_work_items = 20
 max_cycle_attempts = 3
 
 [goals.permissions]                   # optional; can only narrow what is already allowed
-save_knowledge = true                 # write gated facts to the Canvas memory
+save_knowledge = true                 # write screened facts to the Canvas memory
 post_reports = true                   # post reports to report_channel
 
 [goals.alert_trigger]                 # optional: bot posts here request an early cycle
@@ -117,36 +116,35 @@ Goals cannot be created or edited from Slack.
 
 ## The cycle
 
-Each cycle runs Observe → Plan → Investigate → Verify → Decide → Report → Learn:
+Each cycle runs Observe → Plan → Investigate → Decide → Report → Learn:
 
 ```mermaid
 flowchart LR
     T["Trigger<br/>schedule · Slack request ·<br/>alert · /reili rerun"] --> L["Acquire lease<br/>(ledger issue)"]
     L --> O["Observe<br/>human edits & commands ·<br/>success criteria · outcomes ·<br/>Canvas knowledge"]
-    O --> I["Plan · Investigate · Verify<br/>(lead agent + spawned sub-agents +<br/>deterministic verification tools)"]
-    I --> G["Verification gate<br/>(deterministic)"]
+    O --> I["Plan · Investigate<br/>(lead agent + spawned sub-agents)"]
+    I --> G["Report policy<br/>(deterministic)"]
     G --> D["Decide<br/>dedupe · limits ·<br/>human precedence"]
     D --> R["Report<br/>Slack (only changes)"]
-    R --> K["Learn<br/>gated facts → Canvas"]
+    R --> K["Learn<br/>screened facts → Canvas"]
     K --> F["Finalize<br/>cycle record"]
 ```
 
 - **Observe** (no LLM): folds human label changes and `/reili` commands into Work State, measures
   success criteria with direct metric queries, evaluates outcome tracking for implemented
   recommendations, and loads Canvas memories.
-- **Plan / Investigate / Verify** (LLM): the lead agent receives a brief (goal, measurements,
-  open and past work items with refuted hypotheses, human feedback, knowledge) and works the
-  goal. It composes sub-agents with `spawn_agent` from the connector catalog plus the
-  verification tools, keeps competing hypotheses, spawns a refuter for the leading one, and ends
-  by calling `submit_investigation_report` with a structured report.
-- **Decide** (no LLM): the verification gate rewrites the report (below), proposals are matched
+- **Plan / Investigate** (LLM): the lead agent receives a brief (goal, measurements, open and
+  past work items with refuted hypotheses, human feedback, knowledge) and works the goal. It
+  composes sub-agents with `spawn_agent` from the connector catalog, keeps competing hypotheses,
+  and ends by calling `submit_investigation_report` with a structured report.
+- **Decide** (no LLM): the report policy screens the report (below), proposals are matched
   to existing work items by stable key, `existing_issue_number`, then fuzzy key/title similarity;
   limits are enforced (critical first); human decisions win (dismissed items are never reopened,
   `monitoring` and `needs-human` are not overridden).
 - **Report** (no LLM): posts to Slack only when something a human should know changed (new item,
   status change, decision needed, outcome verdict, newly breached success criterion), within the
   goal's rate limits. Critical items and decision requests skip the minimum interval.
-- **Learn** (no LLM): persists gated knowledge drafts to the Canvas with the ledger issue as
+- **Learn** (no LLM): persists screened knowledge drafts to the Canvas with the ledger issue as
   source, at most five per cycle, never the same fact twice.
 
 "No new findings" is a normal, quiet outcome: no issue, no Slack post.
@@ -159,7 +157,7 @@ per problem (`reili:work-item`, `reili-goal:<id>`, `reili-status:<status>`,
 
 | Part of the issue | Owner | Purpose |
 |---|---|---|
-| Title, rendered sections | Reili | Human-readable current state: decision needed, problem, hypotheses with status, findings marked verified/unverified, verifications, recommendation, outcome tracking, evidence links, history |
+| Title, rendered sections | Reili | Human-readable current state: decision needed, problem, hypotheses with status, findings with cited evidence, recommendation, outcome tracking, evidence links, history |
 | **Human notes** section | Humans | Free text Reili preserves verbatim and passes to the agent as guidance |
 | Machine state block (`<details>`) | Reili | JSON source of truth with a `revision` number |
 | Labels `reili-status:*`, open/closed | Shared | Humans may change them; Reili adopts the change on the next cycle |
@@ -168,7 +166,8 @@ per problem (`reili:work-item`, `reili-goal:<id>`, `reili-status:<status>`,
 
 Work item statuses: `investigating`, `needs-human`, `proposed`, `monitoring`, `resolved`,
 `dismissed`. `monitoring` and `dismissed` are set only by humans (`/reili implemented`,
-`/reili dismiss`); `resolved` by Reili requires a verified finding or a measured improvement.
+`/reili dismiss`); `resolved` by Reili requires a finding that cites evidence or a measured
+improvement.
 
 Issues store references (URLs, queries, time windows), never raw logs. All text written to
 GitHub, Slack, and Canvas passes through secret redaction (tokens, keys, private keys, bearer
@@ -203,34 +202,16 @@ other can still both pass the revision check. Without `channels:history`, a cras
 Slack post can repeat that report once. Running more than one Reili instance against the same
 repository is supported by the lease, not recommended.
 
-## Verification: the outside judge
+## Report policy
 
-The model's report is a set of claims. Reili decides what is stored as verified:
+The model's report is screened by application code before anything is stored:
 
-1. **Deterministic tools** record every verdict in a run-scoped verification ledger with an id
-   (`V1`, `V2`, …), method, claim, status (`passed`, `failed`, `inconclusive`, `not_run`), detail,
-   data source, and what would settle it.
-   - `verify_metric_change`: fetches the Datadog metric itself and compares windows around a
-     change time with Welch's t-test *and* Mann-Whitney U (both must agree, α = 0.01) plus a
-     materiality threshold, and downgrades to inconclusive when a pre-existing trend explains the
-     shift (the classic "blame the deploy" trap).
-   - `analyze_metric`: summary statistics, trend, change points (binary segmentation with
-     Bonferroni adjustment), robust outliers (modified z-score).
-   - `correlate_metrics`: strongest lagged Pearson/Spearman correlation; always `inconclusive`,
-     because correlation is not causation.
-   - `evaluate_error_budget`: SLO attainment, budget consumption, burn rate from event counts.
-   - `calculate`: exact arithmetic for every reported number; verifies `claimed_result`.
-   - `analyze_series`: statistics on numbers the agent relays from other tools, recorded as
-     non-independent.
-2. **The gate** (application code) rewrites the report:
-   - a hypothesis is `supported`/`refuted` only if it cites a passed/failed verification whose data
-     came from Reili's own query or a pure computation; otherwise it becomes `proposed` or
-     `inconclusive`;
-   - a finding is `verified` only with such a passed verification and no failed one;
-   - unknown verification ids are dropped and audited;
-   - `resolved` needs a verified finding, `needs-human` needs a concrete question, `monitoring` and
-     `dismissed` are human-only;
-   - every adjustment is posted as an audit comment on the ledger.
+- hypothesis statuses (`proposed`, `supported`, `refuted`, `inconclusive`) are the agent's own
+  assessment and are stored as reported, together with their rationale and cited evidence;
+- citations to evidence ids that are not in the report's `evidence` list are dropped;
+- `resolved` needs a finding that cites evidence, `needs-human` needs a concrete question,
+  `monitoring` and `dismissed` are human-only;
+- every adjustment is posted as an audit comment on the ledger.
 
 ## Learning and outcome evaluation
 
@@ -240,8 +221,8 @@ The model's report is a set of claims. Reili decides what is stored as verified:
 - **Human feedback.** Comments from repository owners, members, and collaborators become feedback
   notes that reach the next investigation (marked as applied once delivered). Other authors and
   other bots are ignored.
-- **Knowledge gate.** Facts reach the Canvas only when they cite evidence with a source URL, any
-  cited verification passed, and the text does not read like an instruction. Hypotheses and
+- **Knowledge screening.** Facts reach the Canvas only when they cite evidence with a source URL
+  and the text does not read like an instruction. Hypotheses and
   time-bounded observations are never learned. Reili never edits its own safety policy: limits and
   permissions are code and config, not memory.
 - **Success criteria** are measured every cycle from Datadog and stored in the ledger history;
@@ -286,8 +267,7 @@ goal ledger stops that goal until it is restored from the issue's edit history.
 
 ## Safety, permissions, and limits
 
-- **Read-only operations.** Agents get only read-only connector tools and deterministic analysis
-  tools. Production changes, deploys, rollbacks, and monitor changes remain impossible.
+- **Read-only operations.** Agents get only read-only connector tools. Production changes, deploys, rollbacks, and monitor changes remain impossible.
 - **Write exception, narrowly scoped.** Work State writes (issues, comments, labels) go only to
   the configured repository: the installation token is requested down-scoped to that single
   repository with `issues: write` and `metadata: read`, and the adapter refuses any issue
@@ -301,8 +281,8 @@ goal ledger stops that goal until it is restored from the issue's edit history.
   `<untrusted_data>`; the agent is told never to follow instructions found there. Commands are
   parsed deterministically from trusted members only and cannot change permissions, budgets, or
   scope. Broadcast mentions (`@channel`, `@here`) are neutralized in reports. Instruction-like
-  "facts" are rejected by the knowledge gate.
-- **Audit.** Every status change carries actor and reason; cycle logs, gate adjustments, and
+  "facts" are rejected by knowledge screening.
+- **Audit.** Every status change carries actor and reason; cycle logs, report policy adjustments, and
   outcome assessments are comments; the ledger keeps the last cycles with tokens used.
 
 ## Evaluation
@@ -313,19 +293,23 @@ goal ledger stops that goal until it is restored from the issue's edit history.
 recorded run.
 
 ```bash
-# Deterministic replay (CI): recorded reports + verifications recomputed from fixture data
+# Deterministic replay (CI): recorded reports screened by the report policy and scored
 cargo run -p reili_runtime -- eval --replay --output eval.json --markdown eval.md
 # Compare against a baseline (exit code 2 on threshold failures or regressions)
 cargo run -p reili_runtime -- eval --replay --baseline baseline.json
-# Live: the configured AI backend investigates each fixture offline (only AI secrets needed)
+# Live: the configured AI backend investigates each fixture offline with the fixture's metric
+# data in the brief (only AI secrets needed)
 cargo run -p reili_runtime -- eval --config reili.toml --fixtures crates/application/fixtures/eval \
   --baseline baseline.json --output candidate.json
 ```
 
-Metrics: root-cause accuracy, verified accuracy, false-positive rate (decoys confirmed), false
-alarm rate, miss rate, evidence coverage, gate downgrades, LLM tokens, duration. The bundled cases
+Metrics: root-cause accuracy (the cause appears in a supported hypothesis or a finding),
+false-positive rate (a decoy asserted as a supported hypothesis or a finding), false alarm rate,
+miss rate, evidence coverage, report policy adjustments, LLM tokens, duration. The bundled cases
 cover a deploy regression with a traffic decoy, a correlation trap, a quiet period (correct answer:
-nothing), and a gradual trend wrongly blamed on a deploy. The `Evaluation` workflow runs the replay
+nothing), and a gradual trend that could be wrongly blamed on a deploy. The recorded runs are
+reference answers, so replay checks the scorer and report policy; model quality is measured by
+the live mode. The `Evaluation` workflow runs the replay
 on pull requests and uploads the JSON/Markdown as artifacts; a manual dispatch runs the live mode
 against a stored baseline to compare prompt or model changes.
 
@@ -365,8 +349,9 @@ against a stored baseline to compare prompt or model changes.
 ## Known limitations
 
 - GitHub Issues provide no transactions; see [Durability](#durability-and-what-is-not-guaranteed).
-- Only metrics Reili can query (Datadog) are independently verifiable; findings that rest on logs,
-  code reading, or traces stay labelled unverified unless backed by a metric or a recomputation.
+- Reili does not independently check the agent's conclusions: hypothesis statuses and findings
+  are the agent's assessment, backed only by the evidence it cites. Only success criteria and
+  outcome tracking are measured by Reili itself.
 - Monitoring without an `outcome_metric` cannot be evaluated deterministically; such items stay in
   `monitoring` until a human resolves them.
 - Goal cycles are triggered by schedule, Slack, alert bot posts, and `/reili rerun` comments; there
