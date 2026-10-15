@@ -38,6 +38,9 @@ pub struct AppendSlackCanvasMemoryInput {
     pub channel_name: Option<String>,
     /// Originating thread timestamp, resolved to the note's Source permalink.
     pub source_message_ts: String,
+    /// Explicit source link (e.g. a GitHub Work Item issue); takes precedence over the permalink
+    /// resolved from `source_message_ts`.
+    pub source_url: Option<String>,
     pub fact: String,
     pub evidence: String,
     pub scope: String,

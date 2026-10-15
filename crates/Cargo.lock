@@ -6561,6 +6561,7 @@ dependencies = [
  "chrono",
  "mockall",
  "reili_core",
+ "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
@@ -6573,6 +6574,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "chrono-tz",
  "mockall",
  "serde",
  "serde_json",

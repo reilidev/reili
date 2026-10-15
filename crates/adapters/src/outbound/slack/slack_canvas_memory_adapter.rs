@@ -209,9 +209,13 @@ impl SlackCanvasMemoryPort for SlackCanvasMemoryAdapter {
 
     async fn append_memory(&self, input: AppendSlackCanvasMemoryInput) -> Result<(), PortError> {
         let created_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
-        let source_url = self
-            .resolve_source_permalink(&input.channel_id, &input.source_message_ts)
-            .await;
+        let source_url = match input.source_url.clone() {
+            Some(url) => Some(url),
+            None => {
+                self.resolve_source_permalink(&input.channel_id, &input.source_message_ts)
+                    .await
+            }
+        };
 
         let section = match input.visibility {
             SlackCanvasMemoryVisibility::Channel => {
@@ -1154,6 +1158,7 @@ Source: https://slack/newer
                 channel_id: "C001".to_string(),
                 channel_name: Some("alerts".to_string()),
                 source_message_ts: "1760000000.000001".to_string(),
+                source_url: None,
                 fact: "new fact".to_string(),
                 evidence: "new evidence".to_string(),
                 scope: "new scope".to_string(),
@@ -1220,6 +1225,7 @@ Source: https://slack/newer
                 channel_id: "C001".to_string(),
                 channel_name: Some("alerts".to_string()),
                 source_message_ts: "1760000000.000001".to_string(),
+                source_url: None,
                 fact: "new fact".to_string(),
                 evidence: "new evidence".to_string(),
                 scope: "new scope".to_string(),
@@ -1295,6 +1301,7 @@ Source: https://slack/newer
                 // Production passes no name; the adapter resolves it via conversations.info.
                 channel_name: None,
                 source_message_ts: "1760000000.000001".to_string(),
+                source_url: None,
                 fact: "new fact".to_string(),
                 evidence: "new evidence".to_string(),
                 scope: "new scope".to_string(),
@@ -1364,6 +1371,7 @@ Source: https://slack/newer
                 channel_id: "C001".to_string(),
                 channel_name: None,
                 source_message_ts: "1760000000.000001".to_string(),
+                source_url: None,
                 fact: "new fact".to_string(),
                 evidence: "new evidence".to_string(),
                 scope: "new scope".to_string(),
@@ -1436,6 +1444,7 @@ Source: https://slack/newer
                 channel_id: "C001".to_string(),
                 channel_name: Some("alerts".to_string()),
                 source_message_ts: "1760000000.000001".to_string(),
+                source_url: None,
                 fact: "new".to_string(),
                 evidence: "new".to_string(),
                 scope: "new".to_string(),

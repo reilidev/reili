@@ -1,8 +1,13 @@
+pub mod analysis;
 pub mod error;
+pub mod goal;
+pub mod investigation;
 pub mod knowledge;
 pub mod logger;
 pub mod messaging;
+pub mod metrics;
 pub mod queue;
 pub mod secret;
 pub mod source_code;
 pub mod task;
+pub mod work;

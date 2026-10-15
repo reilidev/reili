@@ -1,4 +1,5 @@
 pub mod execution;
+pub mod goal;
 pub mod ingress;
 pub mod progress;
 

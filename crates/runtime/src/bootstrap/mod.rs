@@ -175,6 +175,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         slack_file_download_port,
         web_search_port,
         canvas_memory_port,
+        metric_query_port: None,
     };
     let enqueue_slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
