@@ -96,6 +96,17 @@ impl AccessTokenSource for GitHubAppTokenProvider {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+struct StaticAccessToken(SecretString);
+
+#[cfg(any(test, feature = "test-support"))]
+#[async_trait]
+impl AccessTokenSource for StaticAccessToken {
+    async fn token(&self) -> Result<SecretString, PortError> {
+        Ok(self.0.clone())
+    }
+}
+
 pub struct GitHubWorkStateRepository {
     http: reqwest::Client,
     token: Arc<dyn AccessTokenSource>,
@@ -269,6 +280,15 @@ impl GitHubWorkStateRepository {
             USER_AGENT,
         )?;
         Self::with_token_source(config, Arc::new(token))
+    }
+
+    /// Test-only constructor using a fixed token (no App JWT signing).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_static_token(
+        config: &GitHubWorkStateConfig,
+        token: SecretString,
+    ) -> Result<Self, PortError> {
+        Self::with_token_source(config, Arc::new(StaticAccessToken(token)))
     }
 
     pub(crate) fn with_token_source(

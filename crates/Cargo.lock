@@ -6586,7 +6586,9 @@ dependencies = [
 name = "reili_runtime"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "axum",
+ "chrono",
  "futures",
  "mockall",
  "reili_adapters",

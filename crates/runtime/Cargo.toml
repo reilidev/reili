@@ -9,6 +9,7 @@ name = "reili"
 path = "src/main.rs"
 
 [dependencies]
+async-trait = "0.1.89"
 mockall.workspace = true
 axum = { version = "0.8.8", default-features = false, features = ["form", "http1", "json", "tokio"] }
 futures = "0.3.32"
@@ -23,3 +24,8 @@ thiserror = "2.0.18"
 tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread", "signal", "time", "sync"] }
 tokio-tungstenite = { version = "0.26.2", features = ["rustls-tls-webpki-roots"] }
 tracing = "0.1.44"
+chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+reili_adapters = { path = "../adapters", features = ["test-support"] }
+reili_core = { path = "../core", features = ["test-support"] }

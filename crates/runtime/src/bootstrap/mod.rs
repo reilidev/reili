@@ -1,3 +1,5 @@
+pub(crate) mod goals;
+
 use std::sync::Arc;
 
 use reili_adapters::inbound::slack::SlackSignatureVerifier;
@@ -20,6 +22,7 @@ use reili_adapters::outbound::auto_response_judge::{
     create_bedrock_mantle_auto_response_judge_port, create_openai_auto_response_judge_port,
     create_vertex_ai_auto_response_judge_port,
 };
+use reili_adapters::outbound::datadog::{DatadogMetricQueryAdapter, DatadogMetricQueryConfig};
 use reili_adapters::outbound::esa::{
     EsaClient, EsaClientConfig, EsaPostGetPort, EsaPostSearchPort,
 };
@@ -35,6 +38,10 @@ use reili_adapters::outbound::slack::{
     SlackWebApiClientConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
+use reili_application::goal::{
+    GoalScheduler, SlackGoalAlertTriggerHandler, SlackGoalCommandHandler,
+    SlackGoalCommandHandlerDeps, SystemClock,
+};
 use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
     HandleSlackInteractionUseCaseDeps, InFlightJobRegistry, SlackAutoResponseGate,
@@ -43,6 +50,7 @@ use reili_application::{
     StartTaskWorkerRunnerUseCaseDeps, TaskExecutionDeps, TaskLogger,
 };
 use reili_core::error::PortError;
+use reili_core::investigation::InvestigationRunnerPort;
 use reili_core::knowledge::WebSearchPort;
 use reili_core::messaging::slack::{
     AutoResponseJudgePort, SlackAuthorizationPolicy, SlackChannelLookupPort,
@@ -54,6 +62,7 @@ use reili_core::messaging::slack::{
     SlackCanvasMemoryPort, SlackMessageSearchPort, SlackReactionPort, SlackThreadHistoryPort,
     SlackThreadReplyPort,
 };
+use reili_core::metrics::MetricQueryPort;
 use reili_core::queue::TaskJobQueuePort;
 use reili_core::task::TaskJob;
 use reili_core::task::{TaskProgressSessionFactoryPort, TaskResources, TaskRunnerPort};
@@ -73,6 +82,8 @@ pub struct RuntimeDeps {
     pub slack_file_shared_message_port: Arc<dyn SlackFileSharedMessagePort>,
     pub slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort>,
     pub worker_runner: StartTaskWorkerRunnerUseCase,
+    /// Present when `[[goals]]` are configured.
+    pub goal_scheduler: Option<Arc<GoalScheduler>>,
     pub logger: Arc<dyn TaskLogger>,
 }
 
@@ -86,11 +97,29 @@ pub enum RuntimeBootstrapError {
     ProviderClientInitialization { provider: String, message: String },
 }
 
-struct CreateTaskRunnerInput<'a> {
-    llm_provider: &'a LlmProviderConfig,
-    connectors: ConnectorSet,
-    language: String,
-    additional_system_prompt: Option<String>,
+/// One provider runner serving both Slack tasks and goal investigations.
+pub(crate) struct AgentRunners {
+    pub(crate) task: Arc<dyn TaskRunnerPort>,
+    pub(crate) investigation: Arc<dyn InvestigationRunnerPort>,
+}
+
+impl AgentRunners {
+    fn from_runner<R>(runner: Arc<R>) -> Self
+    where
+        R: TaskRunnerPort + InvestigationRunnerPort + 'static,
+    {
+        Self {
+            task: Arc::clone(&runner) as Arc<dyn TaskRunnerPort>,
+            investigation: runner,
+        }
+    }
+}
+
+pub(crate) struct CreateTaskRunnerInput<'a> {
+    pub(crate) llm_provider: &'a LlmProviderConfig,
+    pub(crate) connectors: ConnectorSet,
+    pub(crate) language: String,
+    pub(crate) additional_system_prompt: Option<String>,
 }
 
 struct BuildConnectorSetInput {
@@ -161,22 +190,42 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     })?;
     let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
     let in_flight_job_registry = InFlightJobRegistry::new();
-    let task_runner = create_task_runner(CreateTaskRunnerInput {
+    let runners = create_agent_runners(CreateTaskRunnerInput {
         llm_provider: &config.llm.provider,
         connectors,
         language: config.language.clone(),
         additional_system_prompt: config.additional_system_prompt.clone(),
     })
     .await?;
+    let task_runner = runners.task;
     let web_search_port = create_web_search_port(config.web_search_llm.as_ref());
+    let metric_query_port: Option<Arc<dyn MetricQueryPort>> = if config.autonomy.metric_queries {
+        Some(Arc::new(DatadogMetricQueryAdapter::new(
+            DatadogMetricQueryConfig {
+                api_key: config.datadog_api_key.clone(),
+                app_key: config.datadog_app_key.clone(),
+                site: config.datadog_site.clone(),
+                api_base_url: None,
+            },
+        )?))
+    } else {
+        None
+    };
 
     let task_resources = TaskResources {
         slack_message_search_port,
         slack_file_download_port,
         web_search_port,
         canvas_memory_port,
-        metric_query_port: None,
+        metric_query_port,
     };
+    let goal_scheduler = goals::build_goal_scheduler(goals::BuildGoalSchedulerInput {
+        config,
+        investigation_runner: runners.investigation,
+        task_resources: task_resources.clone(),
+        report_port: goals::build_goal_report_port(Arc::clone(&slack_web_api_client)),
+        logger: Arc::clone(&logger),
+    })?;
     let enqueue_slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
@@ -186,11 +235,23 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
             logger: Arc::clone(&logger),
         }),
     );
+    // Goal status and run commands are answered directly; everything else is investigated.
+    let enqueue_slack_message_handler: Arc<dyn SlackMessageHandlerPort> = match &goal_scheduler {
+        Some(scheduler) => Arc::new(SlackGoalCommandHandler::new(SlackGoalCommandHandlerDeps {
+            scheduler: Arc::clone(scheduler),
+            report_port: goals::build_goal_report_port(Arc::clone(&slack_web_api_client)),
+            next: enqueue_slack_message_handler,
+            clock: Arc::new(SystemClock),
+            logger: Arc::clone(&logger),
+        })),
+        None => enqueue_slack_message_handler,
+    };
     let slack_message_handler = build_slack_message_handler(BuildSlackMessageHandlerInput {
         config,
         next_handler: enqueue_slack_message_handler,
         slack_web_api_client: Arc::clone(&slack_web_api_client),
         slack_thread_history_port: Arc::clone(&slack_thread_history_port),
+        goal_scheduler: goal_scheduler.clone(),
         logger: Arc::clone(&logger),
     })
     .await?;
@@ -234,6 +295,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         slack_file_shared_message_port,
         slack_interaction_handler,
         worker_runner,
+        goal_scheduler,
         logger,
     })
 }
@@ -243,6 +305,7 @@ struct BuildSlackMessageHandlerInput<'a> {
     next_handler: Arc<dyn SlackMessageHandlerPort>,
     slack_web_api_client: Arc<SlackWebApiClient>,
     slack_thread_history_port: Arc<dyn SlackThreadHistoryPort>,
+    goal_scheduler: Option<Arc<GoalScheduler>>,
     logger: Arc<dyn TaskLogger>,
 }
 
@@ -279,17 +342,34 @@ async fn build_slack_message_handler(
     let auto_response_gate = build_slack_auto_response_gate(BuildSlackAutoResponseGateInput {
         config: input.config,
         actors: &actors,
-        channel_lookup_port,
+        channel_lookup_port: Arc::clone(&channel_lookup_port),
         user_group_membership_port,
         thread_history_port: input.slack_thread_history_port,
         next_handler: input.next_handler,
-        logger: input.logger,
+        logger: Arc::clone(&input.logger),
     })
     .await?;
 
+    // Alert bot posts in a goal's alert channels request an early goal cycle; the message still
+    // flows on to the auto-response gate unchanged.
+    let watches_alerts = input
+        .config
+        .goals
+        .iter()
+        .any(|goal| goal.enabled && goal.alert_trigger.is_some());
+    let message_path = match (&input.goal_scheduler, watches_alerts) {
+        (Some(scheduler), true) => Some(Arc::new(SlackGoalAlertTriggerHandler::new(
+            Arc::clone(scheduler),
+            channel_lookup_port,
+            auto_response_gate,
+            Arc::clone(&input.logger),
+        )) as Arc<dyn SlackMessageHandlerPort>),
+        _ => auto_response_gate,
+    };
+
     Ok(Arc::new(SlackInboundRouter::new(
         mention_gate,
-        auto_response_gate,
+        message_path,
     )))
 }
 
@@ -478,12 +558,12 @@ fn build_jira_connector(config: JiraConfig) -> JiraConnector {
     })
 }
 
-async fn create_task_runner(
+pub(crate) async fn create_agent_runners(
     input: CreateTaskRunnerInput<'_>,
-) -> Result<Arc<dyn TaskRunnerPort>, RuntimeBootstrapError> {
+) -> Result<AgentRunners, RuntimeBootstrapError> {
     match input.llm_provider {
-        LlmProviderConfig::OpenAi(config) => {
-            Ok(Arc::new(OpenAiTaskRunner::new(OpenAiTaskRunnerInput {
+        LlmProviderConfig::OpenAi(config) => Ok(AgentRunners::from_runner(Arc::new(
+            OpenAiTaskRunner::new(OpenAiTaskRunnerInput {
                 api_key: config.api_key.clone(),
                 model: config.model.clone(),
                 sub_agent_model: config.sub_agent_model.clone(),
@@ -491,17 +571,17 @@ async fn create_task_runner(
                 connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
-            })))
-        }
-        LlmProviderConfig::Anthropic(config) => Ok(Arc::new(AnthropicTaskRunner::new(
-            AnthropicTaskRunnerInput {
+            }),
+        ))),
+        LlmProviderConfig::Anthropic(config) => Ok(AgentRunners::from_runner(Arc::new(
+            AnthropicTaskRunner::new(AnthropicTaskRunnerInput {
                 api_key: config.api_key.clone(),
                 model: config.model.clone(),
                 sub_agent_model: config.sub_agent_model.clone(),
                 connectors: input.connectors,
                 language: input.language,
                 additional_system_prompt: input.additional_system_prompt,
-            },
+            }),
         ))),
         LlmProviderConfig::Bedrock(config) => {
             let runner = BedrockTaskRunner::new(BedrockTaskRunnerInput {
@@ -516,7 +596,7 @@ async fn create_task_runner(
             .await
             .map_err(bedrock_client_initialization_error)?;
 
-            Ok(Arc::new(runner))
+            Ok(AgentRunners::from_runner(Arc::new(runner)))
         }
         LlmProviderConfig::BedrockMantle(config) => {
             let runner = BedrockMantleTaskRunner::new(BedrockMantleTaskRunnerInput {
@@ -533,19 +613,21 @@ async fn create_task_runner(
             .await
             .map_err(bedrock_mantle_client_initialization_error)?;
 
-            Ok(Arc::new(runner))
+            Ok(AgentRunners::from_runner(Arc::new(runner)))
         }
         LlmProviderConfig::VertexAi(config) => {
             let client = build_vertex_ai_client(&config.project_id, &config.location)?;
 
-            Ok(Arc::new(VertexAiTaskRunner::new(VertexAiTaskRunnerInput {
-                client,
-                model_id: config.model_id.clone(),
-                sub_agent_model_id: config.sub_agent_model_id.clone(),
-                connectors: input.connectors,
-                language: input.language,
-                additional_system_prompt: input.additional_system_prompt,
-            })))
+            Ok(AgentRunners::from_runner(Arc::new(
+                VertexAiTaskRunner::new(VertexAiTaskRunnerInput {
+                    client,
+                    model_id: config.model_id.clone(),
+                    sub_agent_model_id: config.sub_agent_model_id.clone(),
+                    connectors: input.connectors,
+                    language: input.language,
+                    additional_system_prompt: input.additional_system_prompt,
+                }),
+            )))
         }
     }
 }

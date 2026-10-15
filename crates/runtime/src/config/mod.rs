@@ -1,5 +1,7 @@
 mod env;
 mod file;
+mod goal_file;
+mod goal_loader;
 mod loader;
 mod model;
 
@@ -9,13 +11,13 @@ pub use reili_core::messaging::slack::SlackChannelNamePattern;
 pub use reili_core::secret::SecretString;
 use thiserror::Error;
 
-pub use loader::{ConfigLoadOptions, load_app_config};
+pub use loader::{ConfigLoadOptions, EvalConfig, load_app_config, load_eval_config};
 pub use model::{
-    AppConfig, BedrockAwsConfig, BedrockLlmConfig, BedrockMantleAuthConfig, BedrockMantleLlmConfig,
-    EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig, LlmConfig, LlmProviderConfig,
-    OpenAiLlmConfig, OtlpTracingConfig, SlackAuthorizationActors, SlackAuthorizationConfig,
-    SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode, VertexAiLlmConfig,
-    WebSearchProviderConfig,
+    AppConfig, AutonomyConfig, BedrockAwsConfig, BedrockLlmConfig, BedrockMantleAuthConfig,
+    BedrockMantleLlmConfig, EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig, LlmConfig,
+    LlmProviderConfig, OpenAiLlmConfig, OtlpTracingConfig, SlackAuthorizationActors,
+    SlackAuthorizationConfig, SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode,
+    VertexAiLlmConfig, WebSearchProviderConfig, WorkStateConfig,
 };
 
 #[derive(Debug, Error)]

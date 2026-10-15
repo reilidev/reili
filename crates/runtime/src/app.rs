@@ -81,6 +81,10 @@ pub async fn run_app_with_options(options: AppStartupOptions) -> Result<(), AppR
 
     let deps = build_runtime_deps(&config).await?;
     deps.worker_runner.start();
+    if let Some(scheduler) = &deps.goal_scheduler {
+        tracing::info!(goals = scheduler.goals().len(), "Goal scheduler started");
+        scheduler.start();
+    }
 
     let serve_result = match &config.slack_connection_mode {
         SlackConnectionMode::Http => run_http_server(&config, &deps).await,
@@ -90,6 +94,10 @@ pub async fn run_app_with_options(options: AppStartupOptions) -> Result<(), AppR
     };
 
     deps.worker_runner.stop();
+    if let Some(scheduler) = &deps.goal_scheduler {
+        // Running cycles are interrupted; their leases expire and they resume after restart.
+        scheduler.stop();
+    }
     tracing_shutdown.shutdown();
     serve_result
 }

@@ -134,6 +134,7 @@ fn gate_proposal(
         let contradicted = records
             .iter()
             .any(|record| record.is_decisive() && record.status == VerificationStatus::Failed);
+        let claimed_verified = finding.verified;
         finding.verified = !contradicted
             && records
                 .iter()
@@ -141,6 +142,11 @@ fn gate_proposal(
         if contradicted {
             notes.push(format!(
                 "{context} \"{}\" is contradicted by a failed verification and is recorded as unverified",
+                truncate(&finding.statement, 80)
+            ));
+        } else if claimed_verified && !finding.verified {
+            notes.push(format!(
+                "{context} \"{}\" was claimed verified without an independent passed verification; recorded as unverified",
                 truncate(&finding.statement, 80)
             ));
         }

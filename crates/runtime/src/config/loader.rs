@@ -7,6 +7,7 @@ use super::file::{
     AiBackendFileConfig, AiFileConfig, FileConfig, SlackAuthorizationFileConfig,
     SlackChannelFileConfig, SlackFileConfig, parse_file_config,
 };
+use super::goal_loader::{resolve_autonomy, resolve_goals, resolve_work_state};
 use super::model::{
     AnthropicLlmConfig, AppConfig, BedrockAwsConfig, BedrockLlmConfig, BedrockMantleAuthConfig,
     BedrockMantleLlmConfig, EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig, LlmConfig,
@@ -53,6 +54,30 @@ impl ConfigFileAccess for StdConfigFileAccess {
     fn read_to_string(&self, path: &Path) -> Result<String, io::Error> {
         std::fs::read_to_string(path)
     }
+}
+
+/// AI-only configuration for `reili eval`: no Slack, Datadog, or GitHub secrets are required
+/// because evaluation runs against fixtures with no live connectors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvalConfig {
+    pub llm: LlmConfig,
+    pub language: String,
+    pub additional_system_prompt: Option<String>,
+}
+
+pub fn load_eval_config(options: &ConfigLoadOptions) -> Result<EvalConfig, ConfigError> {
+    let access = StdConfigFileAccess;
+    let source = select_config_source(options, &access)?;
+    let file_config = load_file_config(&source, &access)?;
+    validate_version(file_config.version)?;
+    let (provider, _, _) = resolve_llm_provider(&file_config.ai, &ProcessEnvironment)?;
+    Ok(EvalConfig {
+        llm: LlmConfig { provider },
+        language: file_config.conversation.language.clone(),
+        additional_system_prompt: optional_trimmed(
+            file_config.conversation.additional_system_prompt.as_deref(),
+        ),
+    })
 }
 
 pub fn load_app_config(options: &ConfigLoadOptions) -> Result<AppConfig, ConfigError> {
@@ -128,6 +153,9 @@ fn resolve_app_config(
     let jira = resolve_jira_config(&file_config, env)?;
     let memory = resolve_memory_config(&file_config);
     let otlp_tracing = resolve_otlp_tracing_config(&file_config);
+    let goals = resolve_goals(&file_config)?;
+    let work_state = resolve_work_state(&file_config, env, &goals)?;
+    let autonomy = resolve_autonomy(&file_config)?;
 
     Ok(AppConfig {
         slack_bot_token,
@@ -164,6 +192,9 @@ fn resolve_app_config(
             file_config.conversation.additional_system_prompt.as_deref(),
         ),
         otlp_tracing,
+        goals,
+        work_state,
+        autonomy,
     })
 }
 
@@ -2669,5 +2700,115 @@ api_key_env = "LLM_OPENAI_API_KEY"
 
 "#,
         )
+    }
+
+    const GOAL_TOML: &str = r#"
+[work_state.github]
+repository = "example-org/reili-work"
+
+[autonomy]
+tick_interval_seconds = 30
+
+[[goals]]
+id = "checkout-reliability"
+objective = """
+Continuously improve checkout service reliability.
+"""
+scope = ["checkout-api"]
+schedule = "0 */6 * * *"
+timezone = "Asia/Tokyo"
+report_channel = "C0123456789"
+enabled = true
+
+[goals.budget]
+max_cycle_minutes = 20
+max_llm_tokens_per_day = 4000000
+
+[goals.alert_trigger]
+channels = ["alerts-checkout"]
+
+[[goals.success_criteria]]
+id = "error-rate"
+description = "5xx rate at most 1%"
+metric_query = "avg:checkout.error_rate{env:production}"
+comparator = "at_most"
+target = 0.01
+"#;
+
+    #[test]
+    fn resolves_goals_work_state_and_autonomy() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml = format!("{}\n{GOAL_TOML}", valid_openai_config());
+
+        let config = resolve_app_config(parse_runtime_config(&toml), &env).expect("resolve");
+
+        assert_eq!(config.goals.len(), 1);
+        let goal = &config.goals[0];
+        assert_eq!(goal.id.as_str(), "checkout-reliability");
+        assert_eq!(goal.schedule.timezone_name(), "Asia/Tokyo");
+        assert_eq!(goal.budget.max_cycle_duration_secs, 1_200);
+        assert_eq!(goal.budget.max_llm_tokens_per_day, 4_000_000);
+        assert_eq!(goal.success_criteria[0].target, 0.01);
+        assert!(goal.alert_trigger.is_some());
+        let work_state = config.work_state.expect("work state");
+        assert_eq!(work_state.repository, "example-org/reili-work");
+        assert_eq!(work_state.app_id, "12345", "defaults to the connector App");
+        assert!(work_state.private_key.expose().contains('\n'));
+        assert_eq!(config.autonomy.tick_interval_seconds, 30);
+    }
+
+    #[test]
+    fn goals_require_a_work_state_repository() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml = format!(
+            "{}\n{}",
+            valid_openai_config(),
+            GOAL_TOML.replace(
+                "[work_state.github]\nrepository = \"example-org/reili-work\"\n",
+                ""
+            )
+        );
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &env).expect_err("missing");
+
+        assert!(error.to_string().contains("work_state.github"));
+    }
+
+    #[test]
+    fn rejects_invalid_goal_definitions() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        for (from, to, needle) in [
+            ("0 */6 * * *", "0 */6 * *", "schedule"),
+            ("Asia/Tokyo", "Asia/Nowhere", "timezone"),
+            ("C0123456789", "alerts", "report_channel"),
+            ("checkout-reliability", "Checkout Reliability", "id"),
+            ("\"at_most\"", "\"less\"", "comparator"),
+        ] {
+            let toml = format!(
+                "{}\n{}",
+                valid_openai_config(),
+                GOAL_TOML.replacen(from, to, 1)
+            );
+
+            let error = resolve_app_config(parse_runtime_config(&toml), &env)
+                .expect_err("invalid goal must fail");
+
+            assert!(error.to_string().contains(needle), "{needle}: {error}");
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_goal_ids() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let duplicate = GOAL_TOML
+            .split("[[goals]]")
+            .nth(1)
+            .map(|goal| format!("[[goals]]{goal}"))
+            .expect("goal block");
+        let toml = format!("{}\n{GOAL_TOML}\n{duplicate}", valid_openai_config());
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &env).expect_err("duplicate");
+
+        assert!(error.to_string().contains("duplicate goal id"));
     }
 }

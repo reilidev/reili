@@ -1,5 +1,6 @@
 use std::fmt;
 
+use reili_core::goal::GoalDefinition;
 use reili_core::messaging::slack::SlackChannelNamePattern;
 use reili_core::secret::SecretString;
 
@@ -217,7 +218,27 @@ pub struct OtlpTracingConfig {
     pub service_name: String,
 }
 
+/// Dedicated GitHub repository for goal Work State, written with a down-scoped App token.
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkStateConfig {
+    pub repository: String,
+    pub app_id: String,
+    pub installation_id: u32,
+    pub private_key: SecretString,
+    pub api_base_url: String,
+    pub web_base_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutonomyConfig {
+    pub tick_interval_seconds: u64,
+    pub max_concurrent_cycles: u32,
+    pub lease_minutes: u32,
+    pub feedback_poll_minutes: u32,
+    pub metric_queries: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct AppConfig {
     pub slack_bot_token: SecretString,
     pub slack_signing_secret: Option<SecretString>,
@@ -248,6 +269,11 @@ pub struct AppConfig {
     pub additional_system_prompt: Option<String>,
     /// OTLP trace export destination; `None` disables tracing entirely.
     pub otlp_tracing: Option<OtlpTracingConfig>,
+    /// Long-term goals; empty disables autonomous goal execution.
+    pub goals: Vec<GoalDefinition>,
+    /// Required when goals are configured.
+    pub work_state: Option<WorkStateConfig>,
+    pub autonomy: AutonomyConfig,
 }
 
 impl AppConfig {
@@ -330,6 +356,15 @@ mod tests {
             language: "English".to_string(),
             additional_system_prompt: None,
             otlp_tracing: None,
+            goals: Vec::new(),
+            work_state: None,
+            autonomy: super::AutonomyConfig {
+                tick_interval_seconds: 60,
+                max_concurrent_cycles: 1,
+                lease_minutes: 15,
+                feedback_poll_minutes: 10,
+                metric_queries: true,
+            },
         };
 
         let debug_output = format!("{config:?}");
@@ -404,6 +439,15 @@ mod tests {
             language: "English".to_string(),
             additional_system_prompt: None,
             otlp_tracing: None,
+            goals: Vec::new(),
+            work_state: None,
+            autonomy: super::AutonomyConfig {
+                tick_interval_seconds: 60,
+                max_concurrent_cycles: 1,
+                lease_minutes: 15,
+                feedback_poll_minutes: 10,
+                metric_queries: true,
+            },
         }
     }
 
