@@ -2702,13 +2702,6 @@ max_llm_tokens_per_day = 4000000
 
 [goals.alert_trigger]
 channels = ["alerts-checkout"]
-
-[[goals.success_criteria]]
-id = "error-rate"
-description = "5xx rate at most 1%"
-metric_query = "avg:checkout.error_rate{env:production}"
-comparator = "at_most"
-target = 0.01
 "#;
 
     #[test]
@@ -2724,7 +2717,6 @@ target = 0.01
         assert_eq!(goal.schedule.timezone_name(), "Asia/Tokyo");
         assert_eq!(goal.budget.max_cycle_duration_secs, 1_200);
         assert_eq!(goal.budget.max_llm_tokens_per_day, 4_000_000);
-        assert_eq!(goal.success_criteria[0].target, 0.01);
         assert!(goal.alert_trigger.is_some());
         let work_state = config.work_state.expect("work state");
         assert_eq!(work_state.repository, "example-org/reili-work");
@@ -2758,7 +2750,6 @@ target = 0.01
             ("Asia/Tokyo", "Asia/Nowhere", "timezone"),
             ("C0123456789", "alerts", "report_channel"),
             ("checkout-reliability", "Checkout Reliability", "id"),
-            ("\"at_most\"", "\"less\"", "comparator"),
         ] {
             let toml = format!(
                 "{}\n{}",

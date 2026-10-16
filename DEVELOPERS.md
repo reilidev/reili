@@ -288,7 +288,7 @@ When adding behavior:
 - Keep tests deterministic and independent from external APIs.
 - Do not add tests that only verify logging.
 - Goal behavior is covered by acceptance scenarios in `crates/application/src/goal/scenarios.rs`
-  (in-memory GitHub/Slack/Canvas/metrics fakes in `goal/testing.rs`) and by an HTTP integration
+  (in-memory GitHub/Slack/Canvas fakes in `goal/testing.rs`) and by an HTTP integration
   test against a fake GitHub API in `crates/runtime/src/bootstrap/goals_integration_tests.rs`.
 
 ## Release Notes

@@ -209,7 +209,6 @@ pub fn new_work_item_state(
         open_questions: Vec::new(),
         human_decision: None,
         next_actions: Vec::new(),
-        outcome: None,
         feedback: Vec::new(),
         history: vec![reili_core::work::StatusChange {
             at: context.now,
@@ -230,8 +229,8 @@ pub fn new_work_item_state(
     Some(state)
 }
 
-/// Merges a screened proposal into `state`. Human-owned states win: `monitoring` stays until outcome
-/// evaluation decides, `needs-human` waits for a human answer, and `dismissed` is never reopened.
+/// Merges a screened proposal into `state`. Human-owned states win: `needs-human` waits for a
+/// human answer, and `dismissed` is never reopened.
 pub fn apply_proposal(
     state: &mut WorkItemState,
     proposal: &WorkItemProposal,
@@ -263,7 +262,6 @@ pub fn apply_proposal(
     let reason = format!("cycle {}", context.run_id);
     match state.status {
         WorkItemStatus::Dismissed => {}
-        WorkItemStatus::Monitoring => {}
         WorkItemStatus::NeedsHuman if target != WorkItemStatus::Resolved => {}
         WorkItemStatus::Resolved => {
             if target.is_open() {
@@ -318,7 +316,6 @@ fn sanitize_recommendation(recommendation: &Recommendation) -> Recommendation {
             MAX_SHORT_TEXT_CHARS,
         ),
         risk: sanitize_for_storage(&recommendation.risk, MAX_SHORT_TEXT_CHARS),
-        outcome_metric: recommendation.outcome_metric.clone(),
     }
 }
 
@@ -558,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn monitoring_and_needs_human_states_are_preserved() {
+    fn needs_human_and_dismissed_states_are_preserved() {
         let report = report(Vec::new());
         let context = ApplyContext {
             run_id: "run-2",
@@ -567,16 +564,18 @@ mod tests {
         };
         let mut screened = proposal(HypothesisStatus::Proposed);
         screened.proposed_status = WorkItemStatus::Investigating;
-        let mut monitoring = sample_work_item("checkout:5xx-after-deploy");
-        monitoring.status = WorkItemStatus::Monitoring;
+        for status in [WorkItemStatus::NeedsHuman, WorkItemStatus::Dismissed] {
+            let mut state = sample_work_item("checkout:5xx-after-deploy");
+            state.status = status;
 
-        apply_proposal(&mut monitoring, &screened, &context);
+            apply_proposal(&mut state, &screened, &context);
 
-        assert_eq!(monitoring.status, WorkItemStatus::Monitoring);
-        assert_eq!(
-            monitoring.key,
-            WorkItemKey::normalize("checkout:5xx-after-deploy").expect("key")
-        );
+            assert_eq!(state.status, status);
+            assert_eq!(
+                state.key,
+                WorkItemKey::normalize("checkout:5xx-after-deploy").expect("key")
+            );
+        }
     }
 
     #[test]

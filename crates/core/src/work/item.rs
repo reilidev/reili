@@ -6,7 +6,7 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::investigation::{EvidenceRef, Finding, Hypothesis, OutcomeMetric, Recommendation};
+use super::investigation::{EvidenceRef, Finding, Hypothesis, Recommendation};
 use crate::goal::GoalId;
 
 pub const WORK_ITEM_SCHEMA_VERSION: u32 = 1;
@@ -17,7 +17,6 @@ const MAX_EVIDENCE: usize = 30;
 const MAX_FEEDBACK: usize = 20;
 const MAX_HISTORY: usize = 30;
 const MAX_LIST_ENTRIES: usize = 10;
-const MAX_OUTCOME_ASSESSMENTS: usize = 10;
 
 /// Stable de-duplication key for a problem within a goal, e.g. `checkout-api:5xx-after-deploy`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -119,17 +118,15 @@ pub enum WorkItemStatus {
     Investigating,
     NeedsHuman,
     Proposed,
-    Monitoring,
     Resolved,
     Dismissed,
 }
 
 impl WorkItemStatus {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5] = [
         Self::Investigating,
         Self::NeedsHuman,
         Self::Proposed,
-        Self::Monitoring,
         Self::Resolved,
         Self::Dismissed,
     ];
@@ -140,7 +137,6 @@ impl WorkItemStatus {
             Self::Investigating => "investigating",
             Self::NeedsHuman => "needs-human",
             Self::Proposed => "proposed",
-            Self::Monitoring => "monitoring",
             Self::Resolved => "resolved",
             Self::Dismissed => "dismissed",
         }
@@ -239,56 +235,6 @@ pub struct HumanDecisionRequest {
     pub requested_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OutcomeVerdict {
-    /// Not enough post-change data yet.
-    Pending,
-    Improved,
-    NoChange,
-    Regressed,
-    Inconclusive,
-}
-
-impl OutcomeVerdict {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Improved => "improved",
-            Self::NoChange => "no_change",
-            Self::Regressed => "regressed",
-            Self::Inconclusive => "inconclusive",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OutcomeAssessment {
-    pub at: DateTime<Utc>,
-    pub verdict: OutcomeVerdict,
-    pub detail: String,
-    /// Where the measured metric can be reproduced.
-    #[serde(default)]
-    pub source_url: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OutcomeTracking {
-    pub metric: OutcomeMetric,
-    pub implemented_at: DateTime<Utc>,
-    pub implemented_note: String,
-    #[serde(default)]
-    pub assessments: Vec<OutcomeAssessment>,
-}
-
-impl OutcomeTracking {
-    #[must_use]
-    pub fn latest_verdict(&self) -> Option<OutcomeVerdict> {
-        self.assessments.last().map(|assessment| assessment.verdict)
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotificationState {
     #[serde(default)]
@@ -323,8 +269,6 @@ pub struct WorkItemState {
     pub human_decision: Option<HumanDecisionRequest>,
     #[serde(default)]
     pub next_actions: Vec<String>,
-    #[serde(default)]
-    pub outcome: Option<OutcomeTracking>,
     #[serde(default)]
     pub feedback: Vec<FeedbackNote>,
     #[serde(default)]
@@ -377,9 +321,6 @@ impl WorkItemState {
         keep_last(&mut self.plan, MAX_LIST_ENTRIES);
         keep_last(&mut self.open_questions, MAX_LIST_ENTRIES);
         keep_last(&mut self.next_actions, MAX_LIST_ENTRIES);
-        if let Some(outcome) = self.outcome.as_mut() {
-            keep_last(&mut outcome.assessments, MAX_OUTCOME_ASSESSMENTS);
-        }
     }
 
     #[must_use]

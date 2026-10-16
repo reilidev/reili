@@ -21,15 +21,13 @@ use reili_core::messaging::slack::{
     AppendSlackCanvasMemoryInput, GoalReportMessage, GoalReportPort, ListSlackCanvasMemoriesInput,
     SlackCanvasMemoryVisibility,
 };
-use reili_core::metrics::MetricQueryPort;
 use reili_core::task::{
     TaskCancellation, TaskProgressEventInput, TaskProgressEventPort, TaskResources,
 };
 use reili_core::work::{
-    ActiveCycle, CriterionObservation, CyclePhase, CycleRecord, CycleResult, CycleTrigger,
-    GoalLedgerState, InvestigationReport, KnowledgeDraft, StoredLedger, StoredWorkItem,
-    WorkItemStatus, WorkStateComment, WorkStateCommentKind, WorkStateError,
-    sanitize::truncate_chars,
+    ActiveCycle, CyclePhase, CycleRecord, CycleResult, CycleTrigger, GoalLedgerState,
+    InvestigationReport, KnowledgeDraft, StoredLedger, StoredWorkItem, WorkStateComment,
+    WorkStateCommentKind, WorkStateError, sanitize::truncate_chars,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -40,7 +38,6 @@ use super::decide::{
     ApplyContext, PlanChangesInput, PlannedChange, apply_proposal, new_work_item_state,
     plan_changes,
 };
-use super::outcome::{apply_outcome_assessment, assess_outcome, evaluate_success_criteria};
 use super::policy::apply_report_policy;
 use super::reconcile::reconcile_human_signals;
 use super::report::{
@@ -59,9 +56,6 @@ pub struct GoalCycleDeps {
     pub investigation_runner: Arc<dyn InvestigationRunnerPort>,
     pub report_port: Arc<dyn GoalReportPort>,
     pub task_resources: TaskResources,
-    /// Direct metric queries for success criteria and outcome tracking. `None` leaves both
-    /// unmeasured.
-    pub metric_query_port: Option<Arc<dyn MetricQueryPort>>,
     pub clock: Arc<dyn Clock>,
     pub logger: Arc<dyn TaskLogger>,
     /// Identifies this process as lease holder.
@@ -115,9 +109,7 @@ enum Acquisition {
 
 struct ObserveOutput {
     items: Vec<StoredWorkItem>,
-    criteria: Vec<(String, CriterionObservation)>,
     memories: Vec<reili_core::messaging::slack::SlackCanvasMemoryRecord>,
-    outcome_changed: Vec<u64>,
     notes: Vec<String>,
 }
 
@@ -230,15 +222,11 @@ impl GoalCycleRunner {
         if !active.phase.investigation_persisted() {
             let observed = self.observe(goal, &ledger).await?;
             let now = self.deps.clock.now();
-            let criteria = observed.criteria.clone();
             let lease = self.deps.lease_duration;
             let (saved, ()) = self
                 .deps
                 .store
                 .mutate_ledger(&ledger, |state| {
-                    for (id, observation) in &criteria {
-                        state.record_criterion(id, observation.clone());
-                    }
                     if let Some(cycle) = state.active_cycle.as_mut() {
                         cycle.phase = CyclePhase::Investigating;
                         cycle.lease_expires_at = now + lease;
@@ -330,51 +318,7 @@ impl GoalCycleRunner {
         let reconciled = reconcile_human_signals(&self.deps.store, items, now).await?;
         let mut notes = reconciled.notes;
 
-        let metric_port = self.deps.metric_query_port.as_ref();
-        let criteria = evaluate_success_criteria(goal, metric_port, now).await;
-
-        let mut items = Vec::with_capacity(reconciled.items.len());
-        let mut outcome_changed = Vec::new();
-        for item in reconciled.items {
-            let Some(tracking) = item
-                .state
-                .outcome
-                .clone()
-                .filter(|_| item.state.status == WorkItemStatus::Monitoring)
-            else {
-                items.push(item);
-                continue;
-            };
-            let assessment = assess_outcome(&tracking, metric_port, now).await;
-            let detail = format!(
-                "Outcome assessment: `{}` — {}",
-                assessment.verdict.as_str(),
-                assessment.detail
-            );
-            let before_status = item.state.status;
-            let saved = self
-                .deps
-                .store
-                .mutate_work_item(&item, |state| {
-                    apply_outcome_assessment(state, assessment.clone(), now);
-                })
-                .await?;
-            self.deps
-                .store
-                .repository()
-                .append_comment(
-                    &saved.issue,
-                    WorkStateComment {
-                        kind: WorkStateCommentKind::Outcome,
-                        body: detail,
-                    },
-                )
-                .await?;
-            if saved.state.status != before_status {
-                outcome_changed.push(saved.issue.number);
-            }
-            items.push(saved);
-        }
+        let items = reconciled.items;
 
         let memories = match &self.deps.task_resources.canvas_memory_port {
             Some(port) => match port
@@ -399,9 +343,7 @@ impl GoalCycleRunner {
 
         Ok(ObserveOutput {
             items,
-            criteria,
             memories,
-            outcome_changed,
             notes,
         })
     }
@@ -437,7 +379,6 @@ impl GoalCycleRunner {
             ledger: &ledger.state,
             ledger_human_notes: &ledger.human_notes,
             items: &observed.items,
-            criteria: &observed.criteria,
             memories: &observed.memories,
             trigger: &active.trigger,
             run_id: &active.run_id,
@@ -590,7 +531,7 @@ impl GoalCycleRunner {
             now,
             report,
         };
-        let mut touched: Vec<u64> = observed.outcome_changed.clone();
+        let mut touched: Vec<u64> = Vec::new();
         let mut skipped = Vec::new();
         for change in &changes {
             match change {
@@ -767,33 +708,12 @@ impl GoalCycleRunner {
                 })
                 .map(|item| item.issue.number),
         );
-        let latest_criteria: Vec<(String, CriterionObservation)> = ledger
-            .state
-            .criteria
-            .iter()
-            .filter_map(|history| {
-                history
-                    .observations
-                    .last()
-                    .filter(|observation| observation.at >= active.started_at)
-                    .map(|observation| (history.criterion_id.clone(), observation.clone()))
-            })
-            .collect();
-        let mut ledger_for_compose = ledger.state.clone();
-        for history in &mut ledger_for_compose.criteria {
-            if let Some(last) = history.observations.last()
-                && last.at >= active.started_at
-            {
-                history.observations.pop();
-            }
-        }
         let decision = compose_report(&ComposeReportInput {
             goal,
-            ledger: &ledger_for_compose,
+            ledger: &ledger.state,
             ledger_url: &ledger.issue.url,
             items: &items,
             candidate_numbers: &candidates,
-            criteria: &latest_criteria,
             summary: &active.summary,
             run_id: &active.run_id,
             now,

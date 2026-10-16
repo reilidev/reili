@@ -70,60 +70,6 @@ pub struct GoalScope {
     pub environments: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MetricAggregation {
-    Avg,
-    Max,
-    Min,
-    Sum,
-    Last,
-    P95,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TargetComparator {
-    AtMost,
-    AtLeast,
-}
-
-impl TargetComparator {
-    #[must_use]
-    pub fn is_met(self, value: f64, target: f64) -> bool {
-        match self {
-            Self::AtMost => value <= target,
-            Self::AtLeast => value >= target,
-        }
-    }
-
-    #[must_use]
-    pub fn symbol(self) -> &'static str {
-        match self {
-            Self::AtMost => "<=",
-            Self::AtLeast => ">=",
-        }
-    }
-}
-
-/// A metric definition evaluated deterministically by Reili (never by the LLM).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CriterionMetric {
-    /// Datadog metric query, e.g. `sum:trace.http.request.errors{service:checkout-api}.as_count()`.
-    pub query: String,
-    pub aggregation: MetricAggregation,
-    pub window_minutes: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SuccessCriterion {
-    pub id: String,
-    pub description: String,
-    pub metric: Option<CriterionMetric>,
-    pub comparator: TargetComparator,
-    pub target: f64,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalBudget {
     pub max_cycle_duration_secs: u64,
@@ -185,12 +131,11 @@ pub struct AlertTrigger {
     pub min_interval_minutes: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalDefinition {
     pub id: GoalId,
     pub objective: String,
     pub scope: GoalScope,
-    pub success_criteria: Vec<SuccessCriterion>,
     pub schedule: GoalSchedule,
     pub report: GoalReportPolicy,
     pub budget: GoalBudget,
@@ -225,22 +170,6 @@ impl GoalDefinition {
                 "max_llm_tokens_per_cycle must not exceed max_llm_tokens_per_day",
             ));
         }
-        let mut seen = std::collections::BTreeSet::new();
-        for criterion in &self.success_criteria {
-            if criterion.id.trim().is_empty() || !seen.insert(criterion.id.clone()) {
-                return Err(invalid("success criteria need unique, non-empty ids"));
-            }
-            if !criterion.target.is_finite() {
-                return Err(invalid("success criterion target must be finite"));
-            }
-            if let Some(metric) = &criterion.metric
-                && (metric.query.trim().is_empty() || metric.window_minutes == 0)
-            {
-                return Err(invalid(
-                    "success criterion metric needs a query and a positive window",
-                ));
-            }
-        }
         Ok(())
     }
 
@@ -267,7 +196,6 @@ pub(crate) mod test_support {
                 repositories: vec!["acme/checkout".to_string()],
                 environments: vec!["production".to_string()],
             },
-            success_criteria: Vec::new(),
             schedule: GoalSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("schedule"),
             report: GoalReportPolicy {
                 channel_id: "C0123".to_string(),
@@ -285,7 +213,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::sample_goal;
-    use super::{GoalDefinitionError, GoalId, TargetComparator};
+    use super::{GoalDefinitionError, GoalId};
 
     #[test]
     fn validates_goal_ids() {
@@ -318,11 +246,5 @@ mod tests {
 
         assert!(goal.validate().is_err());
         assert!(sample_goal("checkout").validate().is_ok());
-    }
-
-    #[test]
-    fn comparator_checks_targets() {
-        assert!(TargetComparator::AtMost.is_met(0.5, 1.0));
-        assert!(!TargetComparator::AtLeast.is_met(0.5, 1.0));
     }
 }

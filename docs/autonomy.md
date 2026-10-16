@@ -2,8 +2,7 @@
 
 Reili can pursue long-term goals on its own: it periodically observes the services a goal covers,
 decides what to investigate, records the work as GitHub Issues, reports what matters to Slack,
-learns reusable facts into the Slack Canvas memory, and measures whether implemented
-recommendations actually helped.
+and learns reusable facts into the Slack Canvas memory.
 
 The existing Slack-triggered, single-shot investigations keep working unchanged.
 
@@ -20,7 +19,7 @@ The existing Slack-triggered, single-shot investigations keep working unchanged.
 - [Work State on GitHub Issues](#work-state-on-github-issues)
 - [Durability and what is not guaranteed](#durability-and-what-is-not-guaranteed)
 - [Report policy](#report-policy)
-- [Learning and outcome evaluation](#learning-and-outcome-evaluation)
+- [Learning](#learning)
 - [Working with Reili from Slack and GitHub](#working-with-reili-from-slack-and-github)
 - [Safety, permissions, and limits](#safety-permissions-and-limits)
 - [Operations runbook](#operations-runbook)
@@ -46,7 +45,6 @@ tick_interval_seconds = 60   # how often goals are evaluated
 max_concurrent_cycles = 1    # cycles running at once across goals
 lease_minutes = 15           # cycle lease; renewed while the agent runs
 feedback_poll_minutes = 10   # how often issues are scanned for `/reili rerun`
-metric_queries = true        # direct Datadog metric queries for success criteria/outcomes
 
 [[goals]]
 id = "checkout-reliability"           # 1-39 chars: a-z 0-9 - _
@@ -86,14 +84,6 @@ post_reports = true                   # post reports to report_channel
 channels = ["alerts-checkout"]
 min_interval_minutes = 60
 
-[[goals.success_criteria]]            # measured by Reili, never by the model
-id = "error-rate"
-description = "5xx rate at most 1%"
-metric_query = "avg:checkout.error_rate{env:production}"
-aggregation = "avg"                   # avg | max | min | sum | last | p95
-window_minutes = 60
-comparator = "at_most"                # at_most | at_least
-target = 0.01
 ```
 
 Startup fails with a clear message for invalid cron expressions, unknown time zones, channel
@@ -107,7 +97,7 @@ config with the ledgers:
 
 | Change in `reili.toml` | Effect on Work State |
 |---|---|
-| Definition changed (objective, scope, criteria, schedule, budget, …) | Ledger records the change and posts a notice; open work items are kept and the next cycle is told to re-check whether each is still in scope. |
+| Definition changed (objective, scope, schedule, budget, …) | Ledger records the change and posts a notice; open work items are kept and the next cycle is told to re-check whether each is still in scope. |
 | `enabled = false` | Ledger lifecycle → `disabled`; no cycles, requests are refused, open work items are left untouched; an interrupted cycle is not resumed. |
 | Goal removed | Ledger lifecycle → `retired` with a notice; work items stay open for humans to close or keep. Re-adding the same `id` resumes the goal. |
 
@@ -120,7 +110,7 @@ Each cycle runs Observe → Plan → Investigate → Decide → Report → Learn
 ```mermaid
 flowchart LR
     T["Trigger<br/>schedule · Slack request ·<br/>alert · /reili rerun"] --> L["Acquire lease<br/>(ledger issue)"]
-    L --> O["Observe<br/>human edits & commands ·<br/>success criteria · outcomes ·<br/>Canvas knowledge"]
+    L --> O["Observe<br/>human edits & commands ·<br/>Canvas knowledge"]
     O --> I["Plan · Investigate<br/>(lead agent + spawned sub-agents)"]
     I --> G["Report policy<br/>(deterministic)"]
     G --> D["Decide<br/>dedupe · limits ·<br/>human precedence"]
@@ -129,19 +119,18 @@ flowchart LR
     K --> F["Finalize<br/>cycle record"]
 ```
 
-- **Observe** (no LLM): folds human label changes and `/reili` commands into Work State, measures
-  success criteria with direct metric queries, evaluates outcome tracking for implemented
-  recommendations, and loads Canvas memories.
-- **Plan / Investigate** (LLM): the lead agent receives a brief (goal, measurements, open and
+- **Observe** (no LLM): folds human label changes and `/reili` commands into Work State and loads
+  Canvas memories.
+- **Plan / Investigate** (LLM): the lead agent receives a brief (goal, open and
   past work items with refuted hypotheses, human feedback, knowledge) and works the goal. It
   composes sub-agents with `spawn_agent` from the connector catalog, keeps competing hypotheses,
   and ends by calling `submit_investigation_report` with a structured report.
 - **Decide** (no LLM): the report policy screens the report (below), proposals are matched
   to existing work items by stable key, `existing_issue_number`, then fuzzy key/title similarity;
   limits are enforced (critical first); human decisions win (dismissed items are never reopened,
-  `monitoring` and `needs-human` are not overridden).
+  `needs-human` is not overridden).
 - **Report** (no LLM): posts to Slack only when something a human should know changed (new item,
-  status change, decision needed, outcome verdict, newly breached success criterion), within the
+  status change, decision needed), within the
   goal's rate limits. Critical items and decision requests skip the minimum interval.
 - **Learn** (no LLM): persists screened knowledge drafts to the Canvas with the ledger issue as
   source, at most five per cycle, never the same fact twice.
@@ -156,17 +145,16 @@ per problem (`reili:work-item`, `reili-goal:<id>`, `reili-status:<status>`,
 
 | Part of the issue | Owner | Purpose |
 |---|---|---|
-| Title, rendered sections | Reili | Human-readable current state: decision needed, problem, hypotheses with status, findings with cited evidence, recommendation, outcome tracking, evidence links, history |
+| Title, rendered sections | Reili | Human-readable current state: decision needed, problem, hypotheses with status, findings with cited evidence, recommendation, evidence links, history |
 | **Human notes** section | Humans | Free text Reili preserves verbatim and passes to the agent as guidance |
 | Machine state block (`<details>`) | Reili | JSON source of truth with a `revision` number |
 | Labels `reili-status:*`, open/closed | Shared | Humans may change them; Reili adopts the change on the next cycle |
 | Other labels | Humans | Preserved on every Reili write |
-| Comments | Both | Reili: cycle logs, decisions, outcome assessments, notices (marked). Humans: feedback and `/reili` commands |
+| Comments | Both | Reili: cycle logs, decisions, notices (marked). Humans: feedback and `/reili` commands |
 
-Work item statuses: `investigating`, `needs-human`, `proposed`, `monitoring`, `resolved`,
-`dismissed`. `monitoring` and `dismissed` are set only by humans (`/reili implemented`,
-`/reili dismiss`); `resolved` by Reili requires a finding that cites evidence or a measured
-improvement.
+Work item statuses: `investigating`, `needs-human`, `proposed`, `resolved`, `dismissed`.
+`dismissed` is set only by humans (`/reili dismiss`); `resolved` by Reili requires a finding that
+cites evidence.
 
 Issues store references (URLs, queries, time windows), never raw logs. All text written to
 GitHub, Slack, and Canvas passes through secret redaction (tokens, keys, private keys, bearer
@@ -209,10 +197,10 @@ The model's report is screened by application code before anything is stored:
   assessment and are stored as reported, together with their rationale and cited evidence;
 - citations to evidence ids that are not in the report's `evidence` list are dropped;
 - `resolved` needs a finding that cites evidence, `needs-human` needs a concrete question,
-  `monitoring` and `dismissed` are human-only;
+  `dismissed` is human-only;
 - every adjustment is posted as an audit comment on the ledger.
 
-## Learning and outcome evaluation
+## Learning
 
 - **Experience reuse.** Briefs include open items, recently closed items with refuted hypotheses
   ("do not re-propose without new evidence"), dismissal reasons, human feedback, human notes, and
@@ -224,14 +212,6 @@ The model's report is screened by application code before anything is stored:
   and the text does not read like an instruction. Hypotheses and
   time-bounded observations are never learned. Reili never edits its own safety policy: limits and
   permissions are code and config, not memory.
-- **Success criteria** are measured every cycle from Datadog and stored in the ledger history;
-  newly breached criteria are reported.
-- **Outcome tracking.** When a human comments `/reili implemented …` on an item whose
-  recommendation has an `outcome_metric`, Reili compares equal windows before and after the
-  implementation time (after at least half the window has elapsed). `improved` (twice, or after
-  the full window) resolves the item; `regressed`, `no_change`, or `inconclusive` after the full
-  window asks humans what to do. Results are reported as observed associations; other changes in
-  the same period are not ruled out.
 
 ## Working with Reili from Slack and GitHub
 
@@ -240,7 +220,7 @@ Slack (mention Reili in any channel where mentions are allowed; normal authoriza
 | Message | Effect |
 |---|---|
 | `@Reili goals` | Lists goals, lifecycle, last cycle, open items, decisions pending |
-| `@Reili goal <id>` | Status, running cycle, budget used today, criteria, open items with links |
+| `@Reili goal <id>` | Status, running cycle, budget used today, open items with links |
 | `@Reili goal run <id>` | Durably queues an extra cycle (refused for disabled goals) |
 | `@Reili goal help` | Command help |
 | anything else | Ordinary investigation, as before |
@@ -252,15 +232,13 @@ GitHub (comment on a work item):
 | Comment | Effect |
 |---|---|
 | `/reili approve [note]` | Recommendation approved → `proposed` |
-| `/reili implemented <what changed>` | → `monitoring`; outcome tracking starts |
 | `/reili dismiss <reason>` | → `dismissed` (closed as not planned); never reopened by Reili |
 | `/reili resolve [note]` | → `resolved` (closed) |
 | `/reili rerun` | Queues a cycle that re-investigates this item |
 | any other text | Feedback for the next investigation |
 
 Changing the `reili-status:*` label or closing/reopening the issue is adopted as the new status
-on the next cycle (closing as "not planned" means dismissed); use `/reili implemented` when you
-want outcome tracking to start. Edit the **Human notes** section freely; do not edit the machine
+on the next cycle (closing as "not planned" means dismissed). Edit the **Human notes** section freely; do not edit the machine
 state block: an unreadable block makes Reili skip that work item (warning log), and an unreadable
 goal ledger stops that goal until it is restored from the issue's edit history.
 
@@ -281,8 +259,8 @@ goal ledger stops that goal until it is restored from the issue's edit history.
   parsed deterministically from trusted members only and cannot change permissions, budgets, or
   scope. Broadcast mentions (`@channel`, `@here`) are neutralized in reports. Instruction-like
   "facts" are rejected by knowledge screening.
-- **Audit.** Every status change carries actor and reason; cycle logs, report policy adjustments, and
-  outcome assessments are comments; the ledger keeps the last cycles with tokens used.
+- **Audit.** Every status change carries actor and reason; cycle logs and report policy
+  adjustments are comments; the ledger keeps the last cycles with tokens used.
 
 ## Operations runbook
 
@@ -292,11 +270,9 @@ goal ledger stops that goal until it is restored from the issue's edit history.
 2. Install the Reili GitHub App on it with repository permissions **Issues: read & write** and
    **Metadata: read** (or use a separate App and set `[work_state.github]` credentials). The
    investigation installation keeps its read-only permissions.
-3. Datadog: the application key also needs `timeseries_query` for direct metric queries
-   ([Datadog query timeseries API](https://docs.datadoghq.com/api/latest/metrics/#query-timeseries-points)).
-4. Slack: invite Reili to each `report_channel`. `chat:write` posts reports; `channels:history`
+3. Slack: invite Reili to each `report_channel`. `chat:write` posts reports; `channels:history`
    enables report idempotency checks.
-5. Add `[[goals]]` and restart. The first cycle of a new goal runs immediately as a baseline.
+4. Add `[[goals]]` and restart. The first cycle of a new goal runs immediately as a baseline.
 
 **Day to day**
 
@@ -321,11 +297,8 @@ goal ledger stops that goal until it is restored from the issue's edit history.
 
 - GitHub Issues provide no transactions; see [Durability](#durability-and-what-is-not-guaranteed).
 - Reili does not independently check the agent's conclusions: hypothesis statuses and findings
-  are the agent's assessment, backed only by the evidence it cites. Only success criteria and
-  outcome tracking are measured by Reili itself.
-- Monitoring without an `outcome_metric` cannot be evaluated deterministically; such items stay in
-  `monitoring` until a human resolves them.
+  are the agent's assessment, backed only by the evidence it cites.
+- Reili does not measure progress toward the goal or the effect of implemented recommendations;
+  humans judge both and close items with `/reili resolve`.
 - Goal cycles are triggered by schedule, Slack, alert bot posts, and `/reili rerun` comments; there
   is no GitHub webhook ingestion.
-- The Datadog Metric Explorer link in evidence is a convenience; the exact query and time window
-  are recorded alongside it.

@@ -235,10 +235,9 @@ pub struct AutonomyConfig {
     pub max_concurrent_cycles: u32,
     pub lease_minutes: u32,
     pub feedback_poll_minutes: u32,
-    pub metric_queries: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppConfig {
     pub slack_bot_token: SecretString,
     pub slack_signing_secret: Option<SecretString>,
@@ -363,7 +362,6 @@ mod tests {
                 max_concurrent_cycles: 1,
                 lease_minutes: 15,
                 feedback_poll_minutes: 10,
-                metric_queries: true,
             },
         };
 
@@ -446,7 +444,6 @@ mod tests {
                 max_concurrent_cycles: 1,
                 lease_minutes: 15,
                 feedback_poll_minutes: 10,
-                metric_queries: true,
             },
         }
     }

@@ -140,7 +140,7 @@ impl SlackMessageHandlerPort for SlackGoalCommandHandler {
 }
 
 fn help_text() -> String {
-    "*Goal commands*\n• `goals` — list configured goals and their state\n• `goal <id>` — status, open work items, and latest outcomes\n• `goal run <id>` — request an extra cycle now\nGoals are defined in `reili.toml`; edit work items on GitHub (`/reili approve|dismiss|implemented|resolve|rerun`).".to_string()
+    "*Goal commands*\n• `goals` — list configured goals and their state\n• `goal <id>` — status and open work items\n• `goal run <id>` — request an extra cycle now\nGoals are defined in `reili.toml`; edit work items on GitHub (`/reili approve|dismiss|resolve|rerun`).".to_string()
 }
 
 pub async fn render_goals_overview(scheduler: &GoalScheduler, now: DateTime<Utc>) -> String {
@@ -258,15 +258,6 @@ pub async fn render_goal_detail(
         goal.budget.max_llm_tokens_per_day,
         ledger.state.reports_posted_on(today)
     );
-    for history in &ledger.state.criteria {
-        if let Some(latest) = history.observations.last() {
-            let _ = writeln!(
-                text,
-                "• criterion `{}`: {}",
-                history.criterion_id, latest.detail
-            );
-        }
-    }
     match repository.list_work_items(&goal.id).await {
         Ok(items) => {
             let mut open: Vec<_> = items
@@ -285,18 +276,12 @@ pub async fn render_goal_detail(
             for item in open.iter().take(MAX_ITEMS_IN_STATUS) {
                 let _ = writeln!(
                     text,
-                    "• <{}|#{}> [{} · {}] {}{}",
+                    "• <{}|#{}> [{} · {}] {}",
                     item.issue.url,
                     item.issue.number,
                     item.state.status.as_str(),
                     item.state.severity.as_str(),
                     item.state.title,
-                    item.state
-                        .outcome
-                        .as_ref()
-                        .and_then(|outcome| outcome.latest_verdict())
-                        .map(|verdict| format!(" — outcome {}", verdict.as_str()))
-                        .unwrap_or_default()
                 );
             }
         }

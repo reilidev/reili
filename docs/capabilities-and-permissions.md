@@ -288,13 +288,6 @@ GitHub Work State (the one write exception):
 - Only comments from repository owners, members, and collaborators are treated as human input
 - No pushes, no pull requests, no repository settings, no other repositories
 
-Datadog direct metric queries (`[autonomy].metric_queries = true`, the default):
-
-- `GET https://api.<DATADOG_SITE>/api/v1/query` with the existing API/application keys
-  ([Query timeseries points](https://docs.datadoghq.com/api/latest/metrics/#query-timeseries-points))
-- Required application key permission: `timeseries_query`
-- Used for goal success criteria and outcome tracking (application code, not agent tools); read-only
-
 Slack:
 
 - `chat:write`: goal reports in each goal's `report_channel` (the bot must be a member) and

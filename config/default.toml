@@ -239,9 +239,6 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
 #max_concurrent_cycles = 1
 #lease_minutes = 15
 #feedback_poll_minutes = 10
-# Direct Datadog metric queries for goal success criteria and outcome tracking.
-# Requires the `timeseries_query` permission on the Datadog application key.
-#metric_queries = true
 
 #[[goals]]
 # Required: 1-39 characters of a-z, 0-9, `-`, `_`. Used in GitHub labels and Slack commands.
@@ -285,13 +282,3 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
 #[goals.alert_trigger]
 #channels = ["alerts-checkout"]
 #min_interval_minutes = 60
-
-# Optional: success criteria measured by Reili from Datadog every cycle.
-#[[goals.success_criteria]]
-#id = "error-rate"
-#description = "5xx rate at most 1%"
-#metric_query = "avg:checkout.error_rate{env:production}"
-#aggregation = "avg"
-#window_minutes = 60
-#comparator = "at_most"
-#target = 0.01

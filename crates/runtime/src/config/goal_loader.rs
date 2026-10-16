@@ -3,15 +3,14 @@
 use std::collections::BTreeSet;
 
 use reili_core::goal::{
-    AlertTrigger, CriterionMetric, GoalBudget, GoalDefinition, GoalId, GoalPermissions,
-    GoalReportPolicy, GoalSchedule, GoalScope, MetricAggregation, SuccessCriterion,
-    TargetComparator,
+    AlertTrigger, GoalBudget, GoalDefinition, GoalId, GoalPermissions, GoalReportPolicy,
+    GoalSchedule, GoalScope,
 };
 
 use super::ConfigError;
 use super::env::{EnvironmentReader, read_required_secret};
 use super::file::FileConfig;
-use super::goal_file::{GoalFileConfig, SuccessCriterionFileConfig};
+use super::goal_file::GoalFileConfig;
 use super::model::{AutonomyConfig, WorkStateConfig};
 use crate::config::SecretString;
 
@@ -44,7 +43,6 @@ pub(super) fn resolve_autonomy(file_config: &FileConfig) -> Result<AutonomyConfi
         max_concurrent_cycles: autonomy.max_concurrent_cycles,
         lease_minutes: autonomy.lease_minutes,
         feedback_poll_minutes: autonomy.feedback_poll_minutes.max(1),
-        metric_queries: autonomy.metric_queries,
     })
 }
 
@@ -171,17 +169,6 @@ fn resolve_goal(goal: &GoalFileConfig, index: usize) -> Result<GoalDefinition, C
             repositories: goal.repositories.clone(),
             environments: goal.environments.clone(),
         },
-        success_criteria: goal
-            .success_criteria
-            .iter()
-            .enumerate()
-            .map(|(criterion_index, criterion)| {
-                resolve_criterion(
-                    criterion,
-                    &field(&format!("success_criteria[{criterion_index}]")),
-                )
-            })
-            .collect::<Result<_, _>>()?,
         schedule,
         report: GoalReportPolicy {
             channel_id: channel.to_string(),
@@ -233,50 +220,4 @@ fn resolve_goal(goal: &GoalFileConfig, index: usize) -> Result<GoalDefinition, C
         .validate()
         .map_err(|error| invalid(format!("goals[{index}]"), error.to_string()))?;
     Ok(definition)
-}
-
-fn resolve_criterion(
-    criterion: &SuccessCriterionFileConfig,
-    field: &str,
-) -> Result<SuccessCriterion, ConfigError> {
-    let aggregation = match criterion.aggregation.trim() {
-        "avg" => MetricAggregation::Avg,
-        "max" => MetricAggregation::Max,
-        "min" => MetricAggregation::Min,
-        "sum" => MetricAggregation::Sum,
-        "last" => MetricAggregation::Last,
-        "p95" => MetricAggregation::P95,
-        other => {
-            return Err(invalid(
-                format!("{field}.aggregation"),
-                format!("unknown aggregation `{other}` (avg, max, min, sum, last, p95)"),
-            ));
-        }
-    };
-    let comparator = match criterion.comparator.trim() {
-        "at_most" | "<=" => TargetComparator::AtMost,
-        "at_least" | ">=" => TargetComparator::AtLeast,
-        other => {
-            return Err(invalid(
-                format!("{field}.comparator"),
-                format!("unknown comparator `{other}` (at_most, at_least)"),
-            ));
-        }
-    };
-    Ok(SuccessCriterion {
-        id: criterion.id.trim().to_string(),
-        description: criterion.description.trim().to_string(),
-        metric: criterion
-            .metric_query
-            .as_deref()
-            .map(str::trim)
-            .filter(|query| !query.is_empty())
-            .map(|query| CriterionMetric {
-                query: query.to_string(),
-                aggregation,
-                window_minutes: criterion.window_minutes,
-            }),
-        comparator,
-        target: criterion.target,
-    })
 }

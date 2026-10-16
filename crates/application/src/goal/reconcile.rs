@@ -4,9 +4,9 @@
 
 use chrono::{DateTime, Utc};
 use reili_core::work::{
-    FeedbackNote, HumanCommand, HumanComment, OutcomeTracking, StatusActor, StoredWorkItem,
-    WorkItemState, WorkItemStatus, WorkStateComment, WorkStateCommentKind, WorkStateError,
-    parse_human_comment, sanitize::sanitize_for_storage,
+    FeedbackNote, HumanCommand, HumanComment, StatusActor, StoredWorkItem, WorkItemState,
+    WorkItemStatus, WorkStateComment, WorkStateCommentKind, WorkStateError, parse_human_comment,
+    sanitize::sanitize_for_storage,
 };
 
 use super::store::WorkStateStore;
@@ -26,7 +26,6 @@ enum HumanOperation {
     StatusDrift(WorkItemStatus),
     Command {
         author: String,
-        at: DateTime<Utc>,
         command: HumanCommand,
     },
     Feedback(FeedbackNote),
@@ -103,7 +102,6 @@ fn collect_comment_operations(
             }
             operations.push(HumanOperation::Command {
                 author: comment.author.clone(),
-                at: comment.created_at,
                 command,
             });
         }
@@ -138,11 +136,9 @@ fn apply_operations(state: &mut WorkItemState, operations: &[HumanOperation], no
                     state.human_decision = None;
                 }
             }
-            HumanOperation::Command {
-                author,
-                at,
-                command,
-            } => apply_command(state, author, *at, command, now),
+            HumanOperation::Command { author, command } => {
+                apply_command(state, author, command, now);
+            }
             HumanOperation::Feedback(note) => {
                 if !state
                     .feedback
@@ -167,7 +163,6 @@ fn apply_operations(state: &mut WorkItemState, operations: &[HumanOperation], no
 fn apply_command(
     state: &mut WorkItemState,
     author: &str,
-    at: DateTime<Utc>,
     command: &HumanCommand,
     now: DateTime<Utc>,
 ) {
@@ -205,27 +200,6 @@ fn apply_command(
             );
             state.human_decision = None;
         }
-        HumanCommand::Implemented { note } => {
-            if let Some(metric) = state
-                .recommendation
-                .as_ref()
-                .and_then(|recommendation| recommendation.outcome_metric.clone())
-            {
-                state.outcome = Some(OutcomeTracking {
-                    metric,
-                    implemented_at: at,
-                    implemented_note: sanitize_for_storage(note, 500),
-                    assessments: Vec::new(),
-                });
-            }
-            state.transition(
-                WorkItemStatus::Monitoring,
-                actor,
-                format!("implemented: {}", with_default(note, "no details")),
-                now,
-            );
-            state.human_decision = None;
-        }
         HumanCommand::Rerun => {
             state.rerun_requested = true;
         }
@@ -252,13 +226,16 @@ fn describe_operations(operations: &[HumanOperation]) -> Vec<String> {
             HumanOperation::Command {
                 author, command, ..
             } => Some(match command {
-                HumanCommand::Dismiss { .. } => format!("Dismissed by @{author}. Reili will not reopen this item on its own."),
+                HumanCommand::Dismiss { .. } => {
+                    format!("Dismissed by @{author}. Reili will not reopen this item on its own.")
+                }
                 HumanCommand::Resolve { .. } => format!("Resolved by @{author}."),
-                HumanCommand::Approve { .. } => format!("Recommendation approved by @{author}; status → `proposed`."),
-                HumanCommand::Implemented { .. } => format!(
-                    "Implementation reported by @{author}; status → `monitoring`. Reili will compare the outcome metric before/after and report the observed effect (association only, not proof of causation)."
+                HumanCommand::Approve { .. } => {
+                    format!("Recommendation approved by @{author}; status → `proposed`.")
+                }
+                HumanCommand::Rerun => format!(
+                    "Re-investigation requested by @{author}; scheduled for the next cycle."
                 ),
-                HumanCommand::Rerun => format!("Re-investigation requested by @{author}; scheduled for the next cycle."),
             }),
             HumanOperation::Feedback(note) => Some(format!(
                 "Feedback from @{} recorded and will be provided to the next investigation.",
@@ -274,11 +251,7 @@ mod tests {
     use std::sync::Arc;
 
     use chrono::Duration;
-    use reili_core::analysis::ExpectedChange;
-    use reili_core::goal::MetricAggregation;
-    use reili_core::work::{
-        OutcomeMetric, Recommendation, WorkItemStatus, test_support::sample_work_item,
-    };
+    use reili_core::work::{Recommendation, WorkItemStatus, test_support::sample_work_item};
 
     use super::reconcile_human_signals;
     use crate::goal::store::WorkStateStore;
@@ -294,12 +267,6 @@ mod tests {
             rationale: String::new(),
             expected_effect: String::new(),
             risk: String::new(),
-            outcome_metric: Some(OutcomeMetric {
-                query: "avg:checkout.5xx_rate{*}".to_string(),
-                expected: ExpectedChange::Decrease,
-                aggregation: MetricAggregation::Avg,
-                window_hours: 24,
-            }),
         });
         let created = store.create_work_item_once(&state).await.expect("create");
         (repository, store, created.issue.number, clock)
@@ -312,7 +279,7 @@ mod tests {
             number,
             "alice",
             true,
-            "The pool exhaustion is the real cause.\n/reili implemented PR #42 raised pool size",
+            "The pool exhaustion is the real cause.\n/reili approve raise the pool in PR #42",
         );
         clock.advance(Duration::minutes(5));
         let items = store
@@ -326,8 +293,7 @@ mod tests {
             .expect("reconcile");
 
         let item = &outcome.items[0].state;
-        assert_eq!(item.status, WorkItemStatus::Monitoring);
-        assert!(item.outcome.is_some());
+        assert_eq!(item.status, WorkItemStatus::Proposed);
         assert_eq!(item.feedback.len(), 1);
         assert_eq!(item.feedback[0].author, "alice");
         assert_eq!(item.last_processed_comment_id, Some(1));
@@ -335,7 +301,7 @@ mod tests {
             repository
                 .comments(number)
                 .iter()
-                .any(|comment| comment.by_reili && comment.body.contains("monitoring"))
+                .any(|comment| comment.by_reili && comment.body.contains("approved"))
         );
     }
 

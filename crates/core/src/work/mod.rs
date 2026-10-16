@@ -13,18 +13,16 @@ pub mod test_support;
 
 pub use feedback::{HumanCommand, HumanComment, ParsedHumanComment, parse_human_comment};
 pub use investigation::{
-    EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus, OutcomeMetric,
-    Recommendation, TimeRange,
+    EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus, Recommendation, TimeRange,
 };
 pub use item::{
-    FeedbackNote, HumanDecisionRequest, NotificationState, OutcomeAssessment, OutcomeTracking,
-    OutcomeVerdict, Severity, StatusActor, StatusChange, WORK_ITEM_SCHEMA_VERSION, WorkItemKey,
-    WorkItemKind, WorkItemState, WorkItemStatus, token_jaccard,
+    FeedbackNote, HumanDecisionRequest, NotificationState, Severity, StatusActor, StatusChange,
+    WORK_ITEM_SCHEMA_VERSION, WorkItemKey, WorkItemKind, WorkItemState, WorkItemStatus,
+    token_jaccard,
 };
 pub use ledger::{
-    ActiveCycle, CriterionHistory, CriterionObservation, CyclePhase, CycleRecord, CycleResult,
-    CycleTrigger, DailyUsage, GOAL_LEDGER_SCHEMA_VERSION, GoalLedgerState, GoalLifecycle,
-    KnowledgeDraft, ReportState,
+    ActiveCycle, CyclePhase, CycleRecord, CycleResult, CycleTrigger, DailyUsage,
+    GOAL_LEDGER_SCHEMA_VERSION, GoalLedgerState, GoalLifecycle, KnowledgeDraft, ReportState,
 };
 pub use report::{InvestigationReport, KnowledgeCandidate, WorkItemProposal};
 #[cfg(any(test, feature = "test-support"))]

@@ -355,7 +355,6 @@ fn goal() -> GoalDefinition {
             repositories: Vec::new(),
             environments: Vec::new(),
         },
-        success_criteria: Vec::new(),
         schedule: GoalSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("schedule"),
         report: GoalReportPolicy {
             channel_id: "C0123456789".to_string(),
@@ -437,7 +436,6 @@ fn process(
             max_concurrent_cycles: 1,
             lease_minutes: 15,
             feedback_poll_minutes: 10,
-            metric_queries: false,
         },
         repository: Arc::new(repository),
         investigation_runner: Arc::clone(runner) as Arc<dyn InvestigationRunnerPort>,
@@ -447,7 +445,6 @@ fn process(
             web_search_port: None,
             canvas_memory_port: None,
         },
-        metric_query_port: None,
         report_port: Arc::clone(slack) as Arc<dyn GoalReportPort>,
         logger: Arc::new(QuietLogger),
         instance_id: instance_id.to_string(),
@@ -519,7 +516,7 @@ async fn goal_cycles_persist_to_github_issues_and_resume_across_processes() {
         let id = state.next_comment_id;
         state.comments.entry(item_number).or_default().push(json!({
             "id": id,
-            "body": "Confirmed, the pool size is too small.\n/reili implemented raised the pool to 30 in PR #43",
+            "body": "Confirmed, the pool size is too small.\n/reili approve raise the pool to 30 in PR #43",
             "user": { "login": "alice", "type": "User" },
             "author_association": "MEMBER",
             "created_at": now(),
@@ -558,7 +555,7 @@ async fn goal_cycles_persist_to_github_issues_and_resume_across_processes() {
     let state = github.lock().expect("lock");
     let item = &state.issues[&item_number];
     let labels = labels_of(item);
-    assert!(labels.contains(&"reili-status:monitoring".to_string()));
+    assert!(labels.contains(&"reili-status:proposed".to_string()));
     assert!(
         labels.contains(&"customer-facing".to_string()),
         "human labels preserved"
@@ -566,7 +563,7 @@ async fn goal_cycles_persist_to_github_issues_and_resume_across_processes() {
     assert!(state.comments[&item_number].iter().any(|comment| {
         comment["body"]
             .as_str()
-            .is_some_and(|body| body.contains("Implementation reported by @alice"))
+            .is_some_and(|body| body.contains("Recommendation approved by @alice"))
     }));
     let ledger_body = state.issues[&ledger_number]["body"]
         .as_str()

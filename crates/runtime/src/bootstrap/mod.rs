@@ -22,7 +22,6 @@ use reili_adapters::outbound::auto_response_judge::{
     create_bedrock_mantle_auto_response_judge_port, create_openai_auto_response_judge_port,
     create_vertex_ai_auto_response_judge_port,
 };
-use reili_adapters::outbound::datadog::{DatadogMetricQueryAdapter, DatadogMetricQueryConfig};
 use reili_adapters::outbound::esa::{
     EsaClient, EsaClientConfig, EsaPostGetPort, EsaPostSearchPort,
 };
@@ -62,7 +61,6 @@ use reili_core::messaging::slack::{
     SlackCanvasMemoryPort, SlackMessageSearchPort, SlackReactionPort, SlackThreadHistoryPort,
     SlackThreadReplyPort,
 };
-use reili_core::metrics::MetricQueryPort;
 use reili_core::queue::TaskJobQueuePort;
 use reili_core::task::TaskJob;
 use reili_core::task::{TaskProgressSessionFactoryPort, TaskResources, TaskRunnerPort};
@@ -199,18 +197,6 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     .await?;
     let task_runner = runners.task;
     let web_search_port = create_web_search_port(config.web_search_llm.as_ref());
-    let metric_query_port: Option<Arc<dyn MetricQueryPort>> = if config.autonomy.metric_queries {
-        Some(Arc::new(DatadogMetricQueryAdapter::new(
-            DatadogMetricQueryConfig {
-                api_key: config.datadog_api_key.clone(),
-                app_key: config.datadog_app_key.clone(),
-                site: config.datadog_site.clone(),
-                api_base_url: None,
-            },
-        )?))
-    } else {
-        None
-    };
 
     let task_resources = TaskResources {
         slack_message_search_port,
@@ -222,7 +208,6 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         config,
         investigation_runner: runners.investigation,
         task_resources: task_resources.clone(),
-        metric_query_port,
         report_port: goals::build_goal_report_port(Arc::clone(&slack_web_api_client)),
         logger: Arc::clone(&logger),
     })?;

@@ -1,5 +1,5 @@
 //! Report: compose a Slack message only for meaningful changes (new items, status changes,
-//! decisions needed, outcome verdicts, criteria breaches), with per-goal rate limits and an
+//! decisions needed), with per-goal rate limits and an
 //! idempotency key so a crash between "posted" and "recorded" does not double-post.
 
 use std::fmt::Write as _;
@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use chrono::{DateTime, Duration, Utc};
 use reili_core::goal::{GoalDefinition, stable_fingerprint};
 use reili_core::work::{
-    CriterionObservation, GoalLedgerState, Severity, StoredWorkItem, WorkItemStatus,
+    GoalLedgerState, Severity, StoredWorkItem, WorkItemStatus,
     sanitize::{neutralize_slack_broadcasts, redact_sensitive, truncate_chars},
 };
 
@@ -18,7 +18,7 @@ const MAX_REPORT_CHARS: usize = 3_500;
 pub fn notification_digest(item: &StoredWorkItem) -> String {
     let state = &item.state;
     stable_fingerprint(&format!(
-        "{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}",
         state.status.as_str(),
         state.severity.as_str(),
         state.title,
@@ -26,11 +26,6 @@ pub fn notification_digest(item: &StoredWorkItem) -> String {
             .human_decision
             .as_ref()
             .map_or("", |decision| decision.question.as_str()),
-        state
-            .outcome
-            .as_ref()
-            .and_then(|outcome| outcome.latest_verdict())
-            .map_or("", |verdict| verdict.as_str()),
         state.findings.len(),
     ))
 }
@@ -53,7 +48,6 @@ pub struct ComposeReportInput<'a> {
     pub ledger_url: &'a str,
     pub items: &'a [StoredWorkItem],
     pub candidate_numbers: &'a [u64],
-    pub criteria: &'a [(String, CriterionObservation)],
     pub summary: &'a str,
     pub run_id: &'a str,
     pub now: DateTime<Utc>,
@@ -70,8 +64,7 @@ pub fn compose_report(input: &ComposeReportInput<'_>) -> ReportDecision {
                 != Some(notification_digest(item).as_str())
         })
         .collect();
-    let breaches = newly_breached_criteria(input);
-    if changed.is_empty() && breaches.is_empty() {
+    if changed.is_empty() {
         return ReportDecision::Nothing;
     }
 
@@ -100,44 +93,12 @@ pub fn compose_report(input: &ComposeReportInput<'_>) -> ReportDecision {
     }
 
     ReportDecision::Post {
-        text: render_report(input, &changed, &breaches),
+        text: render_report(input, &changed),
         item_numbers: changed.iter().map(|item| item.issue.number).collect(),
     }
 }
 
-fn newly_breached_criteria<'a>(
-    input: &'a ComposeReportInput<'_>,
-) -> Vec<&'a (String, CriterionObservation)> {
-    input
-        .criteria
-        .iter()
-        .filter(|(id, observation)| {
-            if observation.met != Some(false) {
-                return false;
-            }
-            let previous = input
-                .ledger
-                .criteria
-                .iter()
-                .find(|history| &history.criterion_id == id)
-                .and_then(|history| {
-                    history
-                        .observations
-                        .iter()
-                        .rev()
-                        .find(|previous| previous.at < observation.at)
-                })
-                .and_then(|previous| previous.met);
-            previous != Some(false)
-        })
-        .collect()
-}
-
-fn render_report(
-    input: &ComposeReportInput<'_>,
-    changed: &[&StoredWorkItem],
-    breaches: &[&(String, CriterionObservation)],
-) -> String {
+fn render_report(input: &ComposeReportInput<'_>, changed: &[&StoredWorkItem]) -> String {
     let mut text = format!(
         "*Goal `{}`* — {}\n",
         input.goal.id,
@@ -162,7 +123,7 @@ fn render_report(
                     .map_or("see issue", |decision| decision.question.as_str())
             );
         }
-        text.push_str("_Reply on the issue with `/reili approve`, `/reili dismiss <reason>`, or `/reili implemented <what changed>`._\n");
+        text.push_str("_Reply on the issue with `/reili approve`, `/reili dismiss <reason>`, or `/reili resolve <note>`._\n");
     }
     let updates: Vec<&&StoredWorkItem> = changed
         .iter()
@@ -173,34 +134,13 @@ fn render_report(
         for item in updates {
             let _ = writeln!(
                 text,
-                "• <{}|#{}> [{} · {}] {} — {} finding(s){}",
+                "• <{}|#{}> [{} · {}] {} — {} finding(s)",
                 item.issue.url,
                 item.issue.number,
                 item.state.status.as_str(),
                 item.state.severity.as_str(),
                 item.state.title,
                 item.state.findings.len(),
-                item.state
-                    .outcome
-                    .as_ref()
-                    .and_then(|outcome| outcome.latest_verdict())
-                    .map(|verdict| format!("; outcome: {}", verdict.as_str()))
-                    .unwrap_or_default()
-            );
-        }
-    }
-    if !breaches.is_empty() {
-        text.push_str("\n*Success criteria not met*\n");
-        for (id, observation) in breaches {
-            let _ = writeln!(
-                text,
-                "• {id}: {}{}",
-                observation.detail,
-                observation
-                    .source_url
-                    .as_deref()
-                    .map(|url| format!(" (<{url}|data>)"))
-                    .unwrap_or_default()
             );
         }
     }
@@ -224,8 +164,8 @@ pub fn report_key(goal_id: &str, run_id: &str) -> String {
 mod tests {
     use chrono::Duration;
     use reili_core::work::{
-        CriterionObservation, GoalLedgerState, HumanDecisionRequest, IssueRef, StoredWorkItem,
-        WorkItemStatus, test_support::sample_work_item,
+        GoalLedgerState, HumanDecisionRequest, IssueRef, StoredWorkItem, WorkItemStatus,
+        test_support::sample_work_item,
     };
 
     use super::{ComposeReportInput, ReportDecision, compose_report, notification_digest};
@@ -267,7 +207,6 @@ mod tests {
             ledger_url: "https://github.com/acme/work/issues/9",
             items: &items,
             candidate_numbers: &[1, 2],
-            criteria: &[],
             summary: "Found a regression.",
             run_id: "run-1",
             now: at("2026-10-15T01:00:00Z"),
@@ -296,7 +235,6 @@ mod tests {
             ledger_url: "",
             items: &[],
             candidate_numbers: &[],
-            criteria: &[],
             summary: "No new findings.",
             run_id: "run-1",
             now: at("2026-10-15T01:00:00Z"),
@@ -318,55 +256,11 @@ mod tests {
             ledger_url: "",
             items: &items,
             candidate_numbers: &[1],
-            criteria: &[],
             summary: "s",
             run_id: "run-1",
             now: at("2026-10-15T00:30:00Z") + Duration::minutes(10),
         });
 
         assert!(matches!(decision, ReportDecision::Deferred { .. }));
-    }
-
-    #[test]
-    fn reports_newly_breached_criteria_once() {
-        let goal = sample_goal("checkout");
-        let mut ledger = GoalLedgerState::new(&goal, at("2026-10-15T00:00:00Z"));
-        let breach = CriterionObservation {
-            at: at("2026-10-15T06:00:00Z"),
-            value: Some(0.05),
-            met: Some(false),
-            detail: "0.05 <= 0.01 (not met)".to_string(),
-            source_url: None,
-        };
-        let input_criteria = vec![("error-rate".to_string(), breach.clone())];
-
-        let first = compose_report(&ComposeReportInput {
-            goal: &goal,
-            ledger: &ledger,
-            ledger_url: "",
-            items: &[],
-            candidate_numbers: &[],
-            criteria: &input_criteria,
-            summary: "s",
-            run_id: "run-1",
-            now: at("2026-10-15T06:00:00Z"),
-        });
-        assert!(matches!(first, ReportDecision::Post { .. }));
-
-        let mut earlier = breach.clone();
-        earlier.at = at("2026-10-15T05:00:00Z");
-        ledger.record_criterion("error-rate", earlier);
-        let second = compose_report(&ComposeReportInput {
-            goal: &goal,
-            ledger: &ledger,
-            ledger_url: "",
-            items: &[],
-            candidate_numbers: &[],
-            criteria: &input_criteria,
-            summary: "s",
-            run_id: "run-2",
-            now: at("2026-10-15T06:00:00Z"),
-        });
-        assert_eq!(second, ReportDecision::Nothing);
     }
 }

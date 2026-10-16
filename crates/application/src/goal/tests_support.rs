@@ -11,7 +11,6 @@ pub(crate) fn sample_goal(id: &str) -> GoalDefinition {
             repositories: vec!["acme/checkout".to_string()],
             environments: vec!["production".to_string()],
         },
-        success_criteria: Vec::new(),
         schedule: GoalSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("schedule"),
         report: GoalReportPolicy {
             channel_id: "C0123456789".to_string(),

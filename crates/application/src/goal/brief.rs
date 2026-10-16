@@ -1,5 +1,4 @@
-//! Builds the investigation brief: trusted sections (goal definition, deterministic measurements,
-//! cycle context) are kept apart from untrusted data (work item text, human comments, Canvas
+//! Builds the investigation brief: trusted sections (goal definition, cycle context) are kept apart from untrusted data (work item text, human comments, Canvas
 //! memories), which the runner frames as data the agent must never take instructions from.
 
 use std::fmt::Write as _;
@@ -9,8 +8,7 @@ use reili_core::goal::GoalDefinition;
 use reili_core::investigation::{BriefSection, BriefTrust, InvestigationBrief};
 use reili_core::messaging::slack::SlackCanvasMemoryRecord;
 use reili_core::work::{
-    CriterionObservation, CycleTrigger, GoalLedgerState, HypothesisStatus, StoredWorkItem,
-    WorkItemStatus, sanitize::truncate_chars,
+    CycleTrigger, GoalLedgerState, HypothesisStatus, StoredWorkItem, sanitize::truncate_chars,
 };
 
 const MAX_SECTION_CHARS: usize = 12_000;
@@ -21,7 +19,6 @@ pub struct BuildBriefInput<'a> {
     pub ledger: &'a GoalLedgerState,
     pub ledger_human_notes: &'a str,
     pub items: &'a [StoredWorkItem],
-    pub criteria: &'a [(String, CriterionObservation)],
     pub memories: &'a [SlackCanvasMemoryRecord],
     pub trigger: &'a CycleTrigger,
     pub run_id: &'a str,
@@ -35,10 +32,6 @@ pub fn build_brief(input: &BuildBriefInput<'_>) -> InvestigationBrief {
     let mut sections = vec![
         trusted("Goal", goal_section(input.goal, input.ledger)),
         trusted("This cycle", cycle_section(input)),
-        trusted(
-            "Success criteria (measured by Reili, not by you)",
-            criteria_section(input),
-        ),
     ];
     let focus = focus_section(input.items);
     if !focus.is_empty() {
@@ -122,24 +115,6 @@ fn goal_section(goal: &GoalDefinition, ledger: &GoalLedgerState) -> String {
         join_or_none(&goal.scope.repositories),
         join_or_none(&goal.scope.environments),
     );
-    if !goal.success_criteria.is_empty() {
-        body.push_str("- success criteria:\n");
-        for criterion in &goal.success_criteria {
-            let _ = writeln!(
-                body,
-                "  - {}: {} (target {} {}){}",
-                criterion.id,
-                criterion.description,
-                criterion.comparator.symbol(),
-                criterion.target,
-                criterion
-                    .metric
-                    .as_ref()
-                    .map(|metric| format!(", metric `{}`", metric.query))
-                    .unwrap_or_default()
-            );
-        }
-    }
     let changed_since_last_cycle = ledger.definition_changes.last().is_some_and(|changed| {
         ledger
             .last_cycle()
@@ -185,47 +160,6 @@ fn cycle_section(input: &BuildBriefInput<'_>) -> String {
     }
     for note in input.notes {
         let _ = writeln!(body, "- note: {note}");
-    }
-    body
-}
-
-fn criteria_section(input: &BuildBriefInput<'_>) -> String {
-    if input.criteria.is_empty() {
-        return "No success criteria are defined; judge progress against the objective."
-            .to_string();
-    }
-    let mut body = String::new();
-    for (id, observation) in input.criteria {
-        let history: Vec<String> = input
-            .ledger
-            .criteria
-            .iter()
-            .find(|history| &history.criterion_id == id)
-            .map(|history| {
-                history
-                    .observations
-                    .iter()
-                    .rev()
-                    .take(5)
-                    .filter_map(|previous| previous.value.map(|value| format!("{value:.6}")))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let _ = writeln!(
-            body,
-            "- {id}: {}{}{}",
-            observation.detail,
-            observation
-                .source_url
-                .as_deref()
-                .map(|url| format!(" — {url}"))
-                .unwrap_or_default(),
-            if history.is_empty() {
-                String::new()
-            } else {
-                format!(" (previous, newest first: {})", history.join(", "))
-            }
-        );
     }
     body
 }
@@ -313,19 +247,6 @@ fn render_item(item: &StoredWorkItem, detailed: bool) -> String {
         }
         if let Some(decision) = &state.human_decision {
             let _ = writeln!(body, "- awaiting human decision: {}", decision.question);
-        }
-        if let Some(outcome) = &state.outcome {
-            let _ = writeln!(
-                body,
-                "- outcome tracking: `{}` expected {:?}; latest verdict {}",
-                outcome.metric.query,
-                outcome.metric.expected,
-                outcome
-                    .latest_verdict()
-                    .map_or("none yet", |verdict| verdict.as_str())
-            );
-        } else if state.status == WorkItemStatus::Monitoring {
-            body.push_str("- monitoring without an outcome metric: assess the effect qualitatively and cite evidence\n");
         }
         for question in &state.open_questions {
             let _ = writeln!(body, "- open question: {}", truncate_chars(question, 200));
@@ -431,7 +352,6 @@ mod tests {
             ledger: &ledger,
             ledger_human_notes: "",
             items: &items,
-            criteria: &[],
             memories: &[],
             trigger: &CycleTrigger::Schedule,
             run_id: "run-1",

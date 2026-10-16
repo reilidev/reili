@@ -107,7 +107,7 @@ pub(super) fn render_work_item_body(
 
 fn render_work_item_sections(state: &WorkItemState, detailed: bool) -> String {
     let mut text = format!(
-        "> Maintained by Reili for goal `{}`. Edit only **Human notes** below. Steer with a comment: `/reili approve`, `/reili dismiss <reason>`, `/reili implemented <what changed>`, `/reili resolve`, `/reili rerun`, or plain feedback.\n\n**Status:** `{}` · **Severity:** {} · **Kind:** {} · **Key:** `{}`\n",
+        "> Maintained by Reili for goal `{}`. Edit only **Human notes** below. Steer with a comment: `/reili approve`, `/reili dismiss <reason>`, `/reili resolve <note>`, `/reili rerun`, or plain feedback.\n\n**Status:** `{}` · **Severity:** {} · **Kind:** {} · **Key:** `{}`\n",
         state.goal_id,
         state.status.as_str(),
         state.severity.as_str(),
@@ -160,35 +160,6 @@ fn render_work_item_sections(state: &WorkItemState, detailed: bool) -> String {
                     let _ = writeln!(text, "- {label}: {value}");
                 }
             }
-        }
-        if let Some(metric) = &recommendation.outcome_metric {
-            let _ = writeln!(
-                text,
-                "- Outcome metric: `{}` (expected {:?}, {}h windows)",
-                metric.query, metric.expected, metric.window_hours
-            );
-        }
-    }
-    if let Some(outcome) = &state.outcome {
-        let _ = write!(
-            text,
-            "\n### Outcome tracking\nImplemented {}: {}\n",
-            outcome.implemented_at.to_rfc3339(),
-            outcome.implemented_note
-        );
-        for assessment in &outcome.assessments {
-            let _ = writeln!(
-                text,
-                "- {} `{}` — {}{}",
-                assessment.at.to_rfc3339(),
-                assessment.verdict.as_str(),
-                cell(&assessment.detail),
-                assessment
-                    .source_url
-                    .as_deref()
-                    .map(|url| format!(" ([data]({url}))"))
-                    .unwrap_or_default()
-            );
         }
     }
     for (title, values) in [
@@ -268,25 +239,6 @@ pub(super) fn render_ledger_body(
             active.attempt,
             active.lease_expires_at.to_rfc3339()
         );
-    }
-    if !state.criteria.is_empty() {
-        text.push_str("\n### Success criteria (measured by Reili)\n| Criterion | Latest | Met | Observed at |\n|---|---|---|---|\n");
-        for history in &state.criteria {
-            if let Some(latest) = history.observations.last() {
-                let _ = writeln!(
-                    text,
-                    "| {} | {} | {} | {} |",
-                    cell(&history.criterion_id),
-                    latest
-                        .value
-                        .map_or_else(|| "n/a".to_string(), |value| format!("{value:.6}")),
-                    latest
-                        .met
-                        .map_or("unknown", |met| if met { "yes" } else { "no" }),
-                    latest.at.to_rfc3339()
-                );
-            }
-        }
     }
     if !state.cycles.is_empty() {
         text.push_str("\n### Recent cycles\n| Run | Trigger | Finished | Result | Tokens |\n|---|---|---|---|---|\n");

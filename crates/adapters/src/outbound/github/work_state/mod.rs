@@ -19,7 +19,6 @@ pub(crate) mod tests_support {
             id: GoalId::new("checkout").expect("id"),
             objective: "Improve checkout reliability".to_string(),
             scope: GoalScope::default(),
-            success_criteria: Vec::new(),
             schedule: GoalSchedule::parse("0 * * * *", "UTC").expect("schedule"),
             report: GoalReportPolicy {
                 channel_id: "C1".to_string(),

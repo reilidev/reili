@@ -65,7 +65,6 @@ pub enum WorkStateError {
 pub enum WorkStateCommentKind {
     CycleLog,
     Decision,
-    Outcome,
     Notice,
 }
 
@@ -75,7 +74,6 @@ impl WorkStateCommentKind {
         match self {
             Self::CycleLog => "cycle-log",
             Self::Decision => "decision",
-            Self::Outcome => "outcome",
             Self::Notice => "notice",
         }
     }

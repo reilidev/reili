@@ -1,5 +1,5 @@
 //! The Goal Ledger is the per-goal durable state (one GitHub Issue per goal): cycle checkpoints and
-//! lease, budget usage, outcome metric history, and report de-duplication state.
+//! lease, budget usage, and report de-duplication state.
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,6 @@ use crate::goal::{GoalDefinition, GoalId};
 
 pub const GOAL_LEDGER_SCHEMA_VERSION: u32 = 1;
 const MAX_CYCLE_RECORDS: usize = 20;
-const MAX_CRITERION_OBSERVATIONS: usize = 30;
 const MAX_REPORT_KEYS: usize = 50;
 const MAX_LEARNED_FINGERPRINTS: usize = 200;
 
@@ -167,25 +166,6 @@ pub struct CycleRecord {
     pub touched_items: Vec<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CriterionObservation {
-    pub at: DateTime<Utc>,
-    #[serde(default)]
-    pub value: Option<f64>,
-    #[serde(default)]
-    pub met: Option<bool>,
-    pub detail: String,
-    #[serde(default)]
-    pub source_url: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CriterionHistory {
-    pub criterion_id: String,
-    #[serde(default)]
-    pub observations: Vec<CriterionObservation>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DailyUsage {
     pub day: NaiveDate,
@@ -220,8 +200,6 @@ pub struct GoalLedgerState {
     #[serde(default)]
     pub cycles: Vec<CycleRecord>,
     #[serde(default)]
-    pub criteria: Vec<CriterionHistory>,
-    #[serde(default)]
     pub usage: Option<DailyUsage>,
     #[serde(default)]
     pub reports: ReportState,
@@ -253,7 +231,6 @@ impl GoalLedgerState {
             requested_trigger: None,
             last_alert_trigger_at: None,
             cycles: Vec::new(),
-            criteria: Vec::new(),
             usage: None,
             reports: ReportState::default(),
             learned_fact_fingerprints: Vec::new(),
@@ -306,26 +283,6 @@ impl GoalLedgerState {
     #[must_use]
     pub fn last_cycle(&self) -> Option<&CycleRecord> {
         self.cycles.last()
-    }
-
-    pub fn record_criterion(&mut self, criterion_id: &str, observation: CriterionObservation) {
-        let history = match self
-            .criteria
-            .iter()
-            .position(|history| history.criterion_id == criterion_id)
-        {
-            Some(index) => &mut self.criteria[index],
-            None => {
-                self.criteria.push(CriterionHistory {
-                    criterion_id: criterion_id.to_string(),
-                    observations: Vec::new(),
-                });
-                let last = self.criteria.len() - 1;
-                &mut self.criteria[last]
-            }
-        };
-        history.observations.push(observation);
-        keep_last(&mut history.observations, MAX_CRITERION_OBSERVATIONS);
     }
 
     pub fn remember_report_key(&mut self, key: String, at: DateTime<Utc>) {

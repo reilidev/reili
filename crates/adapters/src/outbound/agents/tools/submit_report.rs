@@ -91,7 +91,7 @@ impl Tool for SubmitInvestigationReportTool {
     type Output = String;
 
     fn description(&self) -> String {
-        "Submit the final structured report for this goal cycle. Call exactly once, at the end. Reili screens it with its report policy and persists it to GitHub Issues: cited evidence ids must exist in `evidence`, and `monitoring`/`dismissed` are set only by humans.".to_string()
+        "Submit the final structured report for this goal cycle. Call exactly once, at the end. Reili screens it with its report policy and persists it to GitHub Issues: cited evidence ids must exist in `evidence`, and `dismissed` is set only by humans.".to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -182,18 +182,7 @@ fn recommendation_schema() -> Value {
             "action": { "type": "string" },
             "rationale": { "type": "string" },
             "expected_effect": { "type": "string" },
-            "risk": { "type": "string" },
-            "outcome_metric": {
-                "type": "object",
-                "description": "Datadog metric Reili will compare before/after implementation.",
-                "properties": {
-                    "query": { "type": "string" },
-                    "expected": { "type": "string", "enum": ["increase", "decrease"] },
-                    "aggregation": { "type": "string", "enum": ["avg", "max", "min", "sum", "last", "p95"] },
-                    "window_hours": { "type": "integer" }
-                },
-                "required": ["query", "expected"]
-            }
+            "risk": { "type": "string" }
         },
         "required": ["action"]
     })

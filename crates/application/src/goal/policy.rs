@@ -77,10 +77,9 @@ fn screen_proposal(
                 WorkItemStatus::Investigating
             }
         }
-        WorkItemStatus::Monitoring | WorkItemStatus::Dismissed => {
+        WorkItemStatus::Dismissed => {
             notes.push(format!(
-                "{label}: `{}` is set only by humans (`/reili implemented`, `/reili dismiss`); recorded as `investigating`",
-                proposal.proposed_status.as_str()
+                "{label}: `dismissed` is set only by humans (`/reili dismiss`); recorded as `investigating`"
             ));
             WorkItemStatus::Investigating
         }
@@ -201,18 +200,18 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn resolved_requires_evidenced_finding_and_monitoring_is_human_only() {
+    fn resolved_requires_evidenced_finding_and_dismissed_is_human_only() {
         let mut resolved = proposal(HypothesisStatus::Proposed);
         resolved.proposed_status = WorkItemStatus::Resolved;
         resolved.findings[0].evidence_ids = vec!["E404".to_string()];
         let mut evidenced = proposal(HypothesisStatus::Proposed);
         evidenced.key = "evidenced".to_string();
         evidenced.proposed_status = WorkItemStatus::Resolved;
-        let mut monitoring = proposal(HypothesisStatus::Proposed);
-        monitoring.key = "other".to_string();
-        monitoring.proposed_status = WorkItemStatus::Monitoring;
+        let mut dismissed = proposal(HypothesisStatus::Proposed);
+        dismissed.key = "other".to_string();
+        dismissed.proposed_status = WorkItemStatus::Dismissed;
 
-        let outcome = apply_report_policy(&report(vec![resolved, evidenced, monitoring]));
+        let outcome = apply_report_policy(&report(vec![resolved, evidenced, dismissed]));
 
         assert_eq!(
             outcome.proposals[0].proposed_status,

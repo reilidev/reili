@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use reili_core::analysis::SeriesPoint;
 use reili_core::error::{AgentRunFailedError, PortError};
 use reili_core::goal::GoalId;
 use reili_core::investigation::{
@@ -18,7 +17,6 @@ use reili_core::messaging::slack::{
     AppendSlackCanvasMemoryInput, GoalReportMessage, GoalReportPort, ListSlackCanvasMemoriesInput,
     PostedGoalReport, SlackCanvasMemoryPort, SlackCanvasMemoryRecord, SlackCanvasMemoryVisibility,
 };
-use reili_core::metrics::{MetricQueryInput, MetricQueryPort, MetricQueryResult, MetricSeries};
 use reili_core::task::{LlmExecutionMetadata, LlmUsageSnapshot};
 use reili_core::work::{
     GoalLedgerState, HumanComment, InvestigationReport, IssueRef, StoredLedger, StoredWorkItem,
@@ -53,10 +51,6 @@ impl ManualClock {
 
     pub(crate) fn now_for_test(&self) -> DateTime<Utc> {
         Clock::now(self)
-    }
-
-    pub(crate) fn set(&self, value: DateTime<Utc>) {
-        *self.now.lock().expect("lock clock") = value;
     }
 }
 
@@ -776,60 +770,5 @@ impl SlackCanvasMemoryPort for RecordingCanvasMemory {
     async fn append_memory(&self, input: AppendSlackCanvasMemoryInput) -> Result<(), PortError> {
         self.appended.lock().expect("lock").push(input);
         Ok(())
-    }
-}
-
-pub(crate) type MetricFunction = dyn Fn(&str, DateTime<Utc>) -> f64 + Send + Sync;
-
-/// Metric source backed by a function of time, so before/after windows are deterministic.
-#[derive(Clone)]
-pub(crate) struct FunctionMetricSource {
-    pub value_at: Arc<MetricFunction>,
-    pub step: Duration,
-    pub queries: Arc<Mutex<Vec<MetricQueryInput>>>,
-}
-
-impl FunctionMetricSource {
-    pub(crate) fn new(
-        value_at: impl Fn(&str, DateTime<Utc>) -> f64 + Send + Sync + 'static,
-    ) -> Self {
-        Self {
-            value_at: Arc::new(value_at),
-            step: Duration::minutes(30),
-            queries: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-}
-
-#[async_trait]
-impl MetricQueryPort for FunctionMetricSource {
-    async fn query(&self, input: MetricQueryInput) -> Result<MetricQueryResult, PortError> {
-        self.queries.lock().expect("lock").push(input.clone());
-        let mut points = Vec::new();
-        let mut cursor = input.from;
-        let mut index = 0_u32;
-        while cursor < input.to {
-            let wobble = [0.0, 0.01, -0.01, 0.005, -0.005][(index % 5) as usize];
-            let value = (self.value_at)(&input.query, cursor);
-            points.push(SeriesPoint {
-                timestamp_ms: cursor.timestamp_millis(),
-                value: value * (1.0 + wobble),
-            });
-            cursor += self.step;
-            index += 1;
-        }
-        Ok(MetricQueryResult {
-            query: input.query.clone(),
-            from: input.from,
-            to: input.to,
-            series: vec![MetricSeries {
-                label: input.query.clone(),
-                points,
-            }],
-            source_url: format!(
-                "https://app.datadoghq.com/metric/explorer?q={}",
-                input.query
-            ),
-        })
     }
 }

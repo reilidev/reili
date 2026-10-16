@@ -1,11 +1,10 @@
 //! Goal-driven autonomous work: scheduling, the durable Observe → Investigate → Decide → Report →
-//! Learn cycle, human collaboration, and outcome evaluation.
+//! Learn cycle, and human collaboration.
 
 mod brief;
 mod clock;
 mod cycle;
 mod decide;
-mod outcome;
 mod policy;
 mod reconcile;
 mod report;

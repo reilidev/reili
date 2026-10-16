@@ -13,7 +13,6 @@ use reili_application::goal::{
 };
 use reili_core::investigation::InvestigationRunnerPort;
 use reili_core::messaging::slack::GoalReportPort;
-use reili_core::metrics::MetricQueryPort;
 use reili_core::task::TaskResources;
 use reili_core::work::WorkStateRepositoryPort;
 
@@ -25,7 +24,6 @@ pub(crate) struct BuildGoalSchedulerInput<'a> {
     pub(crate) config: &'a AppConfig,
     pub(crate) investigation_runner: Arc<dyn InvestigationRunnerPort>,
     pub(crate) task_resources: TaskResources,
-    pub(crate) metric_query_port: Option<Arc<dyn MetricQueryPort>>,
     pub(crate) report_port: Arc<dyn GoalReportPort>,
     pub(crate) logger: Arc<dyn TaskLogger>,
 }
@@ -59,7 +57,6 @@ pub(crate) fn build_goal_scheduler(
         repository,
         investigation_runner: input.investigation_runner,
         task_resources: input.task_resources,
-        metric_query_port: input.metric_query_port,
         report_port: input.report_port,
         logger: input.logger,
         instance_id: instance_id(),
@@ -72,7 +69,6 @@ pub(crate) struct AssembleGoalSchedulerInput<'a> {
     pub(crate) repository: Arc<dyn WorkStateRepositoryPort>,
     pub(crate) investigation_runner: Arc<dyn InvestigationRunnerPort>,
     pub(crate) task_resources: TaskResources,
-    pub(crate) metric_query_port: Option<Arc<dyn MetricQueryPort>>,
     pub(crate) report_port: Arc<dyn GoalReportPort>,
     pub(crate) logger: Arc<dyn TaskLogger>,
     pub(crate) instance_id: String,
@@ -87,7 +83,6 @@ pub(crate) fn assemble_goal_scheduler(input: AssembleGoalSchedulerInput<'_>) -> 
         investigation_runner: input.investigation_runner,
         report_port: input.report_port,
         task_resources: input.task_resources,
-        metric_query_port: input.metric_query_port,
         clock: clock.clone(),
         logger: Arc::clone(&input.logger),
         instance_id: input.instance_id,

@@ -32,7 +32,6 @@ pub fn sample_work_item(key: &str) -> WorkItemState {
         open_questions: Vec::new(),
         human_decision: None,
         next_actions: Vec::new(),
-        outcome: None,
         feedback: Vec::new(),
         history: Vec::new(),
         last_run_id: None,

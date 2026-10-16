@@ -1,19 +1,15 @@
 //! Acceptance scenarios A–E, exercised end to end through the scheduler and cycle runner with
-//! in-memory stand-ins for GitHub Issues, Slack, Canvas, metrics, and the agent.
+//! in-memory stand-ins for GitHub Issues, Slack, Canvas, and the agent.
 
 use std::sync::Arc;
 
 use chrono::Duration;
-use reili_core::analysis::ExpectedChange;
-use reili_core::goal::{
-    CriterionMetric, GoalDefinition, MetricAggregation, SuccessCriterion, TargetComparator,
-};
+use reili_core::goal::GoalDefinition;
 use reili_core::messaging::slack::{SlackFileDownloadPort, SlackMessageSearchPort};
-use reili_core::metrics::MetricQueryPort;
 use reili_core::task::TaskResources;
 use reili_core::work::{
     CycleResult, CycleTrigger, EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus,
-    InvestigationReport, KnowledgeCandidate, OutcomeMetric, Recommendation, Severity, WorkItemKind,
+    InvestigationReport, KnowledgeCandidate, Recommendation, Severity, WorkItemKind,
     WorkItemProposal, WorkItemStatus,
 };
 
@@ -21,8 +17,8 @@ use super::cycle::{GoalCycleDeps, GoalCycleRunner};
 use super::scheduler::{GoalScheduler, GoalSchedulerDeps, RunRequestError};
 use super::store::WorkStateStore;
 use super::testing::{
-    FakeWorkStateRepository, FunctionMetricSource, ManualClock, NoopLogger, RecordingCanvasMemory,
-    RecordingReportPort, ScriptedInvestigationRunner, ScriptedResponse, at,
+    FakeWorkStateRepository, ManualClock, NoopLogger, RecordingCanvasMemory, RecordingReportPort,
+    ScriptedInvestigationRunner, ScriptedResponse, at,
 };
 use super::tests_support::sample_goal;
 
@@ -34,7 +30,6 @@ struct Harness {
     runner: ScriptedInvestigationRunner,
     reports: RecordingReportPort,
     canvas: RecordingCanvasMemory,
-    metrics: Option<Arc<dyn MetricQueryPort>>,
 }
 
 impl Harness {
@@ -46,13 +41,7 @@ impl Harness {
             runner: ScriptedInvestigationRunner::default(),
             reports: RecordingReportPort::default(),
             canvas: RecordingCanvasMemory::with_memory("checkout-api logs live in index main"),
-            metrics: None,
         }
-    }
-
-    fn with_metrics(mut self, metrics: Arc<dyn MetricQueryPort>) -> Self {
-        self.metrics = Some(metrics);
-        self
     }
 
     /// A fresh "process": new scheduler, runner wiring, and lease holder id, sharing only the
@@ -74,7 +63,6 @@ impl Harness {
             investigation_runner: Arc::new(self.runner.clone()),
             report_port: Arc::new(self.reports.clone()),
             task_resources: resources,
-            metric_query_port: self.metrics.clone(),
             clock: Arc::new(self.clock.clone()),
             logger: Arc::new(NoopLogger),
             instance_id: instance_id.to_string(),
@@ -140,12 +128,6 @@ fn proposal(key: &str, status: WorkItemStatus) -> WorkItemProposal {
             rationale: "pool timeouts dominate errors".to_string(),
             expected_effect: "error rate back below 1%".to_string(),
             risk: "more DB connections".to_string(),
-            outcome_metric: Some(OutcomeMetric {
-                query: "avg:checkout.error_rate{env:production}".to_string(),
-                expected: ExpectedChange::Decrease,
-                aggregation: MetricAggregation::Avg,
-                window_hours: 24,
-            }),
         }),
         open_questions: vec!["is the pool shared with batch jobs?".to_string()],
         human_decision_needed: Some("Approve raising the pool size?".to_string()),
@@ -177,32 +159,12 @@ fn push_report(harness: &Harness, report: InvestigationReport) {
     harness.runner.push_report(report, 1_000);
 }
 
-fn goal_with_criterion() -> GoalDefinition {
-    let mut goal = sample_goal("checkout-reliability");
-    goal.success_criteria = vec![SuccessCriterion {
-        id: "error-rate".to_string(),
-        description: "5xx rate at most 1%".to_string(),
-        metric: Some(CriterionMetric {
-            query: "avg:checkout.error_rate{env:production}".to_string(),
-            aggregation: MetricAggregation::Avg,
-            window_minutes: 60,
-        }),
-        comparator: TargetComparator::AtMost,
-        target: 0.01,
-    }];
-    goal
-}
-
-fn constant_metrics(value: f64) -> Arc<dyn MetricQueryPort> {
-    Arc::new(FunctionMetricSource::new(move |_, _| value))
-}
-
 // A. Continuous reliability goal --------------------------------------------------------------
 
 #[tokio::test]
 async fn scenario_a_continuous_goal_persists_reports_and_continues_from_work_state() {
-    let harness = Harness::new().with_metrics(constant_metrics(0.03));
-    let goal = goal_with_criterion();
+    let harness = Harness::new();
+    let goal = sample_goal("checkout-reliability");
     let scheduler = harness.process(vec![goal.clone()], "instance-a");
     push_report(
         &harness,
@@ -225,12 +187,6 @@ async fn scenario_a_continuous_goal_persists_reports_and_continues_from_work_sta
     assert_eq!(ledger.cycles.len(), 1);
     assert_eq!(ledger.cycles[0].result, CycleResult::Completed);
     assert!(ledger.active_cycle.is_none());
-    let observation = &ledger.criteria[0].observations[0];
-    assert_eq!(
-        observation.met,
-        Some(false),
-        "criterion measured by Reili, not the LLM"
-    );
 
     let items = harness.repository.open_work_items();
     assert_eq!(items.len(), 1);
@@ -249,7 +205,6 @@ async fn scenario_a_continuous_goal_persists_reports_and_continues_from_work_sta
     assert_eq!(posted.len(), 1, "important finding reported to Slack");
     assert_eq!(posted[0].channel_id, "C0123456789");
     assert!(posted[0].text.contains("Needs your decision"));
-    assert!(posted[0].text.contains("Success criteria not met"));
 
     let learned = harness.canvas.appended.lock().expect("lock").clone();
     assert_eq!(learned.len(), 1, "gated knowledge saved to Canvas");
@@ -534,15 +489,11 @@ async fn scenario_c_github_outage_stops_safely_and_retries() {
     assert_eq!(harness.runner.calls(), 1);
 }
 
-// D. Learning & outcome ----------------------------------------------------------------------
+// D. Learning from humans -------------------------------------------------------------------
 
 #[tokio::test]
-async fn scenario_d_feedback_is_used_and_outcome_is_measured() {
-    let implemented_at = at("2026-10-15T07:00:00Z");
-    let metrics = Arc::new(FunctionMetricSource::new(move |_, time| {
-        if time < implemented_at { 0.05 } else { 0.008 }
-    }));
-    let harness = Harness::new().with_metrics(metrics);
+async fn scenario_d_feedback_and_human_decisions_shape_the_next_cycle() {
+    let harness = Harness::new();
     let goal = sample_goal("checkout");
     let scheduler = harness.process(vec![goal.clone()], "instance-1");
     push_report(
@@ -555,17 +506,16 @@ async fn scenario_d_feedback_is_used_and_outcome_is_measured() {
     tick(&scheduler).await;
     let (number, _) = harness.repository.open_work_items().remove(0);
 
-    // A human answers on GitHub: feedback plus "implemented".
-    harness.clock.set(implemented_at);
+    // A human answers on GitHub: feedback plus an approval.
     harness.repository.human_comment(
         number,
         "alice",
         true,
-        "The batch job also holds connections; check its schedule.\n/reili implemented PR #42 raised the pool to 30",
+        "The batch job also holds connections; check its schedule.\n/reili approve raise the pool in PR #42",
     );
 
-    // Next cycle: feedback reaches the agent, the item moves to monitoring.
-    harness.clock.set(at("2026-10-15T09:00:00Z"));
+    // Next cycle: feedback reaches the agent and the human decision is kept.
+    harness.clock.advance(Duration::hours(6));
     tick(&scheduler).await;
     assert!(
         harness
@@ -574,18 +524,18 @@ async fn scenario_d_feedback_is_used_and_outcome_is_measured() {
             .contains("batch job also holds connections")
     );
     let (_, item) = harness.repository.open_work_items().remove(0);
-    assert_eq!(item.status, WorkItemStatus::Monitoring);
-    let tracking = item.outcome.expect("outcome tracking");
-    assert_eq!(tracking.implemented_at, implemented_at);
-    assert_eq!(
-        tracking.latest_verdict(),
-        Some(reili_core::work::OutcomeVerdict::Pending),
-        "not enough post-change data yet"
-    );
+    assert_eq!(item.status, WorkItemStatus::Proposed);
+    assert!(item.human_decision.is_none());
     assert!(item.feedback[0].applied_in_run.is_some());
 
-    // After the observation window, the effect is measured from telemetry.
-    harness.clock.set(at("2026-10-16T09:00:00Z"));
+    // The human closes the item once the change is done.
+    harness.repository.human_comment(
+        number,
+        "alice",
+        true,
+        "/reili resolve PR #42 raised the pool to 30",
+    );
+    harness.clock.advance(Duration::hours(6));
     tick(&scheduler).await;
     let item = harness
         .repository
@@ -594,25 +544,10 @@ async fn scenario_d_feedback_is_used_and_outcome_is_measured() {
         .find(|item| item.key.as_str() == "checkout:5xx-after-deploy")
         .expect("item");
     assert_eq!(item.status, WorkItemStatus::Resolved);
-    assert_eq!(
-        item.outcome
-            .as_ref()
-            .and_then(|outcome| outcome.latest_verdict()),
-        Some(reili_core::work::OutcomeVerdict::Improved)
-    );
     assert!(
-        harness
-            .repository
-            .comments(number)
-            .iter()
-            .any(|comment| comment.body.contains("observed association only"))
-    );
-    assert!(
-        harness
-            .reports
-            .posted()
-            .iter()
-            .any(|post| post.text.contains("outcome: improved"))
+        item.history
+            .last()
+            .is_some_and(|change| change.reason.contains("PR #42"))
     );
 }
 

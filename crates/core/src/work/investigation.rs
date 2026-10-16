@@ -4,9 +4,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::analysis::ExpectedChange;
-use crate::goal::MetricAggregation;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceSource {
@@ -85,26 +82,6 @@ pub struct Finding {
     pub evidence_ids: Vec<String>,
 }
 
-/// Metric watched after a recommendation is implemented to evaluate its real effect.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OutcomeMetric {
-    pub query: String,
-    pub expected: ExpectedChange,
-    #[serde(default = "default_outcome_aggregation")]
-    pub aggregation: MetricAggregation,
-    /// Length of the before/after comparison windows.
-    #[serde(default = "default_outcome_window_hours")]
-    pub window_hours: u32,
-}
-
-fn default_outcome_aggregation() -> MetricAggregation {
-    MetricAggregation::Avg
-}
-
-fn default_outcome_window_hours() -> u32 {
-    72
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Recommendation {
     pub action: String,
@@ -114,8 +91,6 @@ pub struct Recommendation {
     pub expected_effect: String,
     #[serde(default)]
     pub risk: String,
-    #[serde(default)]
-    pub outcome_metric: Option<OutcomeMetric>,
 }
 
 /// Model-produced timestamps are best-effort: an unparseable value becomes `None` instead of

@@ -37,8 +37,6 @@ pub(crate) struct AutonomyFileConfig {
     pub max_concurrent_cycles: u32,
     pub lease_minutes: u32,
     pub feedback_poll_minutes: u32,
-    /// Direct Datadog metric queries for goal success criteria and outcome tracking.
-    pub metric_queries: bool,
 }
 
 impl Default for AutonomyFileConfig {
@@ -48,7 +46,6 @@ impl Default for AutonomyFileConfig {
             max_concurrent_cycles: 1,
             lease_minutes: 15,
             feedback_poll_minutes: 10,
-            metric_queries: true,
         }
     }
 }
@@ -79,8 +76,6 @@ pub(crate) struct GoalFileConfig {
     pub permissions: GoalPermissionsFileConfig,
     #[serde(default)]
     pub alert_trigger: Option<GoalAlertTriggerFileConfig>,
-    #[serde(default)]
-    pub success_criteria: Vec<SuccessCriterionFileConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -138,27 +133,5 @@ pub(crate) struct GoalAlertTriggerFileConfig {
 }
 
 fn default_alert_interval() -> u32 {
-    60
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SuccessCriterionFileConfig {
-    pub id: String,
-    pub description: String,
-    pub metric_query: Option<String>,
-    #[serde(default = "default_aggregation")]
-    pub aggregation: String,
-    #[serde(default = "default_window")]
-    pub window_minutes: u32,
-    pub comparator: String,
-    pub target: f64,
-}
-
-fn default_aggregation() -> String {
-    "avg".to_string()
-}
-
-fn default_window() -> u32 {
     60
 }
