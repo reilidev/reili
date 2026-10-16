@@ -26,8 +26,6 @@ pub enum HumanCommand {
     Resolve { note: String },
     /// Approves the recommendation without claiming it is implemented yet.
     Approve { note: String },
-    /// Requests an investigation of this work item in the next cycle.
-    Rerun,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +57,6 @@ pub fn parse_human_comment(body: &str) -> ParsedHumanComment {
             "dismiss" => Some(HumanCommand::Dismiss { reason: argument }),
             "resolve" | "resolved" => Some(HumanCommand::Resolve { note: argument }),
             "approve" | "approved" => Some(HumanCommand::Approve { note: argument }),
-            "rerun" | "retry" => Some(HumanCommand::Rerun),
             "feedback" => {
                 feedback_lines.push(line);
                 None
@@ -89,7 +86,7 @@ mod tests {
     #[test]
     fn parses_commands_and_feedback() {
         let parsed = parse_human_comment(
-            "Looks like the cache, not the deploy.\n/reili resolve raised pool size in PR #42\n/reili rerun",
+            "Looks like the cache, not the deploy.\n/reili resolve raised pool size in PR #42\n/reili approve",
         );
 
         assert_eq!(
@@ -98,7 +95,9 @@ mod tests {
                 HumanCommand::Resolve {
                     note: "raised pool size in PR #42".to_string()
                 },
-                HumanCommand::Rerun,
+                HumanCommand::Approve {
+                    note: String::new()
+                },
             ]
         );
         assert_eq!(parsed.feedback, "Looks like the cache, not the deploy.");

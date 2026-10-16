@@ -19,7 +19,6 @@ pub(crate) fn sample_goal(id: &str) -> GoalDefinition {
         },
         budget: GoalBudget::default(),
         permissions: GoalPermissions::default(),
-        alert_trigger: None,
         enabled: true,
     }
 }

@@ -16,8 +16,6 @@ const MAX_FEEDBACK_CHARS: usize = 2_000;
 #[derive(Debug, Clone, Default)]
 pub struct ReconcileOutcome {
     pub items: Vec<StoredWorkItem>,
-    /// `(issue_number, author)` for each `/reili rerun` request.
-    pub rerun_requests: Vec<(u64, String)>,
     pub notes: Vec<String>,
 }
 
@@ -95,11 +93,6 @@ fn collect_comment_operations(
         }
         let parsed = parse_human_comment(&comment.body);
         for command in parsed.commands {
-            if command == HumanCommand::Rerun {
-                outcome
-                    .rerun_requests
-                    .push((item.issue.number, comment.author.clone()));
-            }
             operations.push(HumanOperation::Command {
                 author: comment.author.clone(),
                 command,
@@ -200,9 +193,6 @@ fn apply_command(
             );
             state.human_decision = None;
         }
-        HumanCommand::Rerun => {
-            state.rerun_requested = true;
-        }
     }
 }
 
@@ -233,9 +223,6 @@ fn describe_operations(operations: &[HumanOperation]) -> Vec<String> {
                 HumanCommand::Approve { .. } => {
                     format!("Recommendation approved by @{author}; status → `proposed`.")
                 }
-                HumanCommand::Rerun => format!(
-                    "Re-investigation requested by @{author}; scheduled for the next cycle."
-                ),
             }),
             HumanOperation::Feedback(note) => Some(format!(
                 "Feedback from @{} recorded and will be provided to the next investigation.",
@@ -331,10 +318,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn adopts_human_label_changes_and_collects_reruns() {
+    async fn adopts_human_label_changes() {
         let (repository, store, number, clock) = setup().await;
         repository.human_set_status(number, WorkItemStatus::NeedsHuman);
-        repository.human_comment(number, "bob", true, "/reili rerun");
         let items = store
             .repository()
             .list_work_items(&reili_core::goal::GoalId::new("checkout").expect("id"))
@@ -347,8 +333,6 @@ mod tests {
 
         let item = &outcome.items[0].state;
         assert_eq!(item.status, WorkItemStatus::NeedsHuman);
-        assert!(item.rerun_requested);
-        assert_eq!(outcome.rerun_requests, vec![(number, "bob".to_string())]);
     }
 
     #[tokio::test]

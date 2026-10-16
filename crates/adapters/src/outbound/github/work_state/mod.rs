@@ -27,7 +27,6 @@ pub(crate) mod tests_support {
             },
             budget: GoalBudget::default(),
             permissions: GoalPermissions::default(),
-            alert_trigger: None,
             enabled: true,
         }
     }

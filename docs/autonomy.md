@@ -44,7 +44,6 @@ repository = "acme/reili-work"
 tick_interval_seconds = 60   # how often goals are evaluated
 max_concurrent_cycles = 1    # cycles running at once across goals
 lease_minutes = 15           # cycle lease; renewed while the agent runs
-feedback_poll_minutes = 10   # how often issues are scanned for `/reili rerun`
 
 [[goals]]
 id = "checkout-reliability"           # 1-39 chars: a-z 0-9 - _
@@ -80,10 +79,6 @@ max_cycle_attempts = 3
 save_knowledge = true                 # write screened facts to the Canvas memory
 post_reports = true                   # post reports to report_channel
 
-[goals.alert_trigger]                 # optional: bot posts here request an early cycle
-channels = ["alerts-checkout"]
-min_interval_minutes = 60
-
 ```
 
 Startup fails with a clear message for invalid cron expressions, unknown time zones, channel
@@ -109,7 +104,7 @@ Each cycle runs Observe → Plan → Investigate → Decide → Report → Learn
 
 ```mermaid
 flowchart LR
-    T["Trigger<br/>schedule · Slack request ·<br/>alert · /reili rerun"] --> L["Acquire lease<br/>(ledger issue)"]
+    T["Schedule"] --> L["Acquire lease<br/>(ledger issue)"]
     L --> O["Observe<br/>human edits & commands ·<br/>Canvas knowledge"]
     O --> I["Plan · Investigate<br/>(lead agent + spawned sub-agents)"]
     I --> G["Report policy<br/>(deterministic)"]
@@ -221,11 +216,8 @@ Slack (mention Reili in any channel where mentions are allowed; normal authoriza
 |---|---|
 | `@Reili goals` | Lists goals, lifecycle, last cycle, open items, decisions pending |
 | `@Reili goal <id>` | Status, running cycle, budget used today, open items with links |
-| `@Reili goal run <id>` | Durably queues an extra cycle (refused for disabled goals) |
 | `@Reili goal help` | Command help |
 | anything else | Ordinary investigation, as before |
-
-Alert bot posts in a goal's `alert_trigger.channels` queue an early cycle (rate-limited).
 
 GitHub (comment on a work item):
 
@@ -234,7 +226,6 @@ GitHub (comment on a work item):
 | `/reili approve [note]` | Recommendation approved → `proposed` |
 | `/reili dismiss <reason>` | → `dismissed` (closed as not planned); never reopened by Reili |
 | `/reili resolve [note]` | → `resolved` (closed) |
-| `/reili rerun` | Queues a cycle that re-investigates this item |
 | any other text | Feedback for the next investigation |
 
 Changing the `reili-status:*` label or closing/reopening the issue is adopted as the new status
@@ -280,7 +271,7 @@ goal ledger stops that goal until it is restored from the issue's edit history.
 - Answer `needs-human` items on GitHub with `/reili` commands.
 - Logs: `goal_cycle_started`, `goal_cycle_finished`, `goal_cycle_skipped`,
   `goal_cycle_interrupted`, `goal_cycle_aborted`, `goal_ledger_sync_failed`,
-  `goal_cycle_report_deferred`, `goal_alert_trigger`, `slack_goal_command`.
+  `goal_cycle_report_deferred`, `slack_goal_command`.
 
 **Troubleshooting**
 
@@ -300,5 +291,5 @@ goal ledger stops that goal until it is restored from the issue's edit history.
   are the agent's assessment, backed only by the evidence it cites.
 - Reili does not measure progress toward the goal or the effect of implemented recommendations;
   humans judge both and close items with `/reili resolve`.
-- Goal cycles are triggered by schedule, Slack, alert bot posts, and `/reili rerun` comments; there
-  is no GitHub webhook ingestion.
+- Goal cycles run only on their schedule; Slack messages, alerts, and issue comments never start
+  one. Human comments and label changes are picked up by the next scheduled cycle.

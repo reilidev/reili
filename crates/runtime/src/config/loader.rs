@@ -2699,9 +2699,6 @@ enabled = true
 [goals.budget]
 max_cycle_minutes = 20
 max_llm_tokens_per_day = 4000000
-
-[goals.alert_trigger]
-channels = ["alerts-checkout"]
 "#;
 
     #[test]
@@ -2717,7 +2714,6 @@ channels = ["alerts-checkout"]
         assert_eq!(goal.schedule.timezone_name(), "Asia/Tokyo");
         assert_eq!(goal.budget.max_cycle_duration_secs, 1_200);
         assert_eq!(goal.budget.max_llm_tokens_per_day, 4_000_000);
-        assert!(goal.alert_trigger.is_some());
         let work_state = config.work_state.expect("work state");
         assert_eq!(work_state.repository, "example-org/reili-work");
         assert_eq!(work_state.app_id, "12345", "defaults to the connector App");

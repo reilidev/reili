@@ -3,8 +3,7 @@
 use std::collections::BTreeSet;
 
 use reili_core::goal::{
-    AlertTrigger, GoalBudget, GoalDefinition, GoalId, GoalPermissions, GoalReportPolicy,
-    GoalSchedule, GoalScope,
+    GoalBudget, GoalDefinition, GoalId, GoalPermissions, GoalReportPolicy, GoalSchedule, GoalScope,
 };
 
 use super::ConfigError;
@@ -42,7 +41,6 @@ pub(super) fn resolve_autonomy(file_config: &FileConfig) -> Result<AutonomyConfi
         tick_interval_seconds: autonomy.tick_interval_seconds,
         max_concurrent_cycles: autonomy.max_concurrent_cycles,
         lease_minutes: autonomy.lease_minutes,
-        feedback_poll_minutes: autonomy.feedback_poll_minutes.max(1),
     })
 }
 
@@ -210,10 +208,6 @@ fn resolve_goal(goal: &GoalFileConfig, index: usize) -> Result<GoalDefinition, C
             save_knowledge: goal.permissions.save_knowledge,
             post_reports: goal.permissions.post_reports,
         },
-        alert_trigger: goal.alert_trigger.as_ref().map(|trigger| AlertTrigger {
-            channel_names: trigger.channels.clone(),
-            min_interval_minutes: trigger.min_interval_minutes,
-        }),
         enabled: goal.enabled,
     };
     definition

@@ -124,13 +124,6 @@ impl Default for GoalPermissions {
     }
 }
 
-/// Early-cycle trigger from alert bot posts in matching Slack channels.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AlertTrigger {
-    pub channel_names: Vec<String>,
-    pub min_interval_minutes: u32,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalDefinition {
     pub id: GoalId,
@@ -140,7 +133,6 @@ pub struct GoalDefinition {
     pub report: GoalReportPolicy,
     pub budget: GoalBudget,
     pub permissions: GoalPermissions,
-    pub alert_trigger: Option<AlertTrigger>,
     pub enabled: bool,
 }
 
@@ -204,7 +196,6 @@ pub(crate) mod test_support {
             },
             budget: GoalBudget::default(),
             permissions: GoalPermissions::default(),
-            alert_trigger: None,
             enabled: true,
         }
     }

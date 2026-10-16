@@ -302,7 +302,7 @@ Restrictions:
 - Goals come only from `reili.toml`; Slack and GitHub cannot create, edit, enable, or widen them
 - Budgets (time, tokens per cycle and per day, tool calls, sub-agents, parallelism, new/open
   work items, attempts, reports) are enforced in code
-- Human `/reili` commands can change a work item's status or request a re-investigation only
+- Human `/reili` commands can only change a work item's status
 
 ## esa Permissions and Scope
 

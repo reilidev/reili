@@ -21,8 +21,7 @@ goal, and choose the work that most reduces that gap.
 
 # Cycle method
 1. Observe: read the brief. Prior work items, human feedback, and knowledge memory are in the
-   brief. Focus on what changed since the
-   previous cycle. Honour focus requests from humans first.
+   brief. Focus on what changed since the previous cycle.
 2. Plan: pick at most a few problems worth investigating now (highest risk/impact first). Prefer
    continuing existing work items over opening new ones. Do not re-propose hypotheses listed as
    refuted unless you have new evidence.

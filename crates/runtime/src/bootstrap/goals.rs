@@ -1,5 +1,4 @@
-//! Wiring for goal-driven autonomy: GitHub Work State, the cycle runner, the scheduler, and the
-//! Slack handlers that expose goal status and run requests.
+//! Wiring for goal-driven autonomy: GitHub Work State, the cycle runner, and the scheduler.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,7 +8,8 @@ use reili_adapters::outbound::github::{GitHubWorkStateConfig, GitHubWorkStateRep
 use reili_adapters::outbound::slack::{SlackGoalReportAdapter, SlackWebApiClient};
 use reili_application::TaskLogger;
 use reili_application::goal::{
-    GoalCycleDeps, GoalCycleRunner, GoalScheduler, GoalSchedulerDeps, SystemClock, WorkStateStore,
+    Clock, GoalCycleDeps, GoalCycleRunner, GoalScheduler, GoalSchedulerDeps, SystemClock,
+    WorkStateStore,
 };
 use reili_core::investigation::InvestigationRunnerPort;
 use reili_core::messaging::slack::GoalReportPort;
@@ -58,6 +58,7 @@ pub(crate) fn build_goal_scheduler(
         investigation_runner: input.investigation_runner,
         task_resources: input.task_resources,
         report_port: input.report_port,
+        clock: Arc::new(SystemClock),
         logger: input.logger,
         instance_id: instance_id(),
     })))
@@ -70,20 +71,21 @@ pub(crate) struct AssembleGoalSchedulerInput<'a> {
     pub(crate) investigation_runner: Arc<dyn InvestigationRunnerPort>,
     pub(crate) task_resources: TaskResources,
     pub(crate) report_port: Arc<dyn GoalReportPort>,
+    pub(crate) clock: Arc<dyn Clock>,
     pub(crate) logger: Arc<dyn TaskLogger>,
     pub(crate) instance_id: String,
 }
 
 pub(crate) fn assemble_goal_scheduler(input: AssembleGoalSchedulerInput<'_>) -> Arc<GoalScheduler> {
     let store = WorkStateStore::new(input.repository);
-    let clock = Arc::new(SystemClock);
+    let clock = input.clock;
     let autonomy = input.autonomy;
     let cycle_runner = Arc::new(GoalCycleRunner::new(GoalCycleDeps {
         store: store.clone(),
         investigation_runner: input.investigation_runner,
         report_port: input.report_port,
         task_resources: input.task_resources,
-        clock: clock.clone(),
+        clock: Arc::clone(&clock),
         logger: Arc::clone(&input.logger),
         instance_id: input.instance_id,
         lease_duration: Duration::minutes(i64::from(autonomy.lease_minutes)),
@@ -96,7 +98,6 @@ pub(crate) fn assemble_goal_scheduler(input: AssembleGoalSchedulerInput<'_>) -> 
         logger: input.logger,
         tick_interval: std::time::Duration::from_secs(autonomy.tick_interval_seconds),
         max_concurrent_cycles: usize::try_from(autonomy.max_concurrent_cycles).unwrap_or(1),
-        feedback_poll_interval: Duration::minutes(i64::from(autonomy.feedback_poll_minutes)),
     })
 }
 

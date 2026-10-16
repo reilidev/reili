@@ -19,10 +19,8 @@ pub(crate) mod testing;
 #[cfg(test)]
 pub(crate) mod tests_support;
 
-pub use clock::SystemClock;
+pub use clock::{Clock, SystemClock};
 pub use cycle::{GoalCycleDeps, GoalCycleRunner};
 pub use scheduler::{GoalScheduler, GoalSchedulerDeps};
-pub use slack::{
-    SlackGoalAlertTriggerHandler, SlackGoalCommandHandler, SlackGoalCommandHandlerDeps,
-};
+pub use slack::{SlackGoalCommandHandler, SlackGoalCommandHandlerDeps};
 pub use store::WorkStateStore;

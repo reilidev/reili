@@ -12,8 +12,9 @@ use axum::extract::{Path, State};
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use chrono::{DateTime, Duration, Utc};
 use reili_adapters::outbound::github::{GitHubWorkStateConfig, GitHubWorkStateRepository};
-use reili_application::goal::GoalScheduler;
+use reili_application::goal::{Clock, GoalScheduler};
 use reili_core::error::{AgentRunFailedError, PortError};
 use reili_core::goal::{
     GoalBudget, GoalDefinition, GoalId, GoalPermissions, GoalReportPolicy, GoalSchedule, GoalScope,
@@ -29,8 +30,8 @@ use reili_core::messaging::slack::{
 use reili_core::secret::SecretString;
 use reili_core::task::{LlmExecutionMetadata, LlmUsageSnapshot, TaskResources};
 use reili_core::work::{
-    CycleTrigger, EvidenceRef, EvidenceSource, Hypothesis, HypothesisStatus, InvestigationReport,
-    Severity, WorkItemKind, WorkItemProposal, WorkItemStatus,
+    EvidenceRef, EvidenceSource, Hypothesis, HypothesisStatus, InvestigationReport, Severity,
+    WorkItemKind, WorkItemProposal, WorkItemStatus,
 };
 use serde_json::{Value, json};
 
@@ -366,7 +367,6 @@ fn goal() -> GoalDefinition {
             save_knowledge: false,
             post_reports: true,
         },
-        alert_trigger: None,
         enabled: true,
     }
 }
@@ -411,10 +411,26 @@ fn report() -> InvestigationReport {
     }
 }
 
+/// Process clock that can be moved forward to reach the next scheduled slot.
+struct SteppedClock(Mutex<DateTime<Utc>>);
+
+impl SteppedClock {
+    fn advance(&self, by: Duration) {
+        *self.0.lock().expect("lock") += by;
+    }
+}
+
+impl Clock for SteppedClock {
+    fn now(&self) -> DateTime<Utc> {
+        *self.0.lock().expect("lock")
+    }
+}
+
 fn process(
     api_base_url: &str,
     runner: &Arc<ScriptedRunner>,
     slack: &Arc<RecordingSlack>,
+    clock: &Arc<SteppedClock>,
     instance_id: &str,
 ) -> Arc<GoalScheduler> {
     let repository = GitHubWorkStateRepository::with_static_token(
@@ -435,7 +451,6 @@ fn process(
             tick_interval_seconds: 60,
             max_concurrent_cycles: 1,
             lease_minutes: 15,
-            feedback_poll_minutes: 10,
         },
         repository: Arc::new(repository),
         investigation_runner: Arc::clone(runner) as Arc<dyn InvestigationRunnerPort>,
@@ -446,6 +461,7 @@ fn process(
             canvas_memory_port: None,
         },
         report_port: Arc::clone(slack) as Arc<dyn GoalReportPort>,
+        clock: Arc::clone(clock) as Arc<dyn Clock>,
         logger: Arc::new(QuietLogger),
         instance_id: instance_id.to_string(),
     })
@@ -482,7 +498,8 @@ async fn goal_cycles_persist_to_github_issues_and_resume_across_processes() {
     let slack = Arc::new(RecordingSlack::default());
 
     // Process 1: baseline cycle creates the ledger and a work item over HTTP.
-    let first = process(&api_base_url, &runner, &slack, "process-1");
+    let clock = Arc::new(SteppedClock(Mutex::new(Utc::now())));
+    let first = process(&api_base_url, &runner, &slack, &clock, "process-1");
     assert_eq!(run_tick(&first).await, 1);
 
     let (ledger_number, item_number) = {
@@ -528,17 +545,9 @@ async fn goal_cycles_persist_to_github_issues_and_resume_across_processes() {
         issue["labels"] = Value::Array(labels);
     }
 
-    // Process 2 (restart): durable state comes from GitHub only.
-    let second = process(&api_base_url, &runner, &slack, "process-2");
-    second
-        .request_run(
-            "checkout-reliability",
-            CycleTrigger::SlackRequest {
-                user_id: "U1".to_string(),
-            },
-        )
-        .await
-        .expect("request run");
+    // Process 2 (restart) at the next scheduled slot: durable state comes from GitHub only.
+    let second = process(&api_base_url, &runner, &slack, &clock, "process-2");
+    clock.advance(Duration::hours(7));
     assert_eq!(run_tick(&second).await, 1);
 
     let brief = runner
@@ -568,7 +577,11 @@ async fn goal_cycles_persist_to_github_issues_and_resume_across_processes() {
     let ledger_body = state.issues[&ledger_number]["body"]
         .as_str()
         .expect("ledger body");
-    assert!(ledger_body.contains("Slack request by <@U1>"));
+    assert_eq!(
+        ledger_body.matches("\"run_id\"").count(),
+        2,
+        "both cycles are recorded in the ledger"
+    );
     assert_eq!(
         state
             .issues

@@ -238,7 +238,6 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
 #tick_interval_seconds = 60
 #max_concurrent_cycles = 1
 #lease_minutes = 15
-#feedback_poll_minutes = 10
 
 #[[goals]]
 # Required: 1-39 characters of a-z, 0-9, `-`, `_`. Used in GitHub labels and Slack commands.
@@ -277,8 +276,3 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
 #[goals.permissions]
 #save_knowledge = true
 #post_reports = true
-
-# Optional: alert bot posts in these channels request an early cycle.
-#[goals.alert_trigger]
-#channels = ["alerts-checkout"]
-#min_interval_minutes = 60

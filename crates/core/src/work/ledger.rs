@@ -33,38 +33,6 @@ impl GoalLifecycle {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum CycleTrigger {
-    Schedule,
-    SlackRequest {
-        user_id: String,
-    },
-    IssueCommand {
-        issue_number: u64,
-        author: String,
-    },
-    Alert {
-        channel_id: String,
-        message_ts: String,
-    },
-}
-
-impl CycleTrigger {
-    #[must_use]
-    pub fn describe(&self) -> String {
-        match self {
-            Self::Schedule => "schedule".to_string(),
-            Self::SlackRequest { user_id } => format!("Slack request by <@{user_id}>"),
-            Self::IssueCommand {
-                issue_number,
-                author,
-            } => format!("`/reili rerun` on #{issue_number} by @{author}"),
-            Self::Alert { channel_id, .. } => format!("alert in <#{channel_id}>"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CyclePhase {
@@ -94,7 +62,6 @@ pub struct KnowledgeDraft {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveCycle {
     pub run_id: String,
-    pub trigger: CycleTrigger,
     #[serde(default)]
     pub scheduled_for: Option<DateTime<Utc>>,
     pub started_at: DateTime<Utc>,
@@ -151,7 +118,6 @@ impl CycleResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CycleRecord {
     pub run_id: String,
-    pub trigger: CycleTrigger,
     #[serde(default)]
     pub scheduled_for: Option<DateTime<Utc>>,
     pub started_at: DateTime<Utc>,
@@ -194,10 +160,6 @@ pub struct GoalLedgerState {
     #[serde(default)]
     pub last_scheduled_for: Option<DateTime<Utc>>,
     #[serde(default)]
-    pub requested_trigger: Option<CycleTrigger>,
-    #[serde(default)]
-    pub last_alert_trigger_at: Option<DateTime<Utc>>,
-    #[serde(default)]
     pub cycles: Vec<CycleRecord>,
     #[serde(default)]
     pub usage: Option<DailyUsage>,
@@ -228,8 +190,6 @@ impl GoalLedgerState {
             },
             active_cycle: None,
             last_scheduled_for: None,
-            requested_trigger: None,
-            last_alert_trigger_at: None,
             cycles: Vec::new(),
             usage: None,
             reports: ReportState::default(),
@@ -340,7 +300,7 @@ impl GoalLedgerState {
 mod tests {
     use chrono::{Duration, NaiveDate, TimeZone, Utc};
 
-    use super::{CycleRecord, CycleResult, CycleTrigger, GoalLedgerState, GoalLifecycle};
+    use super::{CycleRecord, CycleResult, GoalLedgerState, GoalLifecycle};
     use crate::goal::test_support::sample_goal;
 
     fn record(result: CycleResult, minutes: i64) -> CycleRecord {
@@ -348,7 +308,6 @@ mod tests {
             + Duration::minutes(minutes);
         CycleRecord {
             run_id: format!("run-{minutes}"),
-            trigger: CycleTrigger::Schedule,
             scheduled_for: None,
             started_at: at,
             finished_at: at,

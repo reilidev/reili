@@ -36,7 +36,6 @@ pub(crate) struct AutonomyFileConfig {
     pub tick_interval_seconds: u64,
     pub max_concurrent_cycles: u32,
     pub lease_minutes: u32,
-    pub feedback_poll_minutes: u32,
 }
 
 impl Default for AutonomyFileConfig {
@@ -45,7 +44,6 @@ impl Default for AutonomyFileConfig {
             tick_interval_seconds: 60,
             max_concurrent_cycles: 1,
             lease_minutes: 15,
-            feedback_poll_minutes: 10,
         }
     }
 }
@@ -74,8 +72,6 @@ pub(crate) struct GoalFileConfig {
     pub budget: GoalBudgetFileConfig,
     #[serde(default)]
     pub permissions: GoalPermissionsFileConfig,
-    #[serde(default)]
-    pub alert_trigger: Option<GoalAlertTriggerFileConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -122,16 +118,4 @@ impl Default for GoalPermissionsFileConfig {
             post_reports: true,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct GoalAlertTriggerFileConfig {
-    pub channels: Vec<String>,
-    #[serde(default = "default_alert_interval")]
-    pub min_interval_minutes: u32,
-}
-
-fn default_alert_interval() -> u32 {
-    60
 }

@@ -21,8 +21,8 @@ pub use item::{
     token_jaccard,
 };
 pub use ledger::{
-    ActiveCycle, CyclePhase, CycleRecord, CycleResult, CycleTrigger, DailyUsage,
-    GOAL_LEDGER_SCHEMA_VERSION, GoalLedgerState, GoalLifecycle, KnowledgeDraft, ReportState,
+    ActiveCycle, CyclePhase, CycleRecord, CycleResult, DailyUsage, GOAL_LEDGER_SCHEMA_VERSION,
+    GoalLedgerState, GoalLifecycle, KnowledgeDraft, ReportState,
 };
 pub use report::{InvestigationReport, KnowledgeCandidate, WorkItemProposal};
 #[cfg(any(test, feature = "test-support"))]

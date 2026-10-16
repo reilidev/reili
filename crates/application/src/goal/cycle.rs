@@ -25,9 +25,9 @@ use reili_core::task::{
     TaskCancellation, TaskProgressEventInput, TaskProgressEventPort, TaskResources,
 };
 use reili_core::work::{
-    ActiveCycle, CyclePhase, CycleRecord, CycleResult, CycleTrigger, GoalLedgerState,
-    InvestigationReport, KnowledgeDraft, StoredLedger, StoredWorkItem, WorkStateComment,
-    WorkStateCommentKind, WorkStateError, sanitize::truncate_chars,
+    ActiveCycle, CyclePhase, CycleRecord, CycleResult, GoalLedgerState, InvestigationReport,
+    KnowledgeDraft, StoredLedger, StoredWorkItem, WorkStateComment, WorkStateCommentKind,
+    WorkStateError, sanitize::truncate_chars,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -66,7 +66,6 @@ pub struct GoalCycleDeps {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CycleStart {
     New {
-        trigger: CycleTrigger,
         scheduled_for: Option<DateTime<Utc>>,
     },
     /// Continue an interrupted cycle whose lease expired.
@@ -380,7 +379,6 @@ impl GoalCycleRunner {
             ledger_human_notes: &ledger.human_notes,
             items: &observed.items,
             memories: &observed.memories,
-            trigger: &active.trigger,
             run_id: &active.run_id,
             now,
             deadline: now + max_duration,
@@ -570,15 +568,13 @@ impl GoalCycleRunner {
             }
         }
         for item in observed.items.iter().filter(|item| {
-            (item.state.rerun_requested || !item.state.pending_feedback().is_empty())
-                && !touched.contains(&item.issue.number)
+            !item.state.pending_feedback().is_empty() && !touched.contains(&item.issue.number)
         }) {
             let run_id = active.run_id.clone();
             let saved = self
                 .deps
                 .store
                 .mutate_work_item(item, |state| {
-                    state.rerun_requested = false;
                     for note in &mut state.feedback {
                         if note.applied_in_run.is_none() {
                             note.applied_in_run = Some(run_id.clone());
@@ -589,7 +585,8 @@ impl GoalCycleRunner {
             self.append_cycle_log(
                 &saved,
                 active,
-                "Re-investigation and/or human feedback were included in this run; no update to this item was proposed.".to_string(),
+                "Human feedback was included in this run; no update to this item was proposed."
+                    .to_string(),
             )
             .await?;
         }
@@ -674,11 +671,7 @@ impl GoalCycleRunner {
                 &item.issue,
                 WorkStateComment {
                     kind: WorkStateCommentKind::CycleLog,
-                    body: format!(
-                        "Run `{}` ({}): {body}",
-                        active.run_id,
-                        active.trigger.describe()
-                    ),
+                    body: format!("Run `{}`: {body}", active.run_id),
                 },
             )
             .await
@@ -887,7 +880,6 @@ impl GoalCycleRunner {
                 };
                 state.record_cycle(CycleRecord {
                     run_id: active.run_id.clone(),
-                    trigger: active.trigger.clone(),
                     scheduled_for: active.scheduled_for,
                     started_at: active.started_at,
                     finished_at: now,
@@ -898,14 +890,11 @@ impl GoalCycleRunner {
                     touched_items: active.pending_notifications.clone(),
                 });
                 state.active_cycle = None;
-                if !failed || give_up {
-                    if let Some(slot) = active.scheduled_for {
-                        state.last_scheduled_for =
-                            Some(state.last_scheduled_for.map_or(slot, |last| last.max(slot)));
-                    }
-                    if state.requested_trigger.as_ref() == Some(&active.trigger) {
-                        state.requested_trigger = None;
-                    }
+                if (!failed || give_up)
+                    && let Some(slot) = active.scheduled_for
+                {
+                    state.last_scheduled_for =
+                        Some(state.last_scheduled_for.map_or(slot, |last| last.max(slot)));
                 }
                 state.updated_at = now;
                 final_result
@@ -1014,7 +1003,6 @@ impl GoalCycleRunner {
             ("runId", active.run_id.clone()),
             ("attempt", active.attempt.to_string()),
             ("phase", format!("{:?}", active.phase)),
-            ("trigger", active.trigger.describe()),
         ]);
         if let Some(detail) = detail {
             fields.insert("detail".to_string(), detail.to_string().into());
@@ -1058,7 +1046,6 @@ fn acquire(
             let abandoned = active.clone();
             state.record_cycle(CycleRecord {
                 run_id: abandoned.run_id.clone(),
-                trigger: abandoned.trigger.clone(),
                 scheduled_for: abandoned.scheduled_for,
                 started_at: abandoned.started_at,
                 finished_at: now,
@@ -1077,9 +1064,6 @@ fn acquire(
                 state.last_scheduled_for =
                     Some(state.last_scheduled_for.map_or(slot, |last| last.max(slot)));
             }
-            if state.requested_trigger.as_ref() == Some(&abandoned.trigger) {
-                state.requested_trigger = None;
-            }
             state.active_cycle = None;
             state.updated_at = now;
             return Acquisition::Finished(CycleResult::Abandoned {
@@ -1093,11 +1077,7 @@ fn acquire(
         return Acquisition::Run(active.clone());
     }
 
-    let CycleStart::New {
-        trigger,
-        scheduled_for,
-    } = start
-    else {
+    let CycleStart::New { scheduled_for } = start else {
         return Acquisition::Busy("no interrupted cycle to resume".to_string());
     };
     let today = now.date_naive();
@@ -1108,7 +1088,6 @@ fn acquire(
         );
         state.record_cycle(CycleRecord {
             run_id: run_id.to_string(),
-            trigger: trigger.clone(),
             scheduled_for: *scheduled_for,
             started_at: now,
             finished_at: now,
@@ -1127,15 +1106,11 @@ fn acquire(
                     .map_or(*slot, |last| last.max(*slot)),
             );
         }
-        if state.requested_trigger.as_ref() == Some(trigger) {
-            state.requested_trigger = None;
-        }
         state.updated_at = now;
         return Acquisition::Finished(CycleResult::Skipped { reason });
     }
     let active = ActiveCycle {
         run_id: run_id.to_string(),
-        trigger: trigger.clone(),
         scheduled_for: *scheduled_for,
         started_at: now,
         attempt: 1,

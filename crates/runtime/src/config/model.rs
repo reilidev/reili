@@ -234,7 +234,6 @@ pub struct AutonomyConfig {
     pub tick_interval_seconds: u64,
     pub max_concurrent_cycles: u32,
     pub lease_minutes: u32,
-    pub feedback_poll_minutes: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -361,7 +360,6 @@ mod tests {
                 tick_interval_seconds: 60,
                 max_concurrent_cycles: 1,
                 lease_minutes: 15,
-                feedback_poll_minutes: 10,
             },
         };
 
@@ -443,7 +441,6 @@ mod tests {
                 tick_interval_seconds: 60,
                 max_concurrent_cycles: 1,
                 lease_minutes: 15,
-                feedback_poll_minutes: 10,
             },
         }
     }

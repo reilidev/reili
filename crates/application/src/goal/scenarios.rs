@@ -8,13 +8,13 @@ use reili_core::goal::GoalDefinition;
 use reili_core::messaging::slack::{SlackFileDownloadPort, SlackMessageSearchPort};
 use reili_core::task::TaskResources;
 use reili_core::work::{
-    CycleResult, CycleTrigger, EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus,
+    CycleResult, EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus,
     InvestigationReport, KnowledgeCandidate, Recommendation, Severity, WorkItemKind,
     WorkItemProposal, WorkItemStatus,
 };
 
 use super::cycle::{GoalCycleDeps, GoalCycleRunner};
-use super::scheduler::{GoalScheduler, GoalSchedulerDeps, RunRequestError};
+use super::scheduler::{GoalScheduler, GoalSchedulerDeps};
 use super::store::WorkStateStore;
 use super::testing::{
     FakeWorkStateRepository, ManualClock, NoopLogger, RecordingCanvasMemory, RecordingReportPort,
@@ -76,7 +76,6 @@ impl Harness {
             logger: Arc::new(NoopLogger),
             tick_interval: std::time::Duration::from_secs(60),
             max_concurrent_cycles: 2,
-            feedback_poll_interval: Duration::minutes(10),
         })
     }
 }
@@ -554,7 +553,7 @@ async fn scenario_d_feedback_and_human_decisions_shape_the_next_cycle() {
 // E. Safety ----------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn scenario_e_disabled_goals_and_unknown_goals_are_rejected() {
+async fn scenario_e_disabled_goals_never_run() {
     let harness = Harness::new();
     let mut goal = sample_goal("checkout");
     goal.enabled = false;
@@ -566,28 +565,8 @@ async fn scenario_e_disabled_goals_and_unknown_goals_are_rejected() {
         .ledger("checkout")
         .expect("ledger synced");
     assert_eq!(ledger.lifecycle, reili_core::work::GoalLifecycle::Disabled);
-    assert!(matches!(
-        scheduler
-            .request_run(
-                "checkout",
-                CycleTrigger::SlackRequest {
-                    user_id: "U1".to_string()
-                }
-            )
-            .await,
-        Err(RunRequestError::Disabled(_))
-    ));
-    assert!(matches!(
-        scheduler
-            .request_run(
-                "nope",
-                CycleTrigger::SlackRequest {
-                    user_id: "U1".to_string()
-                }
-            )
-            .await,
-        Err(RunRequestError::UnknownGoal(_))
-    ));
+    harness.clock.advance(Duration::days(1));
+    assert_eq!(tick(&scheduler).await, 0);
     assert_eq!(harness.runner.calls(), 0);
 }
 
@@ -748,7 +727,7 @@ async fn scenario_c_failed_investigations_back_off_then_give_up_on_the_slot() {
 }
 
 #[tokio::test]
-async fn scenario_slack_commands_show_status_and_queue_runs() {
+async fn scenario_slack_commands_show_status_and_pass_other_mentions_through() {
     use reili_core::messaging::slack::{
         MockSlackMessageHandlerPort, SlackMessage, SlackMessageHandlerPort, SlackTriggerType,
     };
@@ -766,7 +745,7 @@ async fn scenario_slack_commands_show_status_and_queue_runs() {
     tick(&scheduler).await;
 
     let mut next = MockSlackMessageHandlerPort::new();
-    next.expect_handle().times(1).returning(|_| Ok(()));
+    next.expect_handle().times(2).returning(|_| Ok(()));
     let handler =
         super::slack::SlackGoalCommandHandler::new(super::slack::SlackGoalCommandHandlerDeps {
             scheduler: Arc::clone(&scheduler),
@@ -801,22 +780,14 @@ async fn scenario_slack_commands_show_status_and_queue_runs() {
     handler
         .handle(message("<@UBOT> goal run checkout"))
         .await
-        .expect("run");
+        .expect("run requests are not goal commands");
     handler
         .handle(message("<@UBOT> why is checkout slow?"))
         .await
         .expect("investigation passes through");
 
     let replies = harness.reports.replies();
-    assert_eq!(replies.len(), 3);
+    assert_eq!(replies.len(), 2);
     assert!(replies[0].2.contains("`checkout`") && replies[0].2.contains("1 awaiting decision"));
     assert!(replies[1].2.contains("needs-human") && replies[1].2.contains("Goal ledger"));
-    assert!(replies[2].2.contains("Queued"));
-    let ledger = harness.repository.ledger("checkout").expect("ledger");
-    assert_eq!(
-        ledger.requested_trigger,
-        Some(CycleTrigger::SlackRequest {
-            user_id: "U1".to_string()
-        })
-    );
 }

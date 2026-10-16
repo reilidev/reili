@@ -282,8 +282,6 @@ pub struct WorkItemState {
     #[serde(default)]
     pub notification: NotificationState,
     #[serde(default)]
-    pub rerun_requested: bool,
-    #[serde(default)]
     pub revision: u64,
 }
 

@@ -11,10 +11,9 @@ use chrono::{DateTime, Duration, Utc};
 use reili_core::goal::{GoalDefinition, GoalId, truncate_to_minute};
 use reili_core::task::TaskCancellation;
 use reili_core::work::{
-    CycleTrigger, GoalLedgerState, GoalLifecycle, HumanCommand, StoredLedger, WorkStateComment,
-    WorkStateCommentKind, WorkStateError, parse_human_comment,
+    GoalLedgerState, GoalLifecycle, StoredLedger, WorkStateComment, WorkStateCommentKind,
+    WorkStateError,
 };
-use thiserror::Error;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinHandle;
 
@@ -33,25 +32,6 @@ pub struct GoalSchedulerDeps {
     pub logger: Arc<dyn TaskLogger>,
     pub tick_interval: std::time::Duration,
     pub max_concurrent_cycles: usize,
-    pub feedback_poll_interval: Duration,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RunRequestAck {
-    Queued,
-    AlreadyQueued,
-}
-
-#[derive(Debug, Error)]
-pub enum RunRequestError {
-    #[error("unknown goal `{0}`")]
-    UnknownGoal(String),
-    #[error("goal `{0}` is disabled in config")]
-    Disabled(String),
-    #[error("goal `{goal}` was triggered by an alert less than {minutes} minutes ago")]
-    RateLimited { goal: String, minutes: u32 },
-    #[error(transparent)]
-    WorkState(#[from] WorkStateError),
 }
 
 pub struct GoalScheduler {
@@ -61,7 +41,6 @@ pub struct GoalScheduler {
     shutdown: TaskCancellation,
     started: AtomicBool,
     last_sync: Mutex<Option<DateTime<Utc>>>,
-    last_feedback_poll: Mutex<Option<DateTime<Utc>>>,
 }
 
 impl GoalScheduler {
@@ -74,7 +53,6 @@ impl GoalScheduler {
             shutdown: TaskCancellation::new(),
             started: AtomicBool::new(false),
             last_sync: Mutex::new(None),
-            last_feedback_poll: Mutex::new(None),
         })
     }
 
@@ -119,9 +97,6 @@ impl GoalScheduler {
             self.warn("goal_ledger_sync_failed", None, &error.to_string());
             // Without readable ledgers nothing can be scheduled safely; try again next tick.
             return Vec::new();
-        }
-        if let Err(error) = self.poll_issue_commands_if_due(now).await {
-            self.warn("goal_feedback_poll_failed", None, &error.to_string());
         }
 
         let mut handles = Vec::new();
@@ -282,110 +257,6 @@ impl GoalScheduler {
             .await
     }
 
-    async fn poll_issue_commands_if_due(&self, now: DateTime<Utc>) -> Result<(), RunRequestError> {
-        let since = {
-            let mut last = self.last_feedback_poll.lock().await;
-            match *last {
-                Some(previous) if now < previous + self.deps.feedback_poll_interval => {
-                    return Ok(());
-                }
-                previous => {
-                    *last = Some(now);
-                    previous
-                }
-            }
-        };
-        let Some(since) = since else {
-            return Ok(());
-        };
-        for goal in self.deps.goals.iter().filter(|goal| goal.enabled) {
-            let items = self
-                .deps
-                .store
-                .repository()
-                .list_work_items(&goal.id)
-                .await?;
-            for item in items
-                .iter()
-                .filter(|item| item.observed_status.is_open() && item.remote_updated_at > since)
-            {
-                let comments = self
-                    .deps
-                    .store
-                    .repository()
-                    .list_human_comments(&item.issue, item.state.last_processed_comment_id)
-                    .await?;
-                let rerun_by = comments.iter().find(|comment| {
-                    comment.author_trusted
-                        && parse_human_comment(&comment.body)
-                            .commands
-                            .contains(&HumanCommand::Rerun)
-                });
-                if let Some(comment) = rerun_by {
-                    self.request_run(
-                        goal.id.as_str(),
-                        CycleTrigger::IssueCommand {
-                            issue_number: item.issue.number,
-                            author: comment.author.clone(),
-                        },
-                    )
-                    .await?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Durably requests an out-of-schedule cycle (Slack request, alert, or issue command). The
-    /// request is stored in the ledger, so it survives restarts; the next tick starts it.
-    pub async fn request_run(
-        &self,
-        goal_id: &str,
-        trigger: CycleTrigger,
-    ) -> Result<RunRequestAck, RunRequestError> {
-        let goal = self
-            .deps
-            .goals
-            .iter()
-            .find(|goal| goal.id.as_str() == goal_id)
-            .ok_or_else(|| RunRequestError::UnknownGoal(goal_id.to_string()))?;
-        if !goal.enabled {
-            return Err(RunRequestError::Disabled(goal_id.to_string()));
-        }
-        let now = self.deps.clock.now();
-        let ledger = self.deps.store.ensure_ledger(goal, now).await?;
-        if ledger.state.requested_trigger.is_some() {
-            return Ok(RunRequestAck::AlreadyQueued);
-        }
-        if matches!(trigger, CycleTrigger::Alert { .. })
-            && let Some(alert) = &goal.alert_trigger
-            && ledger.state.last_alert_trigger_at.is_some_and(|last| {
-                now < last + Duration::minutes(i64::from(alert.min_interval_minutes))
-            })
-        {
-            return Err(RunRequestError::RateLimited {
-                goal: goal_id.to_string(),
-                minutes: alert.min_interval_minutes,
-            });
-        }
-        let (_, ack) = self
-            .deps
-            .store
-            .mutate_ledger(&ledger, |state| {
-                if state.requested_trigger.is_some() {
-                    return RunRequestAck::AlreadyQueued;
-                }
-                if matches!(trigger, CycleTrigger::Alert { .. }) {
-                    state.last_alert_trigger_at = Some(now);
-                }
-                state.requested_trigger = Some(trigger.clone());
-                state.updated_at = now;
-                RunRequestAck::Queued
-            })
-            .await?;
-        Ok(ack)
-    }
-
     fn log_outcome(&self, goal_id: &GoalId, outcome: &Result<CycleRunOutcome, GoalCycleError>) {
         let (event, detail) = match outcome {
             Ok(CycleRunOutcome::Finished { run_id, result }) => (
@@ -437,12 +308,6 @@ pub fn decide_due(
     {
         return None;
     }
-    if let Some(trigger) = &ledger.requested_trigger {
-        return Some(CycleStart::New {
-            trigger: trigger.clone(),
-            scheduled_for: None,
-        });
-    }
     let slot = match ledger.last_scheduled_for {
         // Baseline cycle for a new goal. Anchored to the ledger's creation so retries of a
         // failed baseline count against the same slot.
@@ -454,7 +319,6 @@ pub fn decide_due(
             .and_then(|next| goal.schedule.latest_at_or_before(now, next)),
     }?;
     Some(CycleStart::New {
-        trigger: CycleTrigger::Schedule,
         scheduled_for: Some(slot),
     })
 }
@@ -462,9 +326,7 @@ pub fn decide_due(
 #[cfg(test)]
 mod tests {
     use chrono::Duration;
-    use reili_core::work::{
-        ActiveCycle, CyclePhase, CycleRecord, CycleResult, CycleTrigger, GoalLedgerState,
-    };
+    use reili_core::work::{ActiveCycle, CyclePhase, CycleRecord, CycleResult, GoalLedgerState};
 
     use super::decide_due;
     use crate::goal::cycle::CycleStart;
@@ -479,7 +341,6 @@ mod tests {
         assert_eq!(
             decide_due(&goal, &ledger, at("2026-10-15T01:00:30Z")),
             Some(CycleStart::New {
-                trigger: CycleTrigger::Schedule,
                 scheduled_for: Some(at("2026-10-15T01:00:00Z")),
             })
         );
@@ -495,7 +356,6 @@ mod tests {
         assert_eq!(
             decide_due(&goal, &ledger, at("2026-10-15T01:00:00Z")),
             Some(CycleStart::New {
-                trigger: CycleTrigger::Schedule,
                 scheduled_for: Some(at("2026-10-14T21:00:00Z")),
             })
         );
@@ -518,7 +378,6 @@ mod tests {
         let mut ledger = GoalLedgerState::new(&goal, at("2026-10-15T00:00:00Z"));
         ledger.active_cycle = Some(ActiveCycle {
             run_id: "r1".to_string(),
-            trigger: CycleTrigger::Schedule,
             scheduled_for: None,
             started_at: at("2026-10-15T00:00:00Z"),
             attempt: 1,
@@ -540,24 +399,13 @@ mod tests {
     }
 
     #[test]
-    fn requested_runs_win_and_backoff_delays_retries() {
+    fn backoff_delays_retries() {
         let goal = sample_goal("checkout");
         let mut ledger = GoalLedgerState::new(&goal, at("2026-10-15T00:00:00Z"));
-        ledger.last_scheduled_for = Some(at("2026-10-15T03:00:00Z"));
-        ledger.requested_trigger = Some(CycleTrigger::SlackRequest {
-            user_id: "U1".to_string(),
-        });
-        assert!(matches!(
-            decide_due(&goal, &ledger, at("2026-10-15T04:00:00Z")),
-            Some(CycleStart::New {
-                scheduled_for: None,
-                ..
-            })
-        ));
+        assert!(decide_due(&goal, &ledger, at("2026-10-15T04:00:00Z")).is_some());
 
         ledger.record_cycle(CycleRecord {
             run_id: "r".to_string(),
-            trigger: CycleTrigger::Schedule,
             scheduled_for: None,
             started_at: at("2026-10-15T04:00:00Z"),
             finished_at: at("2026-10-15T04:00:00Z"),

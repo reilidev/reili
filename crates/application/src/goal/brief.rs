@@ -8,7 +8,7 @@ use reili_core::goal::GoalDefinition;
 use reili_core::investigation::{BriefSection, BriefTrust, InvestigationBrief};
 use reili_core::messaging::slack::SlackCanvasMemoryRecord;
 use reili_core::work::{
-    CycleTrigger, GoalLedgerState, HypothesisStatus, StoredWorkItem, sanitize::truncate_chars,
+    GoalLedgerState, HypothesisStatus, StoredWorkItem, sanitize::truncate_chars,
 };
 
 const MAX_SECTION_CHARS: usize = 12_000;
@@ -20,7 +20,6 @@ pub struct BuildBriefInput<'a> {
     pub ledger_human_notes: &'a str,
     pub items: &'a [StoredWorkItem],
     pub memories: &'a [SlackCanvasMemoryRecord],
-    pub trigger: &'a CycleTrigger,
     pub run_id: &'a str,
     pub now: DateTime<Utc>,
     pub deadline: DateTime<Utc>,
@@ -33,10 +32,6 @@ pub fn build_brief(input: &BuildBriefInput<'_>) -> InvestigationBrief {
         trusted("Goal", goal_section(input.goal, input.ledger)),
         trusted("This cycle", cycle_section(input)),
     ];
-    let focus = focus_section(input.items);
-    if !focus.is_empty() {
-        sections.push(trusted("Focus requests from humans", focus));
-    }
     sections.push(untrusted(
         "Current work items",
         "work state (GitHub issues)",
@@ -130,9 +125,8 @@ fn goal_section(goal: &GoalDefinition, ledger: &GoalLedgerState) -> String {
 
 fn cycle_section(input: &BuildBriefInput<'_>) -> String {
     let mut body = format!(
-        "- run id: {}\n- trigger: {}\n- now: {}\n- deadline: {}\n- budget: {} tool calls, {} LLM tokens, {} sub-agents, {} new work items, {} open work items max\n",
+        "- run id: {}\n- now: {}\n- deadline: {}\n- budget: {} tool calls, {} LLM tokens, {} sub-agents, {} new work items, {} open work items max\n",
         input.run_id,
-        input.trigger.describe(),
         input.now.to_rfc3339(),
         input.deadline.to_rfc3339(),
         input.goal.budget.max_tool_calls_per_cycle,
@@ -162,20 +156,6 @@ fn cycle_section(input: &BuildBriefInput<'_>) -> String {
         let _ = writeln!(body, "- note: {note}");
     }
     body
-}
-
-fn focus_section(items: &[StoredWorkItem]) -> String {
-    items
-        .iter()
-        .filter(|item| item.state.rerun_requested)
-        .map(|item| {
-            format!(
-                "- Re-investigate #{} `{}` ({}) as requested by a human.",
-                item.issue.number, item.state.key, item.state.title
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn open_items_section(items: &[StoredWorkItem]) -> String {
@@ -308,7 +288,7 @@ mod tests {
     use chrono::TimeZone;
     use reili_core::investigation::BriefTrust;
     use reili_core::work::{
-        CycleTrigger, FeedbackNote, GoalLedgerState, IssueRef, StoredWorkItem, WorkItemStatus,
+        FeedbackNote, GoalLedgerState, IssueRef, StoredWorkItem, WorkItemStatus,
         test_support::sample_work_item,
     };
 
@@ -353,7 +333,6 @@ mod tests {
             ledger_human_notes: "",
             items: &items,
             memories: &[],
-            trigger: &CycleTrigger::Schedule,
             run_id: "run-1",
             now: at("2026-10-15T00:00:00Z"),
             deadline: at("2026-10-15T00:30:00Z"),

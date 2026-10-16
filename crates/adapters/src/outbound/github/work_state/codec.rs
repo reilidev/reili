@@ -107,7 +107,7 @@ pub(super) fn render_work_item_body(
 
 fn render_work_item_sections(state: &WorkItemState, detailed: bool) -> String {
     let mut text = format!(
-        "> Maintained by Reili for goal `{}`. Edit only **Human notes** below. Steer with a comment: `/reili approve`, `/reili dismiss <reason>`, `/reili resolve <note>`, `/reili rerun`, or plain feedback.\n\n**Status:** `{}` · **Severity:** {} · **Kind:** {} · **Key:** `{}`\n",
+        "> Maintained by Reili for goal `{}`. Edit only **Human notes** below. Steer with a comment: `/reili approve`, `/reili dismiss <reason>`, `/reili resolve <note>`, or plain feedback.\n\n**Status:** `{}` · **Severity:** {} · **Kind:** {} · **Key:** `{}`\n",
         state.goal_id,
         state.status.as_str(),
         state.severity.as_str(),
@@ -241,13 +241,14 @@ pub(super) fn render_ledger_body(
         );
     }
     if !state.cycles.is_empty() {
-        text.push_str("\n### Recent cycles\n| Run | Trigger | Finished | Result | Tokens |\n|---|---|---|---|---|\n");
+        text.push_str(
+            "\n### Recent cycles\n| Run | Finished | Result | Tokens |\n|---|---|---|---|\n",
+        );
         for cycle in state.cycles.iter().rev().take(10) {
             let _ = writeln!(
                 text,
-                "| `{}` | {} | {} | {} | {} |",
+                "| `{}` | {} | {} | {} |",
                 cycle.run_id,
-                cell(&cycle.trigger.describe()),
                 cycle.finished_at.to_rfc3339(),
                 cell(&cycle.result.label()),
                 cycle.llm_tokens

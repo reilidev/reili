@@ -39,7 +39,6 @@ pub fn sample_work_item(key: &str) -> WorkItemState {
         updated_at: at,
         last_processed_comment_id: None,
         notification: NotificationState::default(),
-        rerun_requested: false,
         revision: 0,
     }
 }

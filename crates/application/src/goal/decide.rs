@@ -222,7 +222,6 @@ pub fn new_work_item_state(
         updated_at: context.now,
         last_processed_comment_id: None,
         notification: NotificationState::default(),
-        rerun_requested: false,
         revision: 0,
     };
     apply_proposal(&mut state, proposal, context);
@@ -294,7 +293,6 @@ pub fn apply_proposal(
             note.applied_in_run = Some(context.run_id.to_string());
         }
     }
-    state.rerun_requested = false;
     state.last_run_id = Some(context.run_id.to_string());
     state.updated_at = context.now;
 }

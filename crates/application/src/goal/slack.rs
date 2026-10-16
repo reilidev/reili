@@ -1,6 +1,5 @@
-//! Slack collaboration for goals: read-only status commands and run requests on mentions, and
-//! early-cycle triggers from alert bot posts. Goals themselves are defined only in config;
-//! Slack cannot create or edit them.
+//! Slack collaboration for goals: read-only status commands on mentions. Goals themselves are
+//! defined only in config; Slack cannot create, edit, or run them.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -9,13 +8,12 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reili_core::error::PortError;
 use reili_core::messaging::slack::{
-    GoalReportPort, SlackChannelLookupPort, SlackChannelNamePattern, SlackMessage,
-    SlackMessageHandlerPort, SlackTriggerType,
+    GoalReportPort, SlackMessage, SlackMessageHandlerPort, SlackTriggerType,
 };
-use reili_core::work::{CycleTrigger, GoalLifecycle, WorkItemStatus};
+use reili_core::work::{GoalLifecycle, WorkItemStatus};
 
 use super::clock::Clock;
-use super::scheduler::{GoalScheduler, RunRequestAck};
+use super::scheduler::GoalScheduler;
 use crate::{TaskLogger, string_log_meta};
 
 const MAX_ITEMS_IN_STATUS: usize = 15;
@@ -24,12 +22,10 @@ const MAX_ITEMS_IN_STATUS: usize = 15;
 pub enum GoalCommand {
     List,
     Status(String),
-    Run(String),
     Help,
 }
 
-/// Parses `@reili goals`, `@reili goal <id>`, `@reili goal status <id>`, `@reili goal run <id>`,
-/// and `@reili goal help`. Anything else is an ordinary investigation request.
+/// Parses `@reili goals`, `@reili goal <id>`, `@reili goal status <id>`, and `@reili goal help`. Anything else is an ordinary investigation request.
 #[must_use]
 pub fn parse_goal_command(text: &str) -> Option<GoalCommand> {
     let cleaned: String = text
@@ -52,7 +48,6 @@ pub fn parse_goal_command(text: &str) -> Option<GoalCommand> {
         ["goal", "status", id] | ["goals", "status", id] => {
             Some(GoalCommand::Status((*id).to_string()))
         }
-        ["goal", "run", id] | ["goals", "run", id] => Some(GoalCommand::Run((*id).to_string())),
         ["goal", id] if !id.contains(' ') => Some(GoalCommand::Status((*id).to_string())),
         _ => None,
     }
@@ -85,32 +80,12 @@ impl SlackGoalCommandHandler {
         }
     }
 
-    async fn respond(&self, message: &SlackMessage, command: GoalCommand) -> String {
+    async fn respond(&self, command: GoalCommand) -> String {
         let now = self.clock.now();
         match command {
             GoalCommand::Help => help_text(),
             GoalCommand::List => render_goals_overview(&self.scheduler, now).await,
             GoalCommand::Status(id) => render_goal_detail(&self.scheduler, &id, now).await,
-            GoalCommand::Run(id) => {
-                match self
-                    .scheduler
-                    .request_run(
-                        &id,
-                        CycleTrigger::SlackRequest {
-                            user_id: message.user.clone(),
-                        },
-                    )
-                    .await
-                {
-                    Ok(RunRequestAck::Queued) => format!(
-                        "Queued a cycle for goal `{id}`. It starts within the next scheduler tick; results are posted to the goal's report channel."
-                    ),
-                    Ok(RunRequestAck::AlreadyQueued) => {
-                        format!("A cycle for goal `{id}` is already queued.")
-                    }
-                    Err(error) => format!("Could not queue goal `{id}`: {error}"),
-                }
-            }
         }
     }
 }
@@ -132,7 +107,7 @@ impl SlackMessageHandlerPort for SlackGoalCommandHandler {
                 ("command", format!("{command:?}")),
             ]),
         );
-        let reply = self.respond(&message, command).await;
+        let reply = self.respond(command).await;
         self.report_port
             .post_thread_reply(&message.channel, message.thread_ts_or_ts(), &reply)
             .await
@@ -140,7 +115,7 @@ impl SlackMessageHandlerPort for SlackGoalCommandHandler {
 }
 
 fn help_text() -> String {
-    "*Goal commands*\n• `goals` — list configured goals and their state\n• `goal <id>` — status and open work items\n• `goal run <id>` — request an extra cycle now\nGoals are defined in `reili.toml`; edit work items on GitHub (`/reili approve|dismiss|resolve|rerun`).".to_string()
+    "*Goal commands*\n• `goals` — list configured goals and their state\n• `goal <id>` — status and open work items\nGoals are defined in `reili.toml`; edit work items on GitHub (`/reili approve|dismiss|resolve`).".to_string()
 }
 
 pub async fn render_goals_overview(scheduler: &GoalScheduler, now: DateTime<Utc>) -> String {
@@ -310,98 +285,6 @@ fn relative(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
     }
 }
 
-/// Requests an early cycle when an alert bot posts in a goal's alert channels. Always passes the
-/// message on to `next` (e.g. the auto-response gate) unchanged.
-pub struct SlackGoalAlertTriggerHandler {
-    scheduler: Arc<GoalScheduler>,
-    channel_lookup: Arc<dyn SlackChannelLookupPort>,
-    next: Option<Arc<dyn SlackMessageHandlerPort>>,
-    logger: Arc<dyn TaskLogger>,
-}
-
-impl SlackGoalAlertTriggerHandler {
-    pub fn new(
-        scheduler: Arc<GoalScheduler>,
-        channel_lookup: Arc<dyn SlackChannelLookupPort>,
-        next: Option<Arc<dyn SlackMessageHandlerPort>>,
-        logger: Arc<dyn TaskLogger>,
-    ) -> Self {
-        Self {
-            scheduler,
-            channel_lookup,
-            next,
-            logger,
-        }
-    }
-
-    async fn trigger_goals(&self, message: &SlackMessage) {
-        let watching: Vec<_> = self
-            .scheduler
-            .goals()
-            .iter()
-            .filter(|goal| goal.enabled && goal.alert_trigger.is_some())
-            .collect();
-        if watching.is_empty() || !message.actor_is_bot || message.thread_ts.is_some() {
-            return;
-        }
-        let Ok(channel) = self
-            .channel_lookup
-            .lookup_channel_info(&message.channel)
-            .await
-        else {
-            return;
-        };
-        for goal in watching {
-            let Some(alert) = &goal.alert_trigger else {
-                continue;
-            };
-            let matches = alert.channel_names.iter().any(|pattern| {
-                SlackChannelNamePattern::new(pattern.clone()).matches(&channel.name)
-            });
-            if !matches {
-                continue;
-            }
-            let result = self
-                .scheduler
-                .request_run(
-                    goal.id.as_str(),
-                    CycleTrigger::Alert {
-                        channel_id: message.channel.clone(),
-                        message_ts: message.ts.clone(),
-                    },
-                )
-                .await;
-            self.logger.info(
-                "goal_alert_trigger",
-                string_log_meta([
-                    ("goalId", goal.id.to_string()),
-                    ("channel", message.channel.clone()),
-                    (
-                        "result",
-                        match result {
-                            Ok(ack) => format!("{ack:?}"),
-                            Err(error) => error.to_string(),
-                        },
-                    ),
-                ]),
-            );
-        }
-    }
-}
-
-#[async_trait]
-impl SlackMessageHandlerPort for SlackGoalAlertTriggerHandler {
-    async fn handle(&self, message: SlackMessage) -> Result<(), PortError> {
-        if message.trigger == SlackTriggerType::Message {
-            self.trigger_goals(&message).await;
-        }
-        match &self.next {
-            Some(next) => next.handle(message).await,
-            None => Ok(()),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{GoalCommand, parse_goal_command};
@@ -413,10 +296,7 @@ mod tests {
             parse_goal_command("<@U1> goal checkout-reliability"),
             Some(GoalCommand::Status("checkout-reliability".to_string()))
         );
-        assert_eq!(
-            parse_goal_command("<@U1>  Goal RUN checkout"),
-            Some(GoalCommand::Run("checkout".to_string()))
-        );
+        assert_eq!(parse_goal_command("<@U1>  Goal RUN checkout"), None);
         assert_eq!(
             parse_goal_command("<@U1> goal help"),
             Some(GoalCommand::Help)

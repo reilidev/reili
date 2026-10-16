@@ -38,8 +38,7 @@ use reili_adapters::outbound::slack::{
 };
 use reili_adapters::queue::InMemoryJobQueue;
 use reili_application::goal::{
-    GoalScheduler, SlackGoalAlertTriggerHandler, SlackGoalCommandHandler,
-    SlackGoalCommandHandlerDeps, SystemClock,
+    GoalScheduler, SlackGoalCommandHandler, SlackGoalCommandHandlerDeps, SystemClock,
 };
 use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
@@ -236,7 +235,6 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         next_handler: enqueue_slack_message_handler,
         slack_web_api_client: Arc::clone(&slack_web_api_client),
         slack_thread_history_port: Arc::clone(&slack_thread_history_port),
-        goal_scheduler: goal_scheduler.clone(),
         logger: Arc::clone(&logger),
     })
     .await?;
@@ -290,7 +288,6 @@ struct BuildSlackMessageHandlerInput<'a> {
     next_handler: Arc<dyn SlackMessageHandlerPort>,
     slack_web_api_client: Arc<SlackWebApiClient>,
     slack_thread_history_port: Arc<dyn SlackThreadHistoryPort>,
-    goal_scheduler: Option<Arc<GoalScheduler>>,
     logger: Arc<dyn TaskLogger>,
 }
 
@@ -327,34 +324,17 @@ async fn build_slack_message_handler(
     let auto_response_gate = build_slack_auto_response_gate(BuildSlackAutoResponseGateInput {
         config: input.config,
         actors: &actors,
-        channel_lookup_port: Arc::clone(&channel_lookup_port),
+        channel_lookup_port,
         user_group_membership_port,
         thread_history_port: input.slack_thread_history_port,
         next_handler: input.next_handler,
-        logger: Arc::clone(&input.logger),
+        logger: input.logger,
     })
     .await?;
 
-    // Alert bot posts in a goal's alert channels request an early goal cycle; the message still
-    // flows on to the auto-response gate unchanged.
-    let watches_alerts = input
-        .config
-        .goals
-        .iter()
-        .any(|goal| goal.enabled && goal.alert_trigger.is_some());
-    let message_path = match (&input.goal_scheduler, watches_alerts) {
-        (Some(scheduler), true) => Some(Arc::new(SlackGoalAlertTriggerHandler::new(
-            Arc::clone(scheduler),
-            channel_lookup_port,
-            auto_response_gate,
-            Arc::clone(&input.logger),
-        )) as Arc<dyn SlackMessageHandlerPort>),
-        _ => auto_response_gate,
-    };
-
     Ok(Arc::new(SlackInboundRouter::new(
         mention_gate,
-        message_path,
+        auto_response_gate,
     )))
 }
 
