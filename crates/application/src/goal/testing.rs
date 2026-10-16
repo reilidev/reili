@@ -664,17 +664,12 @@ fn execution() -> LlmExecutionMetadata {
 #[derive(Clone, Default)]
 pub(crate) struct RecordingReportPort {
     pub posted: Arc<Mutex<Vec<GoalReportMessage>>>,
-    pub replies: Arc<Mutex<Vec<(String, String, String)>>>,
     pub fail_posts: Arc<Mutex<bool>>,
 }
 
 impl RecordingReportPort {
     pub(crate) fn posted(&self) -> Vec<GoalReportMessage> {
         self.posted.lock().expect("lock").clone()
-    }
-
-    pub(crate) fn replies(&self) -> Vec<(String, String, String)> {
-        self.replies.lock().expect("lock").clone()
     }
 }
 
@@ -709,20 +704,6 @@ impl GoalReportPort for RecordingReportPort {
         let channel_id = message.channel_id.clone();
         posted.push(message);
         Ok(PostedGoalReport { channel_id, ts })
-    }
-
-    async fn post_thread_reply(
-        &self,
-        channel_id: &str,
-        thread_ts: &str,
-        text: &str,
-    ) -> Result<(), PortError> {
-        self.replies.lock().expect("lock").push((
-            channel_id.to_string(),
-            thread_ts.to_string(),
-            text.to_string(),
-        ));
-        Ok(())
     }
 
     async fn permalink(&self, channel_id: &str, ts: &str) -> Result<Option<String>, PortError> {

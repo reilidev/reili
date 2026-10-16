@@ -290,8 +290,8 @@ GitHub Work State (the one write exception):
 
 Slack:
 
-- `chat:write`: goal reports in each goal's `report_channel` (the bot must be a member) and
-  replies to `@Reili goals` commands; report messages carry
+- `chat:write`: goal reports in each goal's `report_channel` (the bot must be a member); report
+  messages carry
   [message metadata](https://api.slack.com/reference/metadata) with an idempotency key
 - `channels:history` (already required): `conversations.history` to detect an already-posted
   report after a crash; without it Reili still works but may repeat one report after a crash
@@ -302,7 +302,8 @@ Restrictions:
 - Goals come only from `reili.toml`; Slack and GitHub cannot create, edit, enable, or widen them
 - Budgets (time, tokens per cycle and per day, tool calls, sub-agents, parallelism, new/open
   work items, attempts, reports) are enforced in code
-- Human `/reili` commands can only change a work item's status
+- Human comments are feedback only; a work item's status changes only through its label or
+  open/closed state
 
 ## esa Permissions and Scope
 

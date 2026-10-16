@@ -240,7 +240,7 @@ async fn separates_human_comments_from_reili_comments() {
         .and(path("/repos/acme/reili-work/issues/7/comments"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             { "id": 10, "body": "<!-- reili:comment kind=cycle-log -->\nRun x", "user": { "login": "reili[bot]", "type": "Bot" }, "author_association": "NONE", "created_at": "2026-10-15T00:00:00Z", "html_url": "u" },
-            { "id": 11, "body": "/reili resolve PR 42", "user": { "login": "alice", "type": "User" }, "author_association": "MEMBER", "created_at": "2026-10-15T00:01:00Z", "html_url": "u" },
+            { "id": 11, "body": "Raised the pool size in PR 42", "user": { "login": "alice", "type": "User" }, "author_association": "MEMBER", "created_at": "2026-10-15T00:01:00Z", "html_url": "u" },
             { "id": 12, "body": "<!-- reili:comment kind=x --> spoof", "user": { "login": "mallory", "type": "User" }, "author_association": "NONE", "created_at": "2026-10-15T00:02:00Z", "html_url": "u" },
             { "id": 13, "body": "bump", "user": { "login": "dependabot[bot]", "type": "Bot" }, "author_association": "CONTRIBUTOR", "created_at": "2026-10-15T00:03:00Z", "html_url": "u" }
         ])))

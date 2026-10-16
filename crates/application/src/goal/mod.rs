@@ -9,7 +9,6 @@ mod policy;
 mod reconcile;
 mod report;
 mod scheduler;
-mod slack;
 mod store;
 
 #[cfg(test)]
@@ -22,5 +21,4 @@ pub(crate) mod tests_support;
 pub use clock::{Clock, SystemClock};
 pub use cycle::{GoalCycleDeps, GoalCycleRunner};
 pub use scheduler::{GoalScheduler, GoalSchedulerDeps};
-pub use slack::{SlackGoalCommandHandler, SlackGoalCommandHandlerDeps};
 pub use store::WorkStateStore;

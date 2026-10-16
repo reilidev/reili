@@ -114,26 +114,6 @@ impl GoalReportPort for SlackGoalReportAdapter {
         })
     }
 
-    async fn post_thread_reply(
-        &self,
-        channel_id: &str,
-        thread_ts: &str,
-        text: &str,
-    ) -> Result<(), PortError> {
-        self.client
-            .post(
-                "chat.postMessage",
-                &json!({
-                    "channel": channel_id,
-                    "thread_ts": thread_ts,
-                    "markdown_text": text,
-                    "unfurl_links": false,
-                }),
-            )
-            .await?;
-        Ok(())
-    }
-
     async fn permalink(&self, channel_id: &str, ts: &str) -> Result<Option<String>, PortError> {
         let response = self
             .client

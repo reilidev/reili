@@ -37,9 +37,7 @@ use reili_adapters::outbound::slack::{
     SlackWebApiClientConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
-use reili_application::goal::{
-    GoalScheduler, SlackGoalCommandHandler, SlackGoalCommandHandlerDeps, SystemClock,
-};
+use reili_application::goal::GoalScheduler;
 use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
     HandleSlackInteractionUseCaseDeps, InFlightJobRegistry, SlackAutoResponseGate,
@@ -219,17 +217,6 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
             logger: Arc::clone(&logger),
         }),
     );
-    // Goal status and run commands are answered directly; everything else is investigated.
-    let enqueue_slack_message_handler: Arc<dyn SlackMessageHandlerPort> = match &goal_scheduler {
-        Some(scheduler) => Arc::new(SlackGoalCommandHandler::new(SlackGoalCommandHandlerDeps {
-            scheduler: Arc::clone(scheduler),
-            report_port: goals::build_goal_report_port(Arc::clone(&slack_web_api_client)),
-            next: enqueue_slack_message_handler,
-            clock: Arc::new(SystemClock),
-            logger: Arc::clone(&logger),
-        })),
-        None => enqueue_slack_message_handler,
-    };
     let slack_message_handler = build_slack_message_handler(BuildSlackMessageHandlerInput {
         config,
         next_handler: enqueue_slack_message_handler,

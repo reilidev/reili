@@ -332,10 +332,6 @@ impl GoalReportPort for RecordingSlack {
         })
     }
 
-    async fn post_thread_reply(&self, _: &str, _: &str, _: &str) -> Result<(), PortError> {
-        Ok(())
-    }
-
     async fn permalink(&self, _: &str, _: &str) -> Result<Option<String>, PortError> {
         Ok(None)
     }
@@ -526,21 +522,32 @@ async fn goal_cycles_persist_to_github_issues_and_resume_across_processes() {
     };
     assert_eq!(slack.posted.lock().expect("lock").len(), 1);
 
-    // A human answers on the issue and adds a label of their own.
+    // A human comments, moves the item to `proposed` by label, and adds a label of their own.
     {
         let mut state = github.lock().expect("lock");
         state.next_comment_id += 1;
         let id = state.next_comment_id;
         state.comments.entry(item_number).or_default().push(json!({
             "id": id,
-            "body": "Confirmed, the pool size is too small.\n/reili approve raise the pool to 30 in PR #43",
+            "body": "Confirmed, the pool size is too small.",
             "user": { "login": "alice", "type": "User" },
             "author_association": "MEMBER",
             "created_at": now(),
             "html_url": "https://github.com/acme/reili-work/issues/comment",
         }));
         let issue = state.issues.get_mut(&item_number).expect("issue");
-        let mut labels = issue["labels"].as_array().cloned().unwrap_or_default();
+        let mut labels: Vec<Value> = issue["labels"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|label| {
+                !label["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with("reili-status:"))
+            })
+            .collect();
+        labels.push(json!({ "name": "reili-status:proposed" }));
         labels.push(json!({ "name": "customer-facing" }));
         issue["labels"] = Value::Array(labels);
     }
@@ -572,7 +579,7 @@ async fn goal_cycles_persist_to_github_issues_and_resume_across_processes() {
     assert!(state.comments[&item_number].iter().any(|comment| {
         comment["body"]
             .as_str()
-            .is_some_and(|body| body.contains("Recommendation approved by @alice"))
+            .is_some_and(|body| body.contains("Recorded human status change → `proposed`"))
     }));
     let ledger_body = state.issues[&ledger_number]["body"]
         .as_str()

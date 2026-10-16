@@ -123,7 +123,9 @@ fn render_report(input: &ComposeReportInput<'_>, changed: &[&StoredWorkItem]) ->
                     .map_or("see issue", |decision| decision.question.as_str())
             );
         }
-        text.push_str("_Reply on the issue with `/reili approve`, `/reili dismiss <reason>`, or `/reili resolve <note>`._\n");
+        text.push_str(
+            "_Answer on the issue: comment, change its `reili-status:*` label, or close it._\n",
+        );
     }
     let updates: Vec<&&StoredWorkItem> = changed
         .iter()

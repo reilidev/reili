@@ -424,10 +424,10 @@ enabled = true
 ```
 
 Each cycle observes the goal's services and prior work, investigates with dynamically
-composed sub-agents, records the work as GitHub Issues that humans can read, edit, and steer
-(`/reili approve|dismiss|resolve`), posts only meaningful changes to Slack, and
+composed sub-agents, records the work as GitHub Issues that humans can read, comment on, and steer with labels, posts
+only meaningful changes to Slack, and
 saves screened reusable facts to the Canvas memory. Cycles survive restarts: state lives in GitHub
-Issues, not in the process. Ask `@Reili goals` or `@Reili goal <id>` in Slack for status.
+Issues, not in the process.
 No extra secret is needed by default: Work State reuses the `[connector.github.app]` credentials
 (install the App on the Work State repository with Issues read & write), unless
 `[work_state.github]` names a separate App.

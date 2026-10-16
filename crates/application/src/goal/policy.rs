@@ -79,7 +79,7 @@ fn screen_proposal(
         }
         WorkItemStatus::Dismissed => {
             notes.push(format!(
-                "{label}: `dismissed` is set only by humans (`/reili dismiss`); recorded as `investigating`"
+                "{label}: `dismissed` is set only by humans (closing the issue as not planned); recorded as `investigating`"
             ));
             WorkItemStatus::Investigating
         }

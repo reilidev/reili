@@ -61,11 +61,6 @@ impl GoalScheduler {
         &self.deps.goals
     }
 
-    #[must_use]
-    pub fn store(&self) -> &WorkStateStore {
-        &self.deps.store
-    }
-
     pub fn start(self: &Arc<Self>) {
         if self.started.swap(true, Ordering::SeqCst) || self.deps.goals.is_empty() {
             return;

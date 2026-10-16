@@ -30,14 +30,6 @@ pub trait GoalReportPort: Send + Sync {
 
     async fn post_report(&self, message: GoalReportMessage) -> Result<PostedGoalReport, PortError>;
 
-    /// Posts a reply in a thread (used for Slack status commands).
-    async fn post_thread_reply(
-        &self,
-        channel_id: &str,
-        thread_ts: &str,
-        text: &str,
-    ) -> Result<(), PortError>;
-
     /// Permalink for a posted message, used as the Canvas memory source.
     async fn permalink(&self, channel_id: &str, ts: &str) -> Result<Option<String>, PortError>;
 }

@@ -11,7 +11,7 @@ pub mod sanitize;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
-pub use feedback::{HumanCommand, HumanComment, ParsedHumanComment, parse_human_comment};
+pub use feedback::HumanComment;
 pub use investigation::{
     EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus, Recommendation, TimeRange,
 };

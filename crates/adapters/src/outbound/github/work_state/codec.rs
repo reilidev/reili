@@ -107,7 +107,7 @@ pub(super) fn render_work_item_body(
 
 fn render_work_item_sections(state: &WorkItemState, detailed: bool) -> String {
     let mut text = format!(
-        "> Maintained by Reili for goal `{}`. Edit only **Human notes** below. Steer with a comment: `/reili approve`, `/reili dismiss <reason>`, `/reili resolve <note>`, or plain feedback.\n\n**Status:** `{}` · **Severity:** {} · **Kind:** {} · **Key:** `{}`\n",
+        "> Maintained by Reili for goal `{}`. Edit only **Human notes** below. Steer with a comment (read by the next cycle), the `reili-status:*` label, or by closing the issue.\n\n**Status:** `{}` · **Severity:** {} · **Kind:** {} · **Key:** `{}`\n",
         state.goal_id,
         state.status.as_str(),
         state.severity.as_str(),
