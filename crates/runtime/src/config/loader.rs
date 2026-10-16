@@ -56,30 +56,6 @@ impl ConfigFileAccess for StdConfigFileAccess {
     }
 }
 
-/// AI-only configuration for `reili eval`: no Slack, Datadog, or GitHub secrets are required
-/// because evaluation runs against fixtures with no live connectors.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EvalConfig {
-    pub llm: LlmConfig,
-    pub language: String,
-    pub additional_system_prompt: Option<String>,
-}
-
-pub fn load_eval_config(options: &ConfigLoadOptions) -> Result<EvalConfig, ConfigError> {
-    let access = StdConfigFileAccess;
-    let source = select_config_source(options, &access)?;
-    let file_config = load_file_config(&source, &access)?;
-    validate_version(file_config.version)?;
-    let (provider, _, _) = resolve_llm_provider(&file_config.ai, &ProcessEnvironment)?;
-    Ok(EvalConfig {
-        llm: LlmConfig { provider },
-        language: file_config.conversation.language.clone(),
-        additional_system_prompt: optional_trimmed(
-            file_config.conversation.additional_system_prompt.as_deref(),
-        ),
-    })
-}
-
 pub fn load_app_config(options: &ConfigLoadOptions) -> Result<AppConfig, ConfigError> {
     load_app_config_with(options, &ProcessEnvironment, &StdConfigFileAccess)
 }

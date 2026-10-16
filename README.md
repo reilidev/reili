@@ -435,7 +435,7 @@ No extra secret is needed by default: Work State reuses the `[connector.github.a
 `[work_state.github]` names a separate App.
 
 See [docs/autonomy.md](./docs/autonomy.md) for configuration, the Work State format, durability
-guarantees and their limits, safety, the evaluation framework, and the operations runbook.
+guarantees and their limits, safety, and the operations runbook.
 
 ## Permissions and Tool Transparency
 

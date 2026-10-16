@@ -622,7 +622,6 @@ impl InvestigationRunnerPort for ScriptedInvestigationRunner {
                 InvestigationRunReport {
                     report: Some(InvestigationReport {
                         summary: "No new findings.".to_string(),
-                        observations: Vec::new(),
                         evidence: Vec::new(),
                         work_items: Vec::new(),
                         knowledge_candidates: Vec::new(),

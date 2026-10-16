@@ -9,7 +9,6 @@ name = "reili"
 path = "src/main.rs"
 
 [dependencies]
-async-trait = "0.1.89"
 mockall.workspace = true
 axum = { version = "0.8.8", default-features = false, features = ["form", "http1", "json", "tokio"] }
 futures = "0.3.32"
@@ -27,5 +26,6 @@ tracing = "0.1.44"
 chrono = { version = "0.4.44", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
+async-trait = "0.1.89"
 reili_adapters = { path = "../adapters", features = ["test-support"] }
 reili_core = { path = "../core", features = ["test-support"] }

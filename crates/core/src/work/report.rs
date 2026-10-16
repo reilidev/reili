@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::investigation::{EvidenceRef, Finding, Hypothesis, Observation, Recommendation};
+use super::investigation::{EvidenceRef, Finding, Hypothesis, Recommendation};
 use super::item::{Severity, WorkItemKind, WorkItemStatus};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,8 +49,6 @@ pub struct KnowledgeCandidate {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InvestigationReport {
     pub summary: String,
-    #[serde(default)]
-    pub observations: Vec<Observation>,
     #[serde(default)]
     pub evidence: Vec<EvidenceRef>,
     #[serde(default)]

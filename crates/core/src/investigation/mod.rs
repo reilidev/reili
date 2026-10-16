@@ -144,14 +144,6 @@ impl RunBudget {
     pub fn tokens_exhausted(&self) -> bool {
         self.tokens_used() >= self.limits.max_llm_tokens
     }
-
-    /// True once 90% of the token budget is consumed; completions are still allowed so the agent
-    /// can submit its report.
-    #[must_use]
-    pub fn tokens_near_limit(&self) -> bool {
-        self.tokens_used() * WRAP_UP_RATIO_DENOMINATOR
-            >= self.limits.max_llm_tokens * WRAP_UP_RATIO_NUMERATOR
-    }
 }
 
 /// Captures the single structured report the agent submits.
@@ -258,7 +250,6 @@ mod tests {
     fn token_exhaustion_denies_tools() {
         let budget = budget();
         budget.record_tokens(950);
-        assert!(budget.tokens_near_limit());
         assert!(!budget.tokens_exhausted());
         budget.record_tokens(50);
 

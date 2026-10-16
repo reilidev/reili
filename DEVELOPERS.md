@@ -291,22 +291,6 @@ When adding behavior:
   (in-memory GitHub/Slack/Canvas/metrics fakes in `goal/testing.rs`) and by an HTTP integration
   test against a fake GitHub API in `crates/runtime/src/bootstrap/goals_integration_tests.rs`.
 
-## Evaluation
-
-Investigation quality is evaluated with replayable fixtures in
-`crates/application/fixtures/eval/`:
-
-```bash
-cd crates
-cargo run -p reili_runtime -- eval --replay --output eval.json --markdown eval.md
-cargo run -p reili_runtime -- eval --config ../reili.toml --baseline eval.json   # live, AI keys only
-```
-
-`--replay` is deterministic and runs in CI. Live mode runs the configured AI backend against the
-fixtures with no live connectors; use `--baseline` to compare a prompt or model change against a
-previous run (exit code 2 on threshold failures or regressions). Add a fixture for every incident
-pattern you want to protect against regressions; see [docs/autonomy.md](./docs/autonomy.md#evaluation).
-
 ## Release Notes
 
 Releases are managed with `tagpr` using Git tags and changelog updates. Cargo manifest versions are
@@ -320,5 +304,4 @@ assembled from those prebuilt binaries and published by the release workflow.
 - `cargo run -p reili_runtime -- --config reili.toml`: start the app from `crates/`
 - `cargo watch -x "run -p reili_runtime -- --config reili.toml"`: start with reload from `crates/`
 - `cargo test --workspace`: run Rust tests
-- `cargo run -p reili_runtime -- eval --replay`: replay evaluation fixtures
 - `cargo clippy --workspace --all-targets -- -D warnings`: run lints

@@ -1,5 +1,5 @@
-//! Structured investigation vocabulary: Observation, Evidence, Hypothesis, Finding, and
-//! Recommendation are kept distinct so facts, inferences, and unknowns never blur together.
+//! Structured investigation vocabulary: Evidence, Hypothesis, Finding, and Recommendation are
+//! kept distinct so facts, inferences, and unknowns never blur together.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -44,13 +44,6 @@ pub struct EvidenceRef {
     /// Query or retrieval conditions used to obtain the evidence.
     #[serde(default)]
     pub query: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Observation {
-    pub statement: String,
-    #[serde(default)]
-    pub evidence_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

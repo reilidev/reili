@@ -11,7 +11,7 @@ pub use reili_core::messaging::slack::SlackChannelNamePattern;
 pub use reili_core::secret::SecretString;
 use thiserror::Error;
 
-pub use loader::{ConfigLoadOptions, EvalConfig, load_app_config, load_eval_config};
+pub use loader::{ConfigLoadOptions, load_app_config};
 pub use model::{
     AppConfig, AutonomyConfig, BedrockAwsConfig, BedrockLlmConfig, BedrockMantleAuthConfig,
     BedrockMantleLlmConfig, EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig, LlmConfig,

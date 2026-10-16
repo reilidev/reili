@@ -115,7 +115,7 @@ impl AgentRunners {
     }
 }
 
-pub(crate) struct CreateTaskRunnerInput<'a> {
+struct CreateTaskRunnerInput<'a> {
     pub(crate) llm_provider: &'a LlmProviderConfig,
     pub(crate) connectors: ConnectorSet,
     pub(crate) language: String,
@@ -558,7 +558,7 @@ fn build_jira_connector(config: JiraConfig) -> JiraConnector {
     })
 }
 
-pub(crate) async fn create_agent_runners(
+async fn create_agent_runners(
     input: CreateTaskRunnerInput<'_>,
 ) -> Result<AgentRunners, RuntimeBootstrapError> {
     match input.llm_provider {

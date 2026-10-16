@@ -13,7 +13,7 @@ pub mod test_support;
 
 pub use feedback::{HumanCommand, HumanComment, ParsedHumanComment, parse_human_comment};
 pub use investigation::{
-    EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus, Observation, OutcomeMetric,
+    EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus, OutcomeMetric,
     Recommendation, TimeRange,
 };
 pub use item::{

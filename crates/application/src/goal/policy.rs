@@ -174,7 +174,6 @@ pub(crate) mod tests {
     pub(crate) fn report(work_items: Vec<WorkItemProposal>) -> InvestigationReport {
         InvestigationReport {
             summary: "summary".to_string(),
-            observations: Vec::new(),
             evidence: vec![EvidenceRef {
                 id: "E1".to_string(),
                 source: EvidenceSource::Datadog,

@@ -100,10 +100,6 @@ impl Tool for SubmitInvestigationReportTool {
             "properties": {
                 "summary": { "type": "string", "description": "2-4 sentence summary of what changed since the last cycle and what matters." },
                 "no_new_findings": { "type": "boolean", "description": "true when nothing new was found; then work_items must be empty." },
-                "observations": {
-                    "type": "array",
-                    "items": { "type": "object", "properties": { "statement": { "type": "string" }, "evidence_ids": id_list() }, "required": ["statement"] }
-                },
                 "evidence": {
                     "type": "array",
                     "description": "References only (URL, query, window); never raw logs or secrets.",

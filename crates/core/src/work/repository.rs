@@ -60,13 +60,6 @@ pub enum WorkStateError {
     Other(PortError),
 }
 
-impl WorkStateError {
-    #[must_use]
-    pub fn is_retryable(&self) -> bool {
-        matches!(self, Self::Conflict { .. } | Self::Unavailable(_))
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkStateCommentKind {

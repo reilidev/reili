@@ -280,5 +280,5 @@ async fn maps_server_errors_to_retryable_unavailability() {
         .await
         .expect_err("unavailable");
 
-    assert!(error.is_retryable());
+    assert!(matches!(error, WorkStateError::Unavailable(_)));
 }

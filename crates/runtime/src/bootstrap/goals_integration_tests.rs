@@ -375,7 +375,6 @@ fn goal() -> GoalDefinition {
 fn report() -> InvestigationReport {
     InvestigationReport {
         summary: "checkout-api errors rose after deploy 42.".to_string(),
-        observations: Vec::new(),
         evidence: vec![EvidenceRef {
             id: "E1".to_string(),
             source: EvidenceSource::Datadog,

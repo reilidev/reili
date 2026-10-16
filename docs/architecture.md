@@ -19,7 +19,7 @@ flowchart TB
         INGRESS["Ingress<br/>routing · authorization ·<br/>auto-response gate · enqueue"]
         EXEC["Execution<br/>worker loop · task run ·<br/>cancellation"]
         PROGRESS["Progress<br/>event stream projection"]
-        GOAL["Goals<br/>scheduler · leased cycle ·<br/>report policy · decide ·<br/>outcomes · reports · evaluation"]
+        GOAL["Goals<br/>scheduler · leased cycle ·<br/>report policy · decide ·<br/>outcomes · reports"]
     end
 
     subgraph adapters["crates/adapters — integrations"]
@@ -45,13 +45,12 @@ flowchart TB
 - `crates/core`: domain types, typed errors, and trait-based ports. Independent from runtime
   and adapter concerns. Includes goal definitions and schedules (`goal`), Work State and the
   structured investigation vocabulary (`work`), deterministic statistics for outcome
-  measurement (`analysis`), and the
-  metric, investigation-runner, work-state, and goal-report ports.
+  measurement (`analysis`), and the metric, investigation-runner, work-state, and goal-report
+  ports.
 - `crates/application`: use cases and task orchestration — Slack ingress (routing,
   authorization, auto-response gating, enqueue), task execution (worker loop, cancellation),
   progress projection, and goal autonomy (`goal`: scheduler, durable cycle, report policy,
-  decide/dedupe, human-signal reconciliation, outcome evaluation, Slack reports and commands,
-  evaluation framework).
+  decide/dedupe, human-signal reconciliation, outcome evaluation, Slack reports and commands).
 - `crates/adapters`: inbound Slack parsing and signature verification, outbound Slack Web API
   adapters, the agent stack (lead agent, dynamically spawned sub-agents, connectors, LLM
   providers), the in-memory job queue, the GitHub Issues Work State repository, and the Datadog

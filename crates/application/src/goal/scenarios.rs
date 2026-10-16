@@ -157,7 +157,6 @@ fn proposal(key: &str, status: WorkItemStatus) -> WorkItemProposal {
 fn report(work_items: Vec<WorkItemProposal>) -> InvestigationReport {
     InvestigationReport {
         summary: "checkout-api error rate regressed after deploy 42.".to_string(),
-        observations: Vec::new(),
         evidence: vec![evidence(
             "E1",
             "https://app.datadoghq.com/apm/services/checkout-api",
@@ -667,7 +666,6 @@ async fn scenario_e_daily_budget_exhaustion_skips_cycles_and_notifies_once() {
     harness.runner.push_report(
         InvestigationReport {
             summary: "No new findings.".to_string(),
-            observations: Vec::new(),
             evidence: Vec::new(),
             work_items: Vec::new(),
             knowledge_candidates: Vec::new(),

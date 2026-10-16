@@ -23,7 +23,6 @@ The existing Slack-triggered, single-shot investigations keep working unchanged.
 - [Learning and outcome evaluation](#learning-and-outcome-evaluation)
 - [Working with Reili from Slack and GitHub](#working-with-reili-from-slack-and-github)
 - [Safety, permissions, and limits](#safety-permissions-and-limits)
-- [Evaluation](#evaluation)
 - [Operations runbook](#operations-runbook)
 - [Known limitations](#known-limitations)
 
@@ -284,34 +283,6 @@ goal ledger stops that goal until it is restored from the issue's edit history.
   "facts" are rejected by knowledge screening.
 - **Audit.** Every status change carries actor and reason; cycle logs, report policy adjustments, and
   outcome assessments are comments; the ledger keeps the last cycles with tokens used.
-
-## Evaluation
-
-`reili eval` scores investigations against replayable incident fixtures
-(`crates/application/fixtures/eval/*.json`): metric generators, context documents, ground truth
-(root-cause keywords, decoy explanations, whether findings are expected), and optionally a
-recorded run.
-
-```bash
-# Deterministic replay (CI): recorded reports screened by the report policy and scored
-cargo run -p reili_runtime -- eval --replay --output eval.json --markdown eval.md
-# Compare against a baseline (exit code 2 on threshold failures or regressions)
-cargo run -p reili_runtime -- eval --replay --baseline baseline.json
-# Live: the configured AI backend investigates each fixture offline with the fixture's metric
-# data in the brief (only AI secrets needed)
-cargo run -p reili_runtime -- eval --config reili.toml --fixtures crates/application/fixtures/eval \
-  --baseline baseline.json --output candidate.json
-```
-
-Metrics: root-cause accuracy (the cause appears in a supported hypothesis or a finding),
-false-positive rate (a decoy asserted as a supported hypothesis or a finding), false alarm rate,
-miss rate, evidence coverage, report policy adjustments, LLM tokens, duration. The bundled cases
-cover a deploy regression with a traffic decoy, a correlation trap, a quiet period (correct answer:
-nothing), and a gradual trend that could be wrongly blamed on a deploy. The recorded runs are
-reference answers, so replay checks the scorer and report policy; model quality is measured by
-the live mode. The `Evaluation` workflow runs the replay
-on pull requests and uploads the JSON/Markdown as artifacts; a manual dispatch runs the live mode
-against a stored baseline to compare prompt or model changes.
 
 ## Operations runbook
 
