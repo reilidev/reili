@@ -89,6 +89,28 @@ impl ActiveCycle {
     pub fn lease_is_live(&self, now: DateTime<Utc>) -> bool {
         self.lease_expires_at > now
     }
+
+    /// History record of this cycle ending with `result`; `extra_tokens` were spent after the
+    /// last checkpoint.
+    #[must_use]
+    pub fn to_record(
+        &self,
+        result: CycleResult,
+        finished_at: DateTime<Utc>,
+        extra_tokens: u64,
+    ) -> CycleRecord {
+        CycleRecord {
+            run_id: self.run_id.clone(),
+            scheduled_for: self.scheduled_for,
+            started_at: self.started_at,
+            finished_at,
+            attempts: self.attempt,
+            result,
+            llm_tokens: self.llm_tokens + extra_tokens,
+            summary: self.summary.clone(),
+            touched_items: self.pending_notifications.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,6 +263,14 @@ impl ObjectiveLedgerState {
         keep_last(&mut self.cycles, MAX_CYCLE_RECORDS);
     }
 
+    /// Marks a scheduled slot as handled; slots never move backwards.
+    pub fn complete_slot(&mut self, slot: Option<DateTime<Utc>>) {
+        if let Some(slot) = slot {
+            self.last_scheduled_for =
+                Some(self.last_scheduled_for.map_or(slot, |last| last.max(slot)));
+        }
+    }
+
     #[must_use]
     pub fn last_cycle(&self) -> Option<&CycleRecord> {
         self.cycles.last()
@@ -302,7 +332,7 @@ mod tests {
     use chrono::{Duration, NaiveDate, TimeZone, Utc};
 
     use super::{CycleRecord, CycleResult, ObjectiveLedgerState, ObjectiveLifecycle};
-    use crate::objective::test_support::sample_objective;
+    use crate::work::test_support::sample_objective;
 
     fn record(result: CycleResult, minutes: i64) -> CycleRecord {
         let at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("time")

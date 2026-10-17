@@ -175,39 +175,9 @@ impl ObjectiveDefinition {
 }
 
 #[cfg(test)]
-pub(crate) mod test_support {
-    use super::{
-        ObjectiveBudget, ObjectiveDefinition, ObjectiveId, ObjectivePermissions,
-        ObjectiveReportPolicy, ObjectiveScope,
-    };
-    use crate::objective::ObjectiveSchedule;
-
-    pub(crate) fn sample_objective(id: &str) -> ObjectiveDefinition {
-        ObjectiveDefinition {
-            id: ObjectiveId::new(id).expect("objective id"),
-            description: "Improve checkout reliability".to_string(),
-            scope: ObjectiveScope {
-                services: vec!["checkout-api".to_string()],
-                repositories: vec!["acme/checkout".to_string()],
-                environments: vec!["production".to_string()],
-            },
-            schedule: ObjectiveSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("schedule"),
-            report: ObjectiveReportPolicy {
-                channel_id: "C0123".to_string(),
-                min_interval_minutes: 60,
-                max_reports_per_day: 4,
-            },
-            budget: ObjectiveBudget::default(),
-            permissions: ObjectivePermissions::default(),
-            enabled: true,
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests {
-    use super::test_support::sample_objective;
     use super::{ObjectiveDefinitionError, ObjectiveId};
+    use crate::work::test_support::sample_objective;
 
     #[test]
     fn validates_objective_ids() {

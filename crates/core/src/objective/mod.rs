@@ -10,6 +10,3 @@ pub use definition::{
 };
 pub use fingerprint::stable_fingerprint;
 pub use schedule::{ObjectiveSchedule, ScheduleError, truncate_to_minute};
-
-#[cfg(test)]
-pub(crate) use definition::test_support;
