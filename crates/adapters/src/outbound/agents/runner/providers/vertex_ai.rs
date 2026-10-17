@@ -1,12 +1,10 @@
 use async_trait::async_trait;
+use reili_core::cycle_agent::{CycleAgentOutcome, CycleAgentPort, RunCycleAgentInput};
 use reili_core::error::AgentRunFailedError;
-use reili_core::investigation::{
-    InvestigationRunOutcome, InvestigationRunnerPort, RunInvestigationInput,
-};
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig_vertexai::Client;
 
-use super::super::investigation_runner::{RunLlmInvestigationInput, run_investigation};
+use super::super::cycle_agent::{RunCycleAgentLlmInput, run_cycle_agent};
 use super::super::provider_settings::{
     CreateVertexAiProviderSettingsInput, LlmProviderSettings, create_vertex_ai_provider_settings,
 };
@@ -64,12 +62,12 @@ impl TaskRunnerPort for VertexAiTaskRunner {
 }
 
 #[async_trait]
-impl InvestigationRunnerPort for VertexAiTaskRunner {
+impl CycleAgentPort for VertexAiTaskRunner {
     async fn run(
         &self,
-        input: RunInvestigationInput,
-    ) -> Result<InvestigationRunOutcome, AgentRunFailedError> {
-        run_investigation(RunLlmInvestigationInput {
+        input: RunCycleAgentInput,
+    ) -> Result<CycleAgentOutcome, AgentRunFailedError> {
+        run_cycle_agent(RunCycleAgentLlmInput {
             client: self.client.clone(),
             sub_agent_client: self.client.clone(),
             settings: self.provider_settings.clone(),

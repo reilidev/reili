@@ -4,7 +4,7 @@
 //! adjustment leaves an audit note explaining why.
 
 use reili_core::work::{
-    EvidenceRef, InvestigationReport, KnowledgeDraft, WorkItemProposal, WorkItemStatus,
+    CycleReport, EvidenceRef, KnowledgeDraft, WorkItemProposal, WorkItemStatus,
     sanitize::looks_like_instruction,
 };
 
@@ -17,7 +17,7 @@ pub struct PolicyOutcome {
 }
 
 #[must_use]
-pub fn apply_report_policy(report: &InvestigationReport) -> PolicyOutcome {
+pub fn apply_report_policy(report: &CycleReport) -> PolicyOutcome {
     let mut notes = Vec::new();
     let proposals = report
         .work_items
@@ -36,7 +36,7 @@ pub fn apply_report_policy(report: &InvestigationReport) -> PolicyOutcome {
 
 fn screen_proposal(
     proposal: &WorkItemProposal,
-    report: &InvestigationReport,
+    report: &CycleReport,
     notes: &mut Vec<String>,
 ) -> WorkItemProposal {
     let mut screened = proposal.clone();
@@ -58,9 +58,9 @@ fn screen_proposal(
     screened.proposed_status = match proposal.proposed_status {
         WorkItemStatus::Resolved if !has_evidenced_finding => {
             notes.push(format!(
-                "{label}: `resolved` requires a finding that cites evidence; kept as `investigating`"
+                "{label}: `resolved` requires a finding that cites evidence; kept as `in-progress`"
             ));
-            WorkItemStatus::Investigating
+            WorkItemStatus::InProgress
         }
         WorkItemStatus::NeedsHuman
             if proposal
@@ -69,19 +69,19 @@ fn screen_proposal(
                 .is_none_or(|question| question.trim().is_empty()) =>
         {
             notes.push(format!(
-                "{label}: `needs-human` without a concrete question; recorded as `proposed`/`investigating`"
+                "{label}: `needs-human` without a concrete question; recorded as `proposed`/`in-progress`"
             ));
             if proposal.recommendation.is_some() {
                 WorkItemStatus::Proposed
             } else {
-                WorkItemStatus::Investigating
+                WorkItemStatus::InProgress
             }
         }
         WorkItemStatus::Dismissed => {
             notes.push(format!(
-                "{label}: `dismissed` is set only by humans (in the Work State backend); recorded as `investigating`"
+                "{label}: `dismissed` is set only by humans (in the Work State backend); recorded as `in-progress`"
             ));
-            WorkItemStatus::Investigating
+            WorkItemStatus::InProgress
         }
         status => status,
     };
@@ -89,7 +89,7 @@ fn screen_proposal(
     screened
 }
 
-fn screen_knowledge(report: &InvestigationReport) -> (Vec<KnowledgeDraft>, Vec<String>) {
+fn screen_knowledge(report: &CycleReport) -> (Vec<KnowledgeDraft>, Vec<String>) {
     let mut accepted = Vec::new();
     let mut rejected = Vec::new();
     for candidate in &report.knowledge_candidates {
@@ -135,7 +135,7 @@ fn truncate(text: &str, max: usize) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use reili_core::work::{
-        EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus, InvestigationReport,
+        CycleReport, EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus,
         KnowledgeCandidate, Severity, WorkItemKind, WorkItemProposal, WorkItemStatus,
     };
 
@@ -170,8 +170,8 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn report(work_items: Vec<WorkItemProposal>) -> InvestigationReport {
-        InvestigationReport {
+    pub(crate) fn report(work_items: Vec<WorkItemProposal>) -> CycleReport {
+        CycleReport {
             summary: "summary".to_string(),
             evidence: vec![EvidenceRef {
                 id: "E1".to_string(),
@@ -215,7 +215,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             outcome.proposals[0].proposed_status,
-            WorkItemStatus::Investigating
+            WorkItemStatus::InProgress
         );
         assert_eq!(
             outcome.proposals[1].proposed_status,
@@ -223,7 +223,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             outcome.proposals[2].proposed_status,
-            WorkItemStatus::Investigating
+            WorkItemStatus::InProgress
         );
         assert_eq!(outcome.notes.len(), 2);
     }
@@ -237,7 +237,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             outcome.proposals[0].proposed_status,
-            WorkItemStatus::Investigating
+            WorkItemStatus::InProgress
         );
     }
 

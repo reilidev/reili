@@ -44,7 +44,7 @@ flowchart TB
 
 - `crates/core`: domain types, typed errors, and trait-based ports. Independent from runtime
   and adapter concerns. Includes objective definitions and schedules (`objective`), Work State and the
-  structured investigation vocabulary (`work`), and the investigation-runner, work-state, and
+  structured evidence vocabulary (`work`), and the cycle-agent, work-state, and
   objective-report ports.
 - `crates/application`: use cases and task orchestration — Slack ingress (routing,
   authorization, auto-response gating, enqueue), task execution (worker loop, cancellation),
@@ -72,7 +72,7 @@ flowchart TB
 - **Cancellation**: the Slack `Cancel` button flows through the interaction handler to an
   in-flight job registry that cancels queued or running tasks.
 - **Objective autonomy**: one provider runner implements both `TaskRunnerPort` (Slack tasks) and
-  `InvestigationRunnerPort` (objective cycles). Durable state lives only in the Work State backend
+  `CycleAgentPort` (objective cycles). Durable state lives only in the Work State backend
   (GitHub Issues today) and the Slack Canvas; see [autonomy.md](./autonomy.md).
 - **Pluggable Work State**: `WorkStateRepositoryPort` hides the tracker behind backend-neutral
   record keys (`#12`, `OPS-123`) and opaque comment cursors. The runtime selects the backend from

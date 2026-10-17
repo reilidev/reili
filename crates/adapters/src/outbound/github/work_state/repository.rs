@@ -216,9 +216,9 @@ fn observed_status(issue: &ApiIssue, recorded: WorkItemStatus) -> WorkItemStatus
     } else {
         match label {
             Some(status) if status.is_open() => status,
-            Some(_) => WorkItemStatus::Investigating,
+            Some(_) => WorkItemStatus::InProgress,
             None if recorded.is_open() => recorded,
-            None => WorkItemStatus::Investigating,
+            None => WorkItemStatus::InProgress,
         }
     }
 }

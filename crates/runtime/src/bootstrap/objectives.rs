@@ -11,7 +11,7 @@ use reili_application::objective::{
     Clock, ObjectiveCycleDeps, ObjectiveCycleRunner, ObjectiveScheduler, ObjectiveSchedulerDeps,
     SystemClock, WorkStateStore,
 };
-use reili_core::investigation::InvestigationRunnerPort;
+use reili_core::cycle_agent::CycleAgentPort;
 use reili_core::messaging::slack::ObjectiveReportPort;
 use reili_core::task::TaskResources;
 use reili_core::work::WorkStateRepositoryPort;
@@ -22,7 +22,7 @@ use reili_core::objective::ObjectiveDefinition;
 
 pub(crate) struct BuildObjectiveSchedulerInput<'a> {
     pub(crate) config: &'a AppConfig,
-    pub(crate) investigation_runner: Arc<dyn InvestigationRunnerPort>,
+    pub(crate) cycle_agent: Arc<dyn CycleAgentPort>,
     pub(crate) task_resources: TaskResources,
     pub(crate) report_port: Arc<dyn ObjectiveReportPort>,
     pub(crate) logger: Arc<dyn TaskLogger>,
@@ -50,7 +50,7 @@ pub(crate) fn build_objective_scheduler(
             objectives: input.config.objectives.clone(),
             autonomy: &input.config.autonomy,
             repository,
-            investigation_runner: input.investigation_runner,
+            cycle_agent: input.cycle_agent,
             task_resources: input.task_resources,
             report_port: input.report_port,
             clock: Arc::new(SystemClock),
@@ -81,7 +81,7 @@ pub(crate) struct AssembleObjectiveSchedulerInput<'a> {
     pub(crate) objectives: Vec<ObjectiveDefinition>,
     pub(crate) autonomy: &'a AutonomyConfig,
     pub(crate) repository: Arc<dyn WorkStateRepositoryPort>,
-    pub(crate) investigation_runner: Arc<dyn InvestigationRunnerPort>,
+    pub(crate) cycle_agent: Arc<dyn CycleAgentPort>,
     pub(crate) task_resources: TaskResources,
     pub(crate) report_port: Arc<dyn ObjectiveReportPort>,
     pub(crate) clock: Arc<dyn Clock>,
@@ -97,7 +97,7 @@ pub(crate) fn assemble_objective_scheduler(
     let autonomy = input.autonomy;
     let cycle_runner = Arc::new(ObjectiveCycleRunner::new(ObjectiveCycleDeps {
         store: store.clone(),
-        investigation_runner: input.investigation_runner,
+        cycle_agent: input.cycle_agent,
         report_port: input.report_port,
         task_resources: input.task_resources,
         clock: Arc::clone(&clock),

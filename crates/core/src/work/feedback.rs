@@ -1,5 +1,5 @@
 //! Human collaboration on Work Items: comments from trusted Work State project members are ingested as
-//! feedback for the next investigation. Comments never change permissions, budgets, or scope.
+//! feedback for the next cycle. Comments never change permissions, budgets, or scope.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use reili_core::investigation::{BudgetDecision, RunBudget};
+use reili_core::cycle_agent::{BudgetDecision, RunBudget};
 use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
 use rig::agent::Agent;
 use rig::completion::{Prompt, PromptError};

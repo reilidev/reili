@@ -199,7 +199,7 @@ async fn statuses_written_by_reili_and_by_humans_are_observed(
 ) {
     let repository = harness.repository();
     let created = create_item(&repository, "contract-status", "contract:status").await;
-    assert_eq!(created.observed_status, WorkItemStatus::Investigating);
+    assert_eq!(created.observed_status, WorkItemStatus::InProgress);
 
     let mut resolved = created.state.clone();
     resolved.status = WorkItemStatus::Resolved;

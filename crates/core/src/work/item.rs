@@ -6,7 +6,7 @@ use std::fmt;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::investigation::{EvidenceRef, Finding, Hypothesis, Recommendation};
+use super::evidence::{EvidenceRef, Finding, Hypothesis, Recommendation};
 use super::record::CommentId;
 use crate::objective::ObjectiveId;
 
@@ -116,7 +116,7 @@ pub fn token_jaccard(left: &str, right: &str) -> f64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkItemStatus {
-    Investigating,
+    InProgress,
     NeedsHuman,
     Proposed,
     Resolved,
@@ -125,7 +125,7 @@ pub enum WorkItemStatus {
 
 impl WorkItemStatus {
     pub const ALL: [Self; 5] = [
-        Self::Investigating,
+        Self::InProgress,
         Self::NeedsHuman,
         Self::Proposed,
         Self::Resolved,
@@ -135,7 +135,7 @@ impl WorkItemStatus {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Investigating => "investigating",
+            Self::InProgress => "in-progress",
             Self::NeedsHuman => "needs-human",
             Self::Proposed => "proposed",
             Self::Resolved => "resolved",

@@ -1,5 +1,5 @@
+pub mod cycle_agent;
 pub mod error;
-pub mod investigation;
 pub mod knowledge;
 pub mod logger;
 pub mod messaging;

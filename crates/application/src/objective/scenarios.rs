@@ -8,9 +8,8 @@ use reili_core::messaging::slack::{SlackFileDownloadPort, SlackMessageSearchPort
 use reili_core::objective::ObjectiveDefinition;
 use reili_core::task::TaskResources;
 use reili_core::work::{
-    CycleResult, EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus,
-    InvestigationReport, KnowledgeCandidate, Recommendation, Severity, WorkItemKind,
-    WorkItemProposal, WorkItemStatus,
+    CycleReport, CycleResult, EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus,
+    KnowledgeCandidate, Recommendation, Severity, WorkItemKind, WorkItemProposal, WorkItemStatus,
 };
 
 use super::cycle::{ObjectiveCycleDeps, ObjectiveCycleRunner};
@@ -18,7 +17,7 @@ use super::scheduler::{ObjectiveScheduler, ObjectiveSchedulerDeps};
 use super::store::WorkStateStore;
 use super::testing::{
     FakeWorkStateRepository, ManualClock, NoopLogger, RecordingCanvasMemory, RecordingReportPort,
-    ScriptedInvestigationRunner, ScriptedResponse, at,
+    ScriptedCycleAgentRunner, ScriptedResponse, at,
 };
 use super::tests_support::sample_objective;
 
@@ -27,7 +26,7 @@ const START: &str = "2026-10-15T00:00:00Z";
 struct Harness {
     clock: ManualClock,
     repository: FakeWorkStateRepository,
-    runner: ScriptedInvestigationRunner,
+    runner: ScriptedCycleAgentRunner,
     reports: RecordingReportPort,
     canvas: RecordingCanvasMemory,
 }
@@ -38,7 +37,7 @@ impl Harness {
         Self {
             repository: FakeWorkStateRepository::new(clock.clone()),
             clock,
-            runner: ScriptedInvestigationRunner::default(),
+            runner: ScriptedCycleAgentRunner::default(),
             reports: RecordingReportPort::default(),
             canvas: RecordingCanvasMemory::with_memory("checkout-api logs live in index main"),
         }
@@ -64,7 +63,7 @@ impl Harness {
         };
         let runner = Arc::new(ObjectiveCycleRunner::new(ObjectiveCycleDeps {
             store: store.clone(),
-            investigation_runner: Arc::new(self.runner.clone()),
+            cycle_agent: Arc::new(self.runner.clone()),
             report_port: Arc::new(self.reports.clone()),
             task_resources: resources,
             clock: Arc::new(self.clock.clone()),
@@ -139,8 +138,8 @@ fn proposal(key: &str, status: WorkItemStatus) -> WorkItemProposal {
     }
 }
 
-fn report(work_items: Vec<WorkItemProposal>) -> InvestigationReport {
-    InvestigationReport {
+fn report(work_items: Vec<WorkItemProposal>) -> CycleReport {
+    CycleReport {
         summary: "checkout-api error rate regressed after deploy 42.".to_string(),
         evidence: vec![evidence(
             "E1",
@@ -158,7 +157,7 @@ fn report(work_items: Vec<WorkItemProposal>) -> InvestigationReport {
     }
 }
 
-fn push_report(harness: &Harness, report: InvestigationReport) {
+fn push_report(harness: &Harness, report: CycleReport) {
     harness.runner.push_report(report, 1_000);
 }
 
@@ -329,7 +328,7 @@ async fn scenario_b_competing_hypotheses_are_kept_separately_with_their_evidence
     );
     assert_eq!(
         item.status,
-        WorkItemStatus::Investigating,
+        WorkItemStatus::InProgress,
         "`resolved` needs a finding backed by cited evidence"
     );
     let ledger_number = harness
@@ -353,7 +352,7 @@ async fn scenario_b_competing_hypotheses_are_kept_separately_with_their_evidence
 // C. Restart recovery -------------------------------------------------------------------------
 
 #[tokio::test]
-async fn scenario_c_crash_during_investigation_resumes_after_lease_expiry() {
+async fn scenario_c_crash_during_work_resumes_after_lease_expiry() {
     let harness = Harness::new();
     let objective = sample_objective("checkout");
     harness.runner.push(ScriptedResponse::Hang);
@@ -361,14 +360,14 @@ async fn scenario_c_crash_during_investigation_resumes_after_lease_expiry() {
 
     let handles = first.tick().await;
     assert_eq!(handles.len(), 1);
-    // Let the cycle reach the investigation, then kill the process without cleanup.
+    // Let the cycle reach the agent's work, then kill the process without cleanup.
     for _ in 0..10_000 {
         if harness.runner.calls() == 1 {
             break;
         }
         tokio::task::yield_now().await;
     }
-    assert_eq!(harness.runner.calls(), 1, "cycle reached the investigation");
+    assert_eq!(harness.runner.calls(), 1, "cycle reached the agent");
     for handle in handles {
         handle.abort();
     }
@@ -405,7 +404,7 @@ async fn scenario_c_crash_during_investigation_resumes_after_lease_expiry() {
 }
 
 #[tokio::test]
-async fn scenario_c_resume_after_decide_does_not_repeat_the_investigation() {
+async fn scenario_c_resume_after_decide_does_not_repeat_the_agent_work() {
     let harness = Harness::new();
     let objective = sample_objective("checkout");
     *harness.reports.fail_posts.lock().expect("lock") = true;
@@ -432,7 +431,7 @@ async fn scenario_c_resume_after_decide_does_not_repeat_the_investigation() {
     let second = harness.process(vec![objective], "instance-2");
     tick(&second).await;
 
-    assert_eq!(harness.runner.calls(), 1, "investigation is not re-run");
+    assert_eq!(harness.runner.calls(), 1, "the agent is not re-run");
     assert_eq!(
         harness.reports.posted().len(),
         1,
@@ -585,7 +584,7 @@ async fn scenario_e_daily_budget_exhaustion_skips_cycles_and_notifies_once() {
     objective.budget.max_llm_tokens_per_day = 1_000;
     let scheduler = harness.process(vec![objective], "instance-1");
     harness.runner.push_report(
-        InvestigationReport {
+        CycleReport {
             summary: "No new findings.".to_string(),
             evidence: Vec::new(),
             work_items: Vec::new(),
@@ -622,7 +621,7 @@ async fn scenario_e_daily_budget_exhaustion_skips_cycles_and_notifies_once() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn scenario_e_time_limit_stops_runaway_investigations() {
+async fn scenario_e_time_limit_stops_runaway_agent_work() {
     let harness = Harness::new();
     let mut objective = sample_objective("checkout");
     objective.budget.max_cycle_duration_secs = 120;
@@ -692,7 +691,7 @@ async fn scenario_e_untrusted_instructions_are_not_obeyed() {
 }
 
 #[tokio::test]
-async fn scenario_c_failed_investigations_back_off_then_give_up_on_the_slot() {
+async fn scenario_c_failed_cycles_back_off_then_give_up_on_the_slot() {
     let harness = Harness::new();
     let mut objective = sample_objective("checkout");
     objective.budget.max_cycle_attempts = 3;

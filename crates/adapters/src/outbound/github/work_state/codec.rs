@@ -166,7 +166,7 @@ fn render_work_item_sections(state: &WorkItemState, detailed: bool) -> String {
     for (title, values) in [
         ("Open questions", &state.open_questions),
         ("Next actions", &state.next_actions),
-        ("Investigation plan", &state.plan),
+        ("Plan", &state.plan),
     ] {
         if !values.is_empty() {
             let _ = write!(text, "\n### {title}\n");

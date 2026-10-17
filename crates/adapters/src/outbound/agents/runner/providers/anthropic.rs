@@ -1,13 +1,11 @@
 use async_trait::async_trait;
+use reili_core::cycle_agent::{CycleAgentOutcome, CycleAgentPort, RunCycleAgentInput};
 use reili_core::error::AgentRunFailedError;
-use reili_core::investigation::{
-    InvestigationRunOutcome, InvestigationRunnerPort, RunInvestigationInput,
-};
 use reili_core::secret::SecretString;
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig::{client::ProviderClient, providers::anthropic};
 
-use super::super::investigation_runner::{RunLlmInvestigationInput, run_investigation};
+use super::super::cycle_agent::{RunCycleAgentLlmInput, run_cycle_agent};
 use super::super::provider_settings::{
     CreateAnthropicProviderSettingsInput, LlmProviderSettings, create_anthropic_provider_settings,
 };
@@ -73,11 +71,11 @@ impl TaskRunnerPort for AnthropicTaskRunner {
 }
 
 #[async_trait]
-impl InvestigationRunnerPort for AnthropicTaskRunner {
+impl CycleAgentPort for AnthropicTaskRunner {
     async fn run(
         &self,
-        input: RunInvestigationInput,
-    ) -> Result<InvestigationRunOutcome, AgentRunFailedError> {
+        input: RunCycleAgentInput,
+    ) -> Result<CycleAgentOutcome, AgentRunFailedError> {
         let client =
             anthropic::Client::from_val(self.api_key.expose().to_string()).map_err(|error| {
                 AgentRunFailedError::new_permanent(
@@ -86,7 +84,7 @@ impl InvestigationRunnerPort for AnthropicTaskRunner {
                 )
             })?;
 
-        run_investigation(RunLlmInvestigationInput {
+        run_cycle_agent(RunCycleAgentLlmInput {
             client: client.clone(),
             sub_agent_client: client,
             settings: self.provider_settings.clone(),

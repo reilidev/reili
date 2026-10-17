@@ -7,10 +7,10 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use reili_core::error::{AgentRunFailedError, PortError};
-use reili_core::investigation::{
-    InvestigationRunOutcome, InvestigationRunReport, InvestigationRunnerPort, RunInvestigationInput,
+use reili_core::cycle_agent::{
+    CycleAgentOutcome, CycleAgentPort, CycleAgentRun, RunCycleAgentInput,
 };
+use reili_core::error::{AgentRunFailedError, PortError};
 use reili_core::logger::LogEntry;
 use reili_core::messaging::slack::{
     AppendSlackCanvasMemoryInput, ListSlackCanvasMemoriesInput, ObjectiveReportMessage,
@@ -20,8 +20,8 @@ use reili_core::messaging::slack::{
 use reili_core::objective::ObjectiveId;
 use reili_core::task::{LlmExecutionMetadata, LlmUsageSnapshot};
 use reili_core::work::{
-    CommentId, HumanComment, InvestigationReport, ObjectiveLedgerState, RecordKey, RecordRef,
-    StoredLedger, StoredWorkItem, WorkItemState, WorkItemStatus, WorkStateComment, WorkStateError,
+    CommentId, CycleReport, HumanComment, ObjectiveLedgerState, RecordKey, RecordRef, StoredLedger,
+    StoredWorkItem, WorkItemState, WorkItemStatus, WorkStateComment, WorkStateError,
     WorkStateRepositoryPort, decode_state_json,
 };
 
@@ -290,7 +290,7 @@ impl FakeWorkStateRepository {
         let observed_status = if issue.closed && observed_status.is_open() {
             WorkItemStatus::Resolved
         } else if !issue.closed && !observed_status.is_open() {
-            WorkItemStatus::Investigating
+            WorkItemStatus::InProgress
         } else {
             observed_status
         };
@@ -576,28 +576,28 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
     }
 }
 
-/// Scripted investigation runner: returns queued reports in order and records each brief.
+/// Scripted cycle agent: returns queued reports in order and records each brief.
 #[derive(Clone, Default)]
-pub(crate) struct ScriptedInvestigationRunner {
+pub(crate) struct ScriptedCycleAgentRunner {
     responses: Arc<Mutex<Vec<ScriptedResponse>>>,
     pub briefs: Arc<Mutex<Vec<String>>>,
 }
 
 pub(crate) enum ScriptedResponse {
     Report {
-        report: Option<InvestigationReport>,
+        report: Option<CycleReport>,
         tokens: u64,
     },
     Fail(String),
     Hang,
 }
 
-impl ScriptedInvestigationRunner {
+impl ScriptedCycleAgentRunner {
     pub(crate) fn push(&self, response: ScriptedResponse) {
         self.responses.lock().expect("lock").push(response);
     }
 
-    pub(crate) fn push_report(&self, report: InvestigationReport, tokens: u64) {
+    pub(crate) fn push_report(&self, report: CycleReport, tokens: u64) {
         self.push(ScriptedResponse::Report {
             report: Some(report),
             tokens,
@@ -619,11 +619,11 @@ impl ScriptedInvestigationRunner {
 }
 
 #[async_trait]
-impl InvestigationRunnerPort for ScriptedInvestigationRunner {
+impl CycleAgentPort for ScriptedCycleAgentRunner {
     async fn run(
         &self,
-        input: RunInvestigationInput,
-    ) -> Result<InvestigationRunOutcome, AgentRunFailedError> {
+        input: RunCycleAgentInput,
+    ) -> Result<CycleAgentOutcome, AgentRunFailedError> {
         let rendered = input
             .brief
             .sections
@@ -641,35 +641,31 @@ impl InvestigationRunnerPort for ScriptedInvestigationRunner {
             }
         };
         match response {
-            None => Ok(InvestigationRunOutcome::Completed(Box::new(
-                InvestigationRunReport {
-                    report: Some(InvestigationReport {
-                        summary: "No new findings.".to_string(),
-                        evidence: Vec::new(),
-                        work_items: Vec::new(),
-                        knowledge_candidates: Vec::new(),
-                        no_new_findings: true,
-                    }),
-                    usage: LlmUsageSnapshot::default(),
-                    execution: execution(),
-                    final_text: String::new(),
-                },
-            ))),
+            None => Ok(CycleAgentOutcome::Completed(Box::new(CycleAgentRun {
+                report: Some(CycleReport {
+                    summary: "No new findings.".to_string(),
+                    evidence: Vec::new(),
+                    work_items: Vec::new(),
+                    knowledge_candidates: Vec::new(),
+                    no_new_findings: true,
+                }),
+                usage: LlmUsageSnapshot::default(),
+                execution: execution(),
+                final_text: String::new(),
+            }))),
             Some(ScriptedResponse::Report { report, tokens }) => {
                 input.budget.record_tokens(tokens);
-                Ok(InvestigationRunOutcome::Completed(Box::new(
-                    InvestigationRunReport {
-                        report,
-                        usage: LlmUsageSnapshot {
-                            requests: 1,
-                            input_tokens: tokens,
-                            output_tokens: 0,
-                            total_tokens: tokens,
-                        },
-                        execution: execution(),
-                        final_text: String::new(),
+                Ok(CycleAgentOutcome::Completed(Box::new(CycleAgentRun {
+                    report,
+                    usage: LlmUsageSnapshot {
+                        requests: 1,
+                        input_tokens: tokens,
+                        output_tokens: 0,
+                        total_tokens: tokens,
                     },
-                )))
+                    execution: execution(),
+                    final_text: String::new(),
+                })))
             }
             Some(ScriptedResponse::Fail(message)) => Err(AgentRunFailedError::new(
                 LlmUsageSnapshot::default(),
@@ -677,7 +673,7 @@ impl InvestigationRunnerPort for ScriptedInvestigationRunner {
             )),
             Some(ScriptedResponse::Hang) => {
                 input.cancellation.wait_for_cancellation().await;
-                Ok(InvestigationRunOutcome::Cancelled)
+                Ok(CycleAgentOutcome::Cancelled)
             }
         }
     }

@@ -48,7 +48,7 @@ pub fn sample_work_item(key: &str) -> WorkItemState {
         title: format!("Sample {key}"),
         kind: WorkItemKind::Incident,
         severity: Severity::Medium,
-        status: WorkItemStatus::Investigating,
+        status: WorkItemStatus::InProgress,
         problem_statement: "sample problem".to_string(),
         plan: Vec::new(),
         hypotheses: Vec::new(),

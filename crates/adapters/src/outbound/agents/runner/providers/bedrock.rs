@@ -2,14 +2,12 @@ use async_trait::async_trait;
 use aws_config::sts::AssumeRoleProvider;
 use aws_config::{BehaviorVersion, ConfigLoader, SdkConfig};
 use aws_credential_types::provider::ProvideCredentials;
+use reili_core::cycle_agent::{CycleAgentOutcome, CycleAgentPort, RunCycleAgentInput};
 use reili_core::error::{AgentRunFailedError, PortError};
-use reili_core::investigation::{
-    InvestigationRunOutcome, InvestigationRunnerPort, RunInvestigationInput,
-};
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig_bedrock::client::Client;
 
-use super::super::investigation_runner::{RunLlmInvestigationInput, run_investigation};
+use super::super::cycle_agent::{RunCycleAgentLlmInput, run_cycle_agent};
 use super::super::provider_settings::{
     CreateBedrockProviderSettingsInput, LlmProviderSettings, create_bedrock_provider_settings,
 };
@@ -155,12 +153,12 @@ fn credentials_error_message(aws: &BedrockAwsConfig, cause: &str) -> String {
 }
 
 #[async_trait]
-impl InvestigationRunnerPort for BedrockTaskRunner {
+impl CycleAgentPort for BedrockTaskRunner {
     async fn run(
         &self,
-        input: RunInvestigationInput,
-    ) -> Result<InvestigationRunOutcome, AgentRunFailedError> {
-        run_investigation(RunLlmInvestigationInput {
+        input: RunCycleAgentInput,
+    ) -> Result<CycleAgentOutcome, AgentRunFailedError> {
+        run_cycle_agent(RunCycleAgentLlmInput {
             client: self.client.clone(),
             sub_agent_client: self.sub_agent_client.clone(),
             settings: self.provider_settings.clone(),

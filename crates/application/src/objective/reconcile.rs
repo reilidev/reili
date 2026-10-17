@@ -1,6 +1,6 @@
 //! Observe (human side): fold human edits in the Work State backend back into Work State before
-//! investigating. Status changes win over Reili's own view; comments from trusted members of the
-//! Work State project become feedback for the next investigation.
+//! the agent works. Status changes win over Reili's own view; comments from trusted members of the
+//! Work State project become feedback for the next cycle.
 
 use chrono::{DateTime, Utc};
 use reili_core::work::{
@@ -143,7 +143,7 @@ fn describe_operations(operations: &[HumanOperation]) -> Vec<String> {
                 status.as_str()
             )),
             HumanOperation::Feedback(note) => Some(format!(
-                "Feedback from @{} recorded and will be provided to the next investigation.",
+                "Feedback from @{} recorded and will be provided to the next cycle.",
                 note.author
             )),
             HumanOperation::ProcessedUpTo(_) => None,
@@ -203,7 +203,7 @@ mod tests {
             .expect("reconcile");
 
         let item = &outcome.items[0].state;
-        assert_eq!(item.status, WorkItemStatus::Investigating);
+        assert_eq!(item.status, WorkItemStatus::InProgress);
         assert_eq!(item.feedback.len(), 1);
         assert_eq!(item.feedback[0].author, "alice");
         assert_eq!(
@@ -233,7 +233,7 @@ mod tests {
             .expect("reconcile");
 
         let item = &outcome.items[0].state;
-        assert_eq!(item.status, WorkItemStatus::Investigating);
+        assert_eq!(item.status, WorkItemStatus::InProgress);
         assert!(item.feedback.is_empty());
         assert_eq!(outcome.notes.len(), 1);
     }

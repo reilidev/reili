@@ -45,8 +45,8 @@ use reili_application::{
     SlackMentionAuthorizationGate, SlackMentionAuthorizationService, StartTaskWorkerRunnerUseCase,
     StartTaskWorkerRunnerUseCaseDeps, TaskExecutionDeps, TaskLogger,
 };
+use reili_core::cycle_agent::CycleAgentPort;
 use reili_core::error::PortError;
-use reili_core::investigation::InvestigationRunnerPort;
 use reili_core::knowledge::WebSearchPort;
 use reili_core::messaging::slack::{
     AutoResponseJudgePort, SlackAuthorizationPolicy, SlackChannelLookupPort,
@@ -92,20 +92,20 @@ pub enum RuntimeBootstrapError {
     ProviderClientInitialization { provider: String, message: String },
 }
 
-/// One provider runner serving both Slack tasks and objective investigations.
+/// One provider runner serving both Slack tasks and objective cycles.
 pub(crate) struct AgentRunners {
     pub(crate) task: Arc<dyn TaskRunnerPort>,
-    pub(crate) investigation: Arc<dyn InvestigationRunnerPort>,
+    pub(crate) cycle_agent: Arc<dyn CycleAgentPort>,
 }
 
 impl AgentRunners {
     fn from_runner<R>(runner: Arc<R>) -> Self
     where
-        R: TaskRunnerPort + InvestigationRunnerPort + 'static,
+        R: TaskRunnerPort + CycleAgentPort + 'static,
     {
         Self {
             task: Arc::clone(&runner) as Arc<dyn TaskRunnerPort>,
-            investigation: runner,
+            cycle_agent: runner,
         }
     }
 }
@@ -204,7 +204,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     let objective_scheduler =
         objectives::build_objective_scheduler(objectives::BuildObjectiveSchedulerInput {
             config,
-            investigation_runner: runners.investigation,
+            cycle_agent: runners.cycle_agent,
             task_resources: task_resources.clone(),
             report_port: objectives::build_objective_report_port(Arc::clone(&slack_web_api_client)),
             logger: Arc::clone(&logger),

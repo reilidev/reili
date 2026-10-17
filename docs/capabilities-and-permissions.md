@@ -33,7 +33,7 @@ The runtime can expose only the following tool families:
 - JIRA MCP reads when `[connector.jira]` is configured: `searchJiraIssuesUsingJql`,
   `getJiraIssue`, `getJiraIssueRemoteIssueLinks`, `getTransitionsForJiraIssue`
 - External web lookup: `search_web`
-- Objective cycles only: `submit_investigation_report` (hands the structured report back to Reili;
+- Objective cycles only: `submit_cycle_report` (hands the structured report back to Reili;
   it writes nothing by itself)
 
 In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog

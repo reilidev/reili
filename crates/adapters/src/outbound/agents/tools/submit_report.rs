@@ -3,26 +3,26 @@
 
 use std::collections::BTreeSet;
 
+use reili_core::cycle_agent::ReportSlot;
 use reili_core::error::PortError;
-use reili_core::investigation::ReportSlot;
-use reili_core::work::InvestigationReport;
+use reili_core::work::CycleReport;
 use rig::tool::{Tool, ToolContext};
 use serde_json::{Value, json};
 
 const MAX_WORK_ITEMS: usize = 10;
 
 #[derive(Clone)]
-pub struct SubmitInvestigationReportTool {
+pub struct SubmitCycleReportTool {
     slot: ReportSlot,
 }
 
-impl SubmitInvestigationReportTool {
+impl SubmitCycleReportTool {
     #[must_use]
     pub fn new(slot: ReportSlot) -> Self {
         Self { slot }
     }
 
-    fn validate(&self, report: &InvestigationReport) -> Vec<String> {
+    fn validate(&self, report: &CycleReport) -> Vec<String> {
         let mut problems = Vec::new();
         if report.summary.trim().is_empty() {
             problems.push("`summary` must not be empty".to_string());
@@ -83,8 +83,8 @@ impl SubmitInvestigationReportTool {
     }
 }
 
-impl Tool for SubmitInvestigationReportTool {
-    const NAME: &'static str = "submit_investigation_report";
+impl Tool for SubmitCycleReportTool {
+    const NAME: &'static str = "submit_cycle_report";
 
     type Error = PortError;
     type Args = Value;
@@ -121,15 +121,15 @@ impl Tool for SubmitInvestigationReportTool {
         _context: &mut ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
-        let report: InvestigationReport = serde_json::from_value(args).map_err(|error| {
+        let report: CycleReport = serde_json::from_value(args).map_err(|error| {
             PortError::invalid_input(format!(
-                "report does not match the schema: {error}. Fix it and call submit_investigation_report again."
+                "report does not match the schema: {error}. Fix it and call submit_cycle_report again."
             ))
         })?;
         let problems = self.validate(&report);
         if !problems.is_empty() {
             return Err(PortError::invalid_input(format!(
-                "report rejected: {}. Fix these and call submit_investigation_report again.",
+                "report rejected: {}. Fix these and call submit_cycle_report again.",
                 problems.join("; ")
             )));
         }
@@ -197,7 +197,7 @@ fn work_item_schema() -> Value {
             "title": { "type": "string" },
             "kind": { "type": "string", "enum": ["risk", "incident", "improvement", "toil", "security", "cost"] },
             "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
-            "proposed_status": { "type": "string", "enum": ["investigating", "needs_human", "proposed", "resolved"] },
+            "proposed_status": { "type": "string", "enum": ["in_progress", "needs_human", "proposed", "resolved"] },
             "problem_statement": { "type": "string" },
             "plan": { "type": "array", "items": { "type": "string" } },
             "hypotheses": { "type": "array", "items": hypothesis_schema() },
@@ -238,11 +238,11 @@ fn knowledge_schema() -> Value {
 
 #[cfg(test)]
 mod tests {
-    use reili_core::investigation::ReportSlot;
+    use reili_core::cycle_agent::ReportSlot;
     use rig::tool::{Tool, ToolContext};
     use serde_json::json;
 
-    use super::SubmitInvestigationReportTool;
+    use super::SubmitCycleReportTool;
 
     fn item(evidence: &str) -> serde_json::Value {
         json!({
@@ -250,15 +250,15 @@ mod tests {
             "title": "errors",
             "kind": "incident",
             "severity": "high",
-            "proposed_status": "investigating",
+            "proposed_status": "in_progress",
             "problem_statement": "p",
             "hypotheses": [{ "id": "H1", "statement": "s", "status": "supported", "evidence_ids": [evidence] }]
         })
     }
 
-    fn tool() -> (SubmitInvestigationReportTool, ReportSlot) {
+    fn tool() -> (SubmitCycleReportTool, ReportSlot) {
         let slot = ReportSlot::new();
-        (SubmitInvestigationReportTool::new(slot.clone()), slot)
+        (SubmitCycleReportTool::new(slot.clone()), slot)
     }
 
     #[tokio::test]

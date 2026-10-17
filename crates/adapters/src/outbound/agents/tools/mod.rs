@@ -18,4 +18,4 @@ pub use spawn_agent::{
     SpawnAgentTool, SpawnAgentToolArgs, SpawnAgentToolError, SpawnAgentToolInput,
     SpawnedSubAgentSpec,
 };
-pub use submit_report::SubmitInvestigationReportTool;
+pub use submit_report::SubmitCycleReportTool;

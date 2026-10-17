@@ -38,16 +38,16 @@ impl ObjectiveLifecycle {
 #[serde(rename_all = "snake_case")]
 pub enum CyclePhase {
     Observing,
-    Investigating,
-    /// Investigation results are persisted to work items; LLM work is done.
+    Working,
+    /// The agent's results are persisted to work items; LLM work is done.
     Reporting,
     Learning,
 }
 
 impl CyclePhase {
-    /// Phases from which a resumed cycle can continue without repeating the investigation.
+    /// Phases from which a resumed cycle can continue without repeating the agent's work.
     #[must_use]
-    pub fn investigation_persisted(self) -> bool {
+    pub fn work_persisted(self) -> bool {
         matches!(self, Self::Reporting | Self::Learning)
     }
 }

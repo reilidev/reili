@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use reili_core::investigation::{BudgetDecision, RunBudget};
+use reili_core::cycle_agent::{BudgetDecision, RunBudget};
 use reili_core::logger::{LogFieldValue, Logger, log_fields};
 use reili_core::task::{
     TaskCancellation, TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort, TaskRuntime,
@@ -943,7 +943,7 @@ mod tests {
 
     #[tokio::test]
     async fn budget_skips_tool_calls_once_exhausted_but_allows_report_submission() {
-        use reili_core::investigation::{RunBudget, RunLimits};
+        use reili_core::cycle_agent::{RunBudget, RunLimits};
 
         let mut progress_event_port = MockTaskProgressEventPort::new();
         progress_event_port.expect_publish().returning(|_| Ok(()));
@@ -974,7 +974,7 @@ mod tests {
             ToolCallAction::Skip(_)
         ));
         assert_eq!(
-            hook.handle_tool_call("submit_investigation_report", Some("t3"), "i3")
+            hook.handle_tool_call("submit_cycle_report", Some("t3"), "i3")
                 .await,
             ToolCallAction::Run
         );

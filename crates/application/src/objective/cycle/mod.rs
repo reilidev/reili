@@ -1,29 +1,31 @@
-//! One objective cycle: Observe → Plan/Investigate (agent) → Decide → Report → Learn.
+//! One objective cycle: Observe → Work (agent) → Decide → Report → Learn. The agent chooses the
+//! work that moves the objective forward (investigating, reviewing, following up, proposing);
+//! the cycle does not depend on what kind of work it is.
 //!
 //! Durability: every phase boundary is checkpointed in the objective ledger record. A cycle
 //! holds a time-limited lease that is renewed while the agent runs; if the process dies, the lease
 //! expires and the next scheduler tick resumes the cycle. Phases after Decide never re-run the
-//! agent, so a crash during reporting does not repeat (or pay for) the investigation. Work State
+//! agent, so a crash during reporting does not repeat (or pay for) the agent's work. Work State
 //! backends offer no transactions, so these are best-effort, at-least-once semantics: a crash
-//! between a work item write and the ledger checkpoint re-runs the investigation, whose results
+//! between a work item write and the ledger checkpoint re-runs the agent, whose results
 //! merge into the same work items by stable key instead of creating duplicates.
 //!
-//! One file per phase: `lease` (acquire and renew), `observe`, `investigate`, `apply` (Decide),
+//! One file per phase: `lease` (acquire and renew), `observe`, `work`, `apply` (Decide),
 //! `notify` (Report), `learn`, and `finalize`.
 
 mod apply;
 mod finalize;
-mod investigate;
 mod learn;
 mod lease;
 mod notify;
 mod observe;
+mod work;
 
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
+use reili_core::cycle_agent::CycleAgentPort;
 use reili_core::error::PortError;
-use reili_core::investigation::InvestigationRunnerPort;
 use reili_core::messaging::slack::ObjectiveReportPort;
 use reili_core::objective::ObjectiveDefinition;
 use reili_core::task::{TaskCancellation, TaskResources};
@@ -31,9 +33,9 @@ use reili_core::work::{ActiveCycle, CyclePhase, CycleResult, StoredLedger, WorkS
 use thiserror::Error;
 use uuid::Uuid;
 
-use self::investigate::InvestigationResult;
 use self::lease::{AcquireInput, Acquisition, acquire};
 use self::notify::ReportError;
+use self::work::WorkOutcome;
 use super::clock::Clock;
 use super::store::WorkStateStore;
 use crate::{TaskLogger, string_log_meta};
@@ -41,7 +43,7 @@ use crate::{TaskLogger, string_log_meta};
 #[derive(Clone)]
 pub struct ObjectiveCycleDeps {
     pub store: WorkStateStore,
-    pub investigation_runner: Arc<dyn InvestigationRunnerPort>,
+    pub cycle_agent: Arc<dyn CycleAgentPort>,
     pub report_port: Arc<dyn ObjectiveReportPort>,
     pub task_resources: TaskResources,
     pub clock: Arc<dyn Clock>,
@@ -183,7 +185,7 @@ impl ObjectiveCycleRunner {
         cancellation: TaskCancellation,
     ) -> Result<CycleRunOutcome, ObjectiveCycleError> {
         let run_id = active.run_id.clone();
-        if !active.phase.investigation_persisted() {
+        if !active.phase.work_persisted() {
             let observed = self.observe(objective, &ledger).await?;
             let now = self.deps.clock.now();
             let lease = self.deps.lease_duration;
@@ -192,7 +194,7 @@ impl ObjectiveCycleRunner {
                 .store
                 .mutate_ledger(&ledger, |state| {
                     if let Some(cycle) = state.active_cycle.as_mut() {
-                        cycle.phase = CyclePhase::Investigating;
+                        cycle.phase = CyclePhase::Working;
                         cycle.lease_expires_at = now + lease;
                     }
                     state.updated_at = now;
@@ -200,24 +202,24 @@ impl ObjectiveCycleRunner {
                 .await?;
             ledger = saved;
 
-            let investigation = self
-                .investigate(objective, &mut ledger, &active, &observed, &cancellation)
+            let outcome = self
+                .work(objective, &mut ledger, &active, &observed, &cancellation)
                 .await?;
-            match investigation {
-                InvestigationResult::Interrupted { tokens } => {
+            match outcome {
+                WorkOutcome::Interrupted { tokens } => {
                     self.record_usage(&ledger, tokens).await?;
                     return Ok(CycleRunOutcome::Interrupted {
                         run_id,
-                        reason: "shutdown requested during investigation".to_string(),
+                        reason: "shutdown requested while the agent was working".to_string(),
                     });
                 }
-                InvestigationResult::Ended { result, tokens } => {
+                WorkOutcome::Ended { result, tokens } => {
                     let result = self
                         .finalize(objective, &ledger, &active, result, tokens)
                         .await?;
                     return Ok(CycleRunOutcome::Finished { run_id, result });
                 }
-                InvestigationResult::Report { report, tokens } => {
+                WorkOutcome::Report { report, tokens } => {
                     ledger = self
                         .decide(objective, &ledger, &active, &observed, &report, tokens)
                         .await?;

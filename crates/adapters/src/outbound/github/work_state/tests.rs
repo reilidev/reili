@@ -143,7 +143,7 @@ async fn lists_work_items_by_label_and_derives_observed_status() {
         .and(header("authorization", "Bearer installation-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             issue_json(1, "open", None, &["reili:work-item", "reili-status:needs-human"], 2),
-            issue_json(2, "closed", Some("not_planned"), &["reili:work-item", "reili-status:investigating"], 1),
+            issue_json(2, "closed", Some("not_planned"), &["reili:work-item", "reili-status:in-progress"], 1),
             issue_json(3, "open", None, &["reili:work-item", "reili-status:resolved"], 1),
             issue_json(4, "closed", Some("not_planned"), &["reili:duplicate"], 1),
             { "number": 9, "html_url": "x", "state": "open", "labels": [], "updated_at": "2026-10-15T00:00:00Z", "pull_request": {} }
@@ -162,7 +162,7 @@ async fn lists_work_items_by_label_and_derives_observed_status() {
     assert_eq!(items[1].observed_status, WorkItemStatus::Dismissed);
     assert_eq!(
         items[2].observed_status,
-        WorkItemStatus::Investigating,
+        WorkItemStatus::InProgress,
         "reopened by a human"
     );
 }
@@ -178,7 +178,7 @@ async fn save_detects_conflicts_and_preserves_human_labels() {
             None,
             &[
                 "reili:work-item",
-                "reili-status:investigating",
+                "reili-status:in-progress",
                 "customer-facing",
             ],
             3,
@@ -205,7 +205,7 @@ async fn save_detects_conflicts_and_preserves_human_labels() {
                 .collect();
             assert!(labels.contains(&"customer-facing".to_string()));
             assert!(labels.contains(&"reili-status:resolved".to_string()));
-            assert!(!labels.contains(&"reili-status:investigating".to_string()));
+            assert!(!labels.contains(&"reili-status:in-progress".to_string()));
             assert!(
                 body["body"]
                     .as_str()

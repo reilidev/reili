@@ -1,11 +1,11 @@
 //! Decide: map screened proposals onto existing work items (stable keys, then fuzzy matching),
-//! enforce per-objective limits, and merge investigation results into durable state while respecting
+//! enforce per-objective limits, and merge the agent's results into durable state while respecting
 //! human decisions.
 
 use chrono::{DateTime, Utc};
 use reili_core::objective::ObjectiveDefinition;
 use reili_core::work::{
-    EvidenceRef, Finding, HumanDecisionRequest, Hypothesis, InvestigationReport, NotificationState,
+    CycleReport, EvidenceRef, Finding, HumanDecisionRequest, Hypothesis, NotificationState,
     Recommendation, RecordKey, StatusActor, StoredWorkItem, WORK_ITEM_SCHEMA_VERSION, WorkItemKey,
     WorkItemProposal, WorkItemState, WorkItemStatus, sanitize::sanitize_for_storage, token_jaccard,
 };
@@ -169,7 +169,7 @@ fn find_match<'a>(
 pub struct ApplyContext<'a> {
     pub run_id: &'a str,
     pub now: DateTime<Utc>,
-    pub report: &'a InvestigationReport,
+    pub report: &'a CycleReport,
 }
 
 impl ApplyContext<'_> {
@@ -201,7 +201,7 @@ pub fn new_work_item_state(
         title: String::new(),
         kind: proposal.kind,
         severity: proposal.severity,
-        status: WorkItemStatus::Investigating,
+        status: WorkItemStatus::InProgress,
         problem_statement: String::new(),
         plan: Vec::new(),
         hypotheses: Vec::new(),
@@ -215,7 +215,7 @@ pub fn new_work_item_state(
         history: vec![reili_core::work::StatusChange {
             at: context.now,
             from: None,
-            to: WorkItemStatus::Investigating,
+            to: WorkItemStatus::InProgress,
             actor: StatusActor::Reili,
             reason: format!("discovered in cycle {}", context.run_id),
         }],
@@ -455,7 +455,7 @@ mod tests {
         let existing = vec![stored(
             7,
             "checkout:after-deploy-5xx",
-            WorkItemStatus::Investigating,
+            WorkItemStatus::InProgress,
         )];
         let objective = objective();
         let proposals = vec![proposal(HypothesisStatus::Proposed)];
@@ -560,7 +560,7 @@ mod tests {
             report: &report,
         };
         let mut screened = proposal(HypothesisStatus::Proposed);
-        screened.proposed_status = WorkItemStatus::Investigating;
+        screened.proposed_status = WorkItemStatus::InProgress;
         for status in [WorkItemStatus::NeedsHuman, WorkItemStatus::Dismissed] {
             let mut state = sample_work_item("checkout:5xx-after-deploy");
             state.status = status;

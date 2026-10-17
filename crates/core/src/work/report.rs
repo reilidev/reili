@@ -1,9 +1,9 @@
-//! The structured report an objective investigation submits. Reili's report policy screens it before
+//! The structured report the agent submits at the end of an objective cycle. Reili's report policy screens it before
 //! anything is recorded.
 
 use serde::{Deserialize, Serialize};
 
-use super::investigation::{EvidenceRef, Finding, Hypothesis, Recommendation};
+use super::evidence::{EvidenceRef, Finding, Hypothesis, Recommendation};
 use super::item::{Severity, WorkItemKind, WorkItemStatus};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,7 +48,7 @@ pub struct KnowledgeCandidate {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct InvestigationReport {
+pub struct CycleReport {
     pub summary: String,
     #[serde(default)]
     pub evidence: Vec<EvidenceRef>,
@@ -61,7 +61,7 @@ pub struct InvestigationReport {
     pub no_new_findings: bool,
 }
 
-impl InvestigationReport {
+impl CycleReport {
     #[must_use]
     pub fn evidence_by_id(&self, id: &str) -> Option<&EvidenceRef> {
         self.evidence.iter().find(|evidence| evidence.id == id)
@@ -70,12 +70,12 @@ impl InvestigationReport {
 
 #[cfg(test)]
 mod tests {
-    use super::InvestigationReport;
+    use super::CycleReport;
     use crate::work::{Severity, WorkItemStatus};
 
     #[test]
     fn deserializes_minimal_report() {
-        let report: InvestigationReport =
+        let report: CycleReport =
             serde_json::from_str(r#"{"summary":"nothing new","no_new_findings":true}"#)
                 .expect("deserialize");
 
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn deserializes_work_item_proposal() {
-        let report: InvestigationReport = serde_json::from_str(
+        let report: CycleReport = serde_json::from_str(
             r#"{
               "summary":"s",
               "evidence":[{"id":"E1","source":"datadog","url":"https://app.datadoghq.com/x","description":"5xx"}],

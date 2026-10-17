@@ -1,6 +1,6 @@
 //! Lead-agent instructions and prompt rendering for objective cycles.
 
-use reili_core::investigation::{BriefTrust, InvestigationBrief};
+use reili_core::cycle_agent::{BriefTrust, CycleBrief};
 use reili_core::work::sanitize::wrap_untrusted;
 
 use crate::outbound::agents::connector::ConnectorPromptFact;
@@ -22,19 +22,22 @@ objective, and choose the work that most reduces that gap.
 # Cycle method
 1. Observe: read the brief. Prior work items, human feedback, and knowledge memory are in the
    brief. Focus on what changed since the previous cycle.
-2. Plan: pick at most a few problems worth investigating now (highest risk/impact first). Prefer
-   continuing existing work items over opening new ones. Do not re-propose hypotheses listed as
-   refuted unless you have new evidence.
-3. Investigate in depth: delegate independent scopes to parallel sub-agents with spawn_agent,
-   combining tools across sources (Datadog, GitHub, docs, web) as each question requires. Use
-   time-series analysis, before/after comparisons around deploys and config changes, incident
-   history, and code review — not just summaries.
-4. Hypotheses: for every problem, keep at least two competing hypotheses until evidence separates
-   them. A coincidence in time or a correlation alone is not a confirmed cause.
-5. Decide: for each problem choose investigate further, propose a recommendation, ask humans
-   (needs_human with one concrete question), or mark resolved with a finding that cites evidence.
-6. Report: call submit_investigation_report exactly once at the end. If nothing new and
-   material was found, submit no_new_findings = true with no work items. Do not invent problems.
+2. Plan: choose the few pieces of work that move the objective forward most this cycle (highest
+   risk/impact first). Any read-only work the tools allow counts: investigating a signal,
+   reviewing recent changes, checking whether an earlier recommendation took effect, following up
+   on open work items, or preparing a proposal. Prefer continuing existing work items over
+   opening new ones. Do not re-propose hypotheses listed as refuted unless you have new evidence.
+3. Work in depth: delegate independent scopes to parallel sub-agents with spawn_agent, combining
+   tools across sources (Datadog, GitHub, docs, web) as each question requires. Go beyond
+   summaries: compare before and after changes, read the code, and check history.
+4. Reason from evidence: keep observations (evidence), interpretations (hypotheses), and
+   conclusions (findings) apart. When a cause is uncertain, keep competing hypotheses until
+   evidence separates them; a coincidence in time or a correlation alone is not a confirmed cause.
+5. Decide: for each work item choose to keep working (in_progress), propose a recommendation, ask
+   humans (needs_human with one concrete question), or mark resolved with a finding that cites
+   evidence.
+6. Report: call submit_cycle_report exactly once at the end. If nothing new and material came out
+   of this cycle, submit no_new_findings = true with no work items. Do not invent work.
 
 # Status semantics
 - Cite evidence ids for every hypothesis and finding; citations to ids missing from `evidence`
@@ -69,7 +72,7 @@ objective, and choose the work that most reduces that gap.
 }
 
 pub struct BuildObjectivePromptInput<'a> {
-    pub brief: &'a InvestigationBrief,
+    pub brief: &'a CycleBrief,
     pub language: &'a str,
     pub prompt_facts: &'a [ConnectorPromptFact],
 }
@@ -99,7 +102,7 @@ pub fn build_objective_prompt(input: &BuildObjectivePromptInput<'_>) -> String {
         prompt.push('\n');
     }
     prompt.push_str(
-        "\nCarry out this cycle now and finish by calling submit_investigation_report exactly once.",
+        "\nCarry out this cycle now and finish by calling submit_cycle_report exactly once.",
     );
     prompt
 }
@@ -107,7 +110,7 @@ pub fn build_objective_prompt(input: &BuildObjectivePromptInput<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use chrono::{TimeZone, Utc};
-    use reili_core::investigation::{BriefSection, BriefTrust, InvestigationBrief};
+    use reili_core::cycle_agent::{BriefSection, BriefTrust, CycleBrief};
 
     use super::{
         BuildObjectiveInstructionsInput, BuildObjectivePromptInput, build_objective_instructions,
@@ -122,7 +125,7 @@ mod tests {
             spawn_tool_catalog: "## Datadog\n- search_datadog_logs: logs".to_string(),
         });
 
-        assert!(instructions.contains("submit_investigation_report exactly once"));
+        assert!(instructions.contains("submit_cycle_report exactly once"));
         assert!(instructions.contains("strictly read-only"));
         assert!(instructions.contains("<untrusted_data>"));
         assert!(instructions.contains("## Datadog\n- search_datadog_logs: logs"));
@@ -132,7 +135,7 @@ mod tests {
     #[test]
     fn prompt_wraps_untrusted_sections_only() {
         let now = Utc.timestamp_opt(1_760_000_000, 0).single().expect("time");
-        let brief = InvestigationBrief {
+        let brief = CycleBrief {
             run_id: "run-1".to_string(),
             objective_id: "checkout".to_string(),
             sections: vec![

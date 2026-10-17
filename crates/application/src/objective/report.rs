@@ -198,7 +198,7 @@ mod tests {
     fn posts_changed_items_and_skips_already_notified() {
         let objective = sample_objective("checkout");
         let ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
-        let mut notified = stored(2, WorkItemStatus::Investigating);
+        let mut notified = stored(2, WorkItemStatus::InProgress);
         notified.state.notification.last_digest = Some(notification_digest(&notified));
         let items = vec![stored(1, WorkItemStatus::NeedsHuman), notified];
 
@@ -249,7 +249,7 @@ mod tests {
         let objective = sample_objective("checkout");
         let mut ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
         ledger.remember_report_key("k".to_string(), at("2026-10-15T00:30:00Z"));
-        let items = vec![stored(1, WorkItemStatus::Investigating)];
+        let items = vec![stored(1, WorkItemStatus::InProgress)];
 
         let decision = compose_report(&ComposeReportInput {
             objective: &objective,

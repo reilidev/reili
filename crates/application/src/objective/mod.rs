@@ -1,4 +1,4 @@
-//! Objective-driven autonomous work: scheduling, the durable Observe → Investigate → Decide → Report →
+//! Objective-driven autonomous work: scheduling, the durable Observe → Work → Decide → Report →
 //! Learn cycle, and human collaboration.
 
 mod brief;

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use reili_core::investigation::{ReportSlot, RunBudget};
+use reili_core::cycle_agent::{ReportSlot, RunBudget};
 use reili_core::logger::Logger;
 use reili_core::secret::SecretString;
 use reili_core::task::{
@@ -25,7 +25,7 @@ use super::runner::usage_collector::LlmUsageCollector;
 use super::tools::{
     ReportProgressTool, ReportProgressToolInput, SaveMemoryTool, SaveMemoryToolInput,
     SaveSharedMemoryTool, SearchSlackMessagesTool, SearchWebTool, SpawnAgentTool,
-    SpawnAgentToolInput, SpawnedSubAgentSpec, SubmitInvestigationReportTool,
+    SpawnAgentToolInput, SpawnedSubAgentSpec, SubmitCycleReportTool,
 };
 use instructions::{BuildTaskInstructionsInput, build_task_instructions};
 use objective_instructions::{BuildObjectiveInstructionsInput, build_objective_instructions};
@@ -221,7 +221,7 @@ where
                 shared_prompt_context: None,
                 budget: input.run_context.execution.budget.clone(),
             }))
-            .tool(SubmitInvestigationReportTool::new(input.report_slot));
+            .tool(SubmitCycleReportTool::new(input.report_slot));
 
         let builder = match &input.run_context.resources.web_search_port {
             Some(web_search_port) => builder.tool(SearchWebTool::new(Arc::clone(web_search_port))),

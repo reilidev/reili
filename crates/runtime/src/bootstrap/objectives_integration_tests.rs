@@ -15,10 +15,10 @@ use axum::routing::{get, post};
 use chrono::{DateTime, Duration, Utc};
 use reili_adapters::outbound::github::{GitHubWorkStateConfig, GitHubWorkStateRepository};
 use reili_application::objective::{Clock, ObjectiveScheduler};
-use reili_core::error::{AgentRunFailedError, PortError};
-use reili_core::investigation::{
-    InvestigationRunOutcome, InvestigationRunReport, InvestigationRunnerPort, RunInvestigationInput,
+use reili_core::cycle_agent::{
+    CycleAgentOutcome, CycleAgentPort, CycleAgentRun, RunCycleAgentInput,
 };
+use reili_core::error::{AgentRunFailedError, PortError};
 use reili_core::logger::LogEntry;
 use reili_core::messaging::slack::{
     MockSlackFileDownloadPort, MockSlackMessageSearchPort, ObjectiveReportMessage,
@@ -31,8 +31,8 @@ use reili_core::objective::{
 use reili_core::secret::SecretString;
 use reili_core::task::{LlmExecutionMetadata, LlmUsageSnapshot, TaskResources};
 use reili_core::work::{
-    EvidenceRef, EvidenceSource, Hypothesis, HypothesisStatus, InvestigationReport, Severity,
-    WorkItemKind, WorkItemProposal, WorkItemStatus,
+    CycleReport, EvidenceRef, EvidenceSource, Hypothesis, HypothesisStatus, Severity, WorkItemKind,
+    WorkItemProposal, WorkItemStatus,
 };
 use serde_json::{Value, json};
 
@@ -259,16 +259,16 @@ async fn start_fake_github() -> (String, Shared) {
 }
 
 struct ScriptedRunner {
-    reports: Mutex<Vec<InvestigationReport>>,
+    reports: Mutex<Vec<CycleReport>>,
     briefs: Mutex<Vec<String>>,
 }
 
 #[async_trait]
-impl InvestigationRunnerPort for ScriptedRunner {
+impl CycleAgentPort for ScriptedRunner {
     async fn run(
         &self,
-        input: RunInvestigationInput,
-    ) -> Result<InvestigationRunOutcome, AgentRunFailedError> {
+        input: RunCycleAgentInput,
+    ) -> Result<CycleAgentOutcome, AgentRunFailedError> {
         self.briefs.lock().expect("lock").push(
             input
                 .brief
@@ -286,17 +286,15 @@ impl InvestigationRunnerPort for ScriptedRunner {
                 Some(reports.remove(0))
             }
         };
-        Ok(InvestigationRunOutcome::Completed(Box::new(
-            InvestigationRunReport {
-                report,
-                usage: LlmUsageSnapshot::default(),
-                execution: LlmExecutionMetadata {
-                    provider: "scripted".to_string(),
-                    model: "scripted".to_string(),
-                },
-                final_text: String::new(),
+        Ok(CycleAgentOutcome::Completed(Box::new(CycleAgentRun {
+            report,
+            usage: LlmUsageSnapshot::default(),
+            execution: LlmExecutionMetadata {
+                provider: "scripted".to_string(),
+                model: "scripted".to_string(),
             },
-        )))
+            final_text: String::new(),
+        })))
     }
 }
 
@@ -371,8 +369,8 @@ fn objective() -> ObjectiveDefinition {
     }
 }
 
-fn report() -> InvestigationReport {
-    InvestigationReport {
+fn report() -> CycleReport {
+    CycleReport {
         summary: "checkout-api errors rose after deploy 42.".to_string(),
         evidence: vec![EvidenceRef {
             id: "E1".to_string(),
@@ -453,7 +451,7 @@ fn process(
             lease_minutes: 15,
         },
         repository: Arc::new(repository),
-        investigation_runner: Arc::clone(runner) as Arc<dyn InvestigationRunnerPort>,
+        cycle_agent: Arc::clone(runner) as Arc<dyn CycleAgentPort>,
         task_resources: TaskResources {
             slack_message_search_port: Arc::new(MockSlackMessageSearchPort::new()),
             slack_file_download_port: Arc::new(MockSlackFileDownloadPort::new()),

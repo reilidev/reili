@@ -29,7 +29,7 @@ action is needed. Reili takes that work off your plate.
 Core:
 
 - **Objective-driven**: give Reili long-term objectives in `reili.toml` (for example "keep checkout
-  reliable"); it investigates on a schedule, tracks work in GitHub Issues, and reports to Slack
+  reliable"); it works toward them on a schedule, tracks work in GitHub Issues, and reports to Slack
 - **Read-focused**: Reili reads and reports — it never changes your infrastructure
 - **Cross-service**: works across Datadog, GitHub, JIRA, Slack, and optional knowledge base search today, with additional services planned over time
 - **Chat-based**: currently works in Slack
@@ -423,8 +423,9 @@ report_channel = "C0123456789"
 enabled = true
 ```
 
-Each cycle observes the objective's services and prior work, investigates with dynamically
-composed sub-agents, records the work as GitHub Issues that humans can read, comment on, and steer with labels, posts
+Each cycle observes the objective's services and prior work, does the read-only work that moves
+the objective forward (investigating, reviewing changes, following up on open items) with
+dynamically composed sub-agents, records the work as GitHub Issues that humans can read, comment on, and steer with labels, posts
 only meaningful changes to Slack, and
 saves screened reusable facts to the Canvas memory. Cycles survive restarts: state lives in GitHub
 Issues, not in the process.

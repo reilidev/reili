@@ -1,4 +1,4 @@
-//! Port for objective-driven investigations run by the agent stack, plus the shared run budget the
+//! Port for the agent's work in an objective cycle, run by the agent stack, plus the shared run budget the
 //! agent tools report into.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -12,7 +12,7 @@ use crate::logger::Logger;
 use crate::task::{
     LlmExecutionMetadata, LlmUsageSnapshot, TaskCancellation, TaskProgressEventPort, TaskResources,
 };
-use crate::work::InvestigationReport;
+use crate::work::CycleReport;
 
 /// Whether a section of the brief was authored by Reili/config (trusted) or comes from external
 /// systems and humans (data only, never instructions).
@@ -30,7 +30,7 @@ pub struct BriefSection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InvestigationBrief {
+pub struct CycleBrief {
     pub run_id: String,
     pub objective_id: String,
     pub sections: Vec<BriefSection>,
@@ -64,7 +64,7 @@ pub struct RunBudget {
     llm_tokens: Arc<AtomicU64>,
 }
 
-const REPORT_TOOL_NAME: &str = "submit_investigation_report";
+const REPORT_TOOL_NAME: &str = "submit_cycle_report";
 const WRAP_UP_RATIO_NUMERATOR: u64 = 9;
 const WRAP_UP_RATIO_DENOMINATOR: u64 = 10;
 
@@ -149,7 +149,7 @@ impl RunBudget {
 /// Captures the single structured report the agent submits.
 #[derive(Debug, Clone, Default)]
 pub struct ReportSlot {
-    report: Arc<Mutex<Option<InvestigationReport>>>,
+    report: Arc<Mutex<Option<CycleReport>>>,
 }
 
 impl ReportSlot {
@@ -158,7 +158,7 @@ impl ReportSlot {
         Self::default()
     }
 
-    pub fn submit(&self, report: InvestigationReport) {
+    pub fn submit(&self, report: CycleReport) {
         let mut slot = match self.report.lock() {
             Ok(slot) => slot,
             Err(poisoned) => poisoned.into_inner(),
@@ -167,7 +167,7 @@ impl ReportSlot {
     }
 
     #[must_use]
-    pub fn take(&self) -> Option<InvestigationReport> {
+    pub fn take(&self) -> Option<CycleReport> {
         match self.report.lock() {
             Ok(mut slot) => slot.take(),
             Err(poisoned) => poisoned.into_inner().take(),
@@ -175,8 +175,8 @@ impl ReportSlot {
     }
 }
 
-pub struct RunInvestigationInput {
-    pub brief: InvestigationBrief,
+pub struct RunCycleAgentInput {
+    pub brief: CycleBrief,
     pub budget: RunBudget,
     pub resources: TaskResources,
     pub cancellation: TaskCancellation,
@@ -185,9 +185,9 @@ pub struct RunInvestigationInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct InvestigationRunReport {
+pub struct CycleAgentRun {
     /// `None` when the agent stopped without submitting a report.
-    pub report: Option<InvestigationReport>,
+    pub report: Option<CycleReport>,
     pub usage: LlmUsageSnapshot,
     pub execution: LlmExecutionMetadata,
     /// Final free-text answer, kept for diagnostics only.
@@ -195,18 +195,18 @@ pub struct InvestigationRunReport {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum InvestigationRunOutcome {
-    Completed(Box<InvestigationRunReport>),
+pub enum CycleAgentOutcome {
+    Completed(Box<CycleAgentRun>),
     Cancelled,
 }
 
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 #[async_trait]
-pub trait InvestigationRunnerPort: Send + Sync {
+pub trait CycleAgentPort: Send + Sync {
     async fn run(
         &self,
-        input: RunInvestigationInput,
-    ) -> Result<InvestigationRunOutcome, AgentRunFailedError>;
+        input: RunCycleAgentInput,
+    ) -> Result<CycleAgentOutcome, AgentRunFailedError>;
 }
 
 #[cfg(test)]
@@ -241,7 +241,7 @@ mod tests {
             BudgetDecision::Deny(_)
         ));
         assert_eq!(
-            budget.on_tool_call("submit_investigation_report"),
+            budget.on_tool_call("submit_cycle_report"),
             BudgetDecision::Allow
         );
     }

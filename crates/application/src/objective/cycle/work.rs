@@ -1,18 +1,16 @@
-//! Plan/Investigate: run the agent on the brief within the objective's budget, deadline, and
+//! Work: run the agent on the brief within the objective's budget, deadline, and
 //! shutdown signal, renewing the lease while it works.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Duration;
+use reili_core::cycle_agent::{CycleAgentOutcome, RunBudget, RunCycleAgentInput, RunLimits};
 use reili_core::error::PortError;
-use reili_core::investigation::{
-    InvestigationRunOutcome, RunBudget, RunInvestigationInput, RunLimits,
-};
 use reili_core::objective::ObjectiveDefinition;
 use reili_core::task::{TaskCancellation, TaskProgressEventInput, TaskProgressEventPort};
 use reili_core::work::{
-    ActiveCycle, CycleResult, InvestigationReport, StoredLedger, sanitize::truncate_chars,
+    ActiveCycle, CycleReport, CycleResult, StoredLedger, sanitize::truncate_chars,
 };
 
 use super::super::brief::{BuildBriefInput, build_brief};
@@ -21,9 +19,9 @@ use super::{ObjectiveCycleError, ObjectiveCycleRunner};
 
 const CANCEL_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 
-pub(super) enum InvestigationResult {
+pub(super) enum WorkOutcome {
     Report {
-        report: Box<InvestigationReport>,
+        report: Box<CycleReport>,
         tokens: u64,
     },
     Ended {
@@ -36,14 +34,14 @@ pub(super) enum InvestigationResult {
 }
 
 impl ObjectiveCycleRunner {
-    pub(super) async fn investigate(
+    pub(super) async fn work(
         &self,
         objective: &ObjectiveDefinition,
         ledger: &mut StoredLedger,
         active: &ActiveCycle,
         observed: &ObserveOutput,
         cancellation: &TaskCancellation,
-    ) -> Result<InvestigationResult, ObjectiveCycleError> {
+    ) -> Result<WorkOutcome, ObjectiveCycleError> {
         let now = self.deps.clock.now();
         let max_duration = Duration::seconds(
             i64::try_from(objective.budget.max_cycle_duration_secs).unwrap_or(i64::MAX / 2),
@@ -74,7 +72,7 @@ impl ObjectiveCycleRunner {
             notes: &observed.notes,
         });
         let run_cancellation = TaskCancellation::new();
-        let run_future = self.deps.investigation_runner.run(RunInvestigationInput {
+        let run_future = self.deps.cycle_agent.run(RunCycleAgentInput {
             brief,
             budget: budget.clone(),
             resources: self.deps.task_resources.clone(),
@@ -97,7 +95,7 @@ impl ObjectiveCycleRunner {
         heartbeat.tick().await;
 
         enum Ended {
-            Finished(Result<InvestigationRunOutcome, reili_core::error::AgentRunFailedError>),
+            Finished(Result<CycleAgentOutcome, reili_core::error::AgentRunFailedError>),
             TimedOut,
             Shutdown,
         }
@@ -122,8 +120,8 @@ impl ObjectiveCycleRunner {
 
         let tokens = budget.tokens_used();
         Ok(match ended {
-            Ended::Shutdown => InvestigationResult::Interrupted { tokens },
-            Ended::TimedOut => InvestigationResult::Ended {
+            Ended::Shutdown => WorkOutcome::Interrupted { tokens },
+            Ended::TimedOut => WorkOutcome::Ended {
                 result: CycleResult::BudgetExhausted {
                     reason: format!(
                         "time limit of {}s reached before a report was submitted",
@@ -132,19 +130,19 @@ impl ObjectiveCycleRunner {
                 },
                 tokens,
             },
-            Ended::Finished(Err(error)) => InvestigationResult::Ended {
+            Ended::Finished(Err(error)) => WorkOutcome::Ended {
                 result: CycleResult::Failed {
                     reason: truncate_chars(&error.cause_message, 300),
                 },
                 tokens: tokens.max(error.usage.total_tokens),
             },
-            Ended::Finished(Ok(InvestigationRunOutcome::Cancelled)) => {
-                InvestigationResult::Interrupted { tokens }
+            Ended::Finished(Ok(CycleAgentOutcome::Cancelled)) => {
+                WorkOutcome::Interrupted { tokens }
             }
-            Ended::Finished(Ok(InvestigationRunOutcome::Completed(run))) => {
+            Ended::Finished(Ok(CycleAgentOutcome::Completed(run))) => {
                 let tokens = tokens.max(run.usage.total_tokens);
                 match run.report {
-                    Some(report) => InvestigationResult::Report {
+                    Some(report) => WorkOutcome::Report {
                         report: Box::new(report),
                         tokens,
                     },
@@ -152,7 +150,7 @@ impl ObjectiveCycleRunner {
                         || budget.tool_calls_used()
                             >= objective.budget.max_tool_calls_per_cycle =>
                     {
-                        InvestigationResult::Ended {
+                        WorkOutcome::Ended {
                             result: CycleResult::BudgetExhausted {
                                 reason: "budget exhausted before a report was submitted"
                                     .to_string(),
@@ -160,7 +158,7 @@ impl ObjectiveCycleRunner {
                             tokens,
                         }
                     }
-                    None => InvestigationResult::Ended {
+                    None => WorkOutcome::Ended {
                         result: CycleResult::Failed {
                             reason: "the agent finished without submitting a structured report"
                                 .to_string(),

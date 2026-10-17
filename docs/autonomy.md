@@ -1,7 +1,7 @@
 # Objective-driven autonomy
 
 Reili can pursue long-term objectives on its own: it periodically observes the services an objective covers,
-decides what to investigate, records the work as GitHub Issues, reports what matters to Slack,
+decides what work moves the objective forward, records it as GitHub Issues, reports what matters to Slack,
 and learns reusable facts into the Slack Canvas memory.
 
 The existing Slack-triggered, single-shot investigations keep working unchanged.
@@ -103,13 +103,16 @@ Objectives cannot be created or edited from Slack.
 
 ## The cycle
 
-Each cycle runs Observe → Plan → Investigate → Decide → Report → Learn:
+Each cycle runs Observe → Work → Decide → Report → Learn. The cycle does not assume what kind of
+work the agent does: investigating a signal, reviewing recent changes, checking whether an earlier
+recommendation took effect, following up on open items, or preparing a proposal all go through the
+same phases, as long as the work is read-only.
 
 ```mermaid
 flowchart LR
     T["Schedule"] --> L["Acquire lease<br/>(ledger issue)"]
     L --> O["Observe<br/>human labels & comments ·<br/>Canvas knowledge"]
-    O --> I["Plan · Investigate<br/>(lead agent + spawned sub-agents)"]
+    O --> I["Work<br/>(lead agent + spawned sub-agents)"]
     I --> G["Report policy<br/>(deterministic)"]
     G --> D["Decide<br/>dedupe · limits ·<br/>human precedence"]
     D --> R["Report<br/>Slack (only changes)"]
@@ -119,12 +122,13 @@ flowchart LR
 
 - **Observe** (no LLM): folds human label changes, closed issues, and comments into Work State and loads
   Canvas memories.
-- **Plan / Investigate** (LLM): the lead agent receives a brief (objective, open and
-  past work items with refuted hypotheses, human feedback, knowledge) and works the objective. It
-  composes sub-agents with `spawn_agent` from the connector catalog, keeps competing hypotheses,
-  and ends by calling `submit_investigation_report` with a structured report.
+- **Work** (LLM): the lead agent receives a brief (objective, open and past work items with
+  refuted hypotheses, human feedback, knowledge), chooses the work that moves the objective
+  forward most, and does it. It composes sub-agents with `spawn_agent` from the connector catalog,
+  keeps evidence, hypotheses, and findings apart, and ends by calling `submit_cycle_report` with a
+  structured report.
 - **Decide** (no LLM): the report policy screens the report (below), proposals are matched
-  to existing work items by stable key, `existing_issue_number`, then fuzzy key/title similarity;
+  to existing work items by stable key, `existing_record`, then fuzzy key/title similarity;
   limits are enforced (critical first); human decisions win (dismissed items are never reopened,
   `needs-human` is not overridden).
 - **Report** (no LLM): posts to Slack only when something a human should know changed (new item,
@@ -182,7 +186,7 @@ per problem (`reili:work-item`, `reili-objective:<id>`, `reili-status:<status>`,
 | Other labels | Humans | Preserved on every Reili write |
 | Comments | Both | Reili: cycle logs, decisions, notices (marked). Humans: feedback |
 
-Work item statuses: `investigating`, `needs-human`, `proposed`, `resolved`, `dismissed`.
+Work item statuses: `in-progress`, `needs-human`, `proposed`, `resolved`, `dismissed`.
 `dismissed` is set only by humans (closing the issue as not planned); `resolved` by Reili requires a finding that
 cites evidence.
 
@@ -197,7 +201,7 @@ GitHub's limit.
   of that while the agent runs). Every phase boundary is checkpointed. After a crash the lease
   expires and the next tick resumes the same cycle (same run id, attempt + 1). If the crash
   happened after Decide, Report and Learn continue without re-running (or re-paying for) the
-  investigation. After `max_cycle_attempts` interruptions the cycle is abandoned and humans are
+  agent. After `max_cycle_attempts` interruptions the cycle is abandoned and humans are
   told once.
 - **Scheduling.** Due slots derive from the ledger only. Missed slots after downtime coalesce into
   one catch-up cycle. Failed cycles retry the same slot with exponential back-off (5 min doubling,
@@ -213,7 +217,7 @@ GitHub's limit.
   Reili checks recent channel history for that key.
 
 **Not guaranteed** (GitHub Issues has no transactions or conditional writes): exactly-once
-execution. A crash between a work item write and the ledger checkpoint re-runs the investigation;
+execution. A crash between a work item write and the ledger checkpoint re-runs the agent;
 its results merge into the same items by key. Two instances writing within milliseconds of each
 other can still both pass the revision check. Without `channels:history`, a crash right after a
 Slack post can repeat that report once. Running more than one Reili instance against the same
@@ -236,7 +240,7 @@ The model's report is screened by application code before anything is stored:
   ("do not re-propose without new evidence"), dismissal reasons, human feedback, human notes, and
   Canvas memories.
 - **Human feedback.** Comments from repository owners, members, and collaborators become feedback
-  notes that reach the next investigation (marked as applied once delivered). Other authors and
+  notes that reach the next cycle (marked as applied once delivered). Other authors and
   other bots are ignored.
 - **Knowledge screening.** Facts reach the Canvas only when they cite evidence with a source URL
   and the text does not read like an instruction. Hypotheses and
@@ -250,7 +254,7 @@ objective work on the work item issues, and every change is picked up by the nex
 
 | On the issue | Effect |
 |---|---|
-| Comment (trusted members only) | Feedback for the next investigation |
+| Comment (trusted members only) | Feedback for the next cycle |
 | Change the `reili-status:*` label | Adopted as the item's new status |
 | Close as completed / not planned | → `resolved` / `dismissed`; dismissed items are never reopened by Reili |
 

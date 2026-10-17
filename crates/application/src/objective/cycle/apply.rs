@@ -3,8 +3,8 @@
 
 use reili_core::objective::ObjectiveDefinition;
 use reili_core::work::{
-    ActiveCycle, CyclePhase, InvestigationReport, KnowledgeDraft, RecordKey, StoredLedger,
-    StoredWorkItem, WorkItemProposal, WorkStateComment, WorkStateCommentKind, WorkStateError,
+    ActiveCycle, CyclePhase, CycleReport, KnowledgeDraft, RecordKey, StoredLedger, StoredWorkItem,
+    WorkItemProposal, WorkStateComment, WorkStateCommentKind, WorkStateError,
     sanitize::truncate_chars,
 };
 
@@ -23,7 +23,7 @@ impl ObjectiveCycleRunner {
         ledger: &StoredLedger,
         active: &ActiveCycle,
         observed: &ObserveOutput,
-        report: &InvestigationReport,
+        report: &CycleReport,
         tokens: u64,
     ) -> Result<StoredLedger, ObjectiveCycleError> {
         let now = self.deps.clock.now();

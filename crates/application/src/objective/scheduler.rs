@@ -407,7 +407,7 @@ mod tests {
             scheduled_for: None,
             started_at: at("2026-10-15T00:00:00Z"),
             attempt: 1,
-            phase: CyclePhase::Investigating,
+            phase: CyclePhase::Working,
             lease_holder: "old".to_string(),
             lease_expires_at: at("2026-10-15T00:15:00Z"),
             pending_notifications: Vec::new(),

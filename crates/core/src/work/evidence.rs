@@ -1,5 +1,5 @@
-//! Structured investigation vocabulary: Evidence, Hypothesis, Finding, and Recommendation are
-//! kept distinct so facts, inferences, and unknowns never blur together.
+//! Structured reasoning vocabulary for any kind of work: Evidence, Hypothesis, Finding, and
+//! Recommendation are kept distinct so facts, inferences, and unknowns never blur together.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};

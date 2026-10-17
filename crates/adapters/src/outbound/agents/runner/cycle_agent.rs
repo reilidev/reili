@@ -1,13 +1,11 @@
-//! Runs an objective cycle investigation on any rig completion client: the lead agent works the brief,
+//! Runs the agent's work for an objective cycle on any rig completion client: the lead agent works the brief,
 //! sub-agents share one budget, and the structured report submitted through
-//! `submit_investigation_report` is returned.
+//! `submit_cycle_report` is returned.
 
 use std::sync::Arc;
 
+use reili_core::cycle_agent::{CycleAgentOutcome, CycleAgentRun, ReportSlot, RunCycleAgentInput};
 use reili_core::error::AgentRunFailedError;
-use reili_core::investigation::{
-    InvestigationRunOutcome, InvestigationRunReport, ReportSlot, RunInvestigationInput,
-};
 use reili_core::task::{LlmExecutionMetadata, TASK_RUNNER_PROGRESS_OWNER_ID, TaskRuntime};
 use rig::completion::{Prompt, PromptError};
 use rig::prelude::CompletionClient;
@@ -24,7 +22,7 @@ use crate::outbound::agents::task_agent::{
     TaskAgentRunContext, build_objective_prompt,
 };
 
-pub struct RunLlmInvestigationInput<C>
+pub struct RunCycleAgentLlmInput<C>
 where
     C: CompletionClient,
 {
@@ -34,19 +32,19 @@ where
     pub connectors: ConnectorSet,
     pub language: String,
     pub additional_system_prompt: Option<String>,
-    pub run: RunInvestigationInput,
+    pub run: RunCycleAgentInput,
 }
 
-pub async fn run_investigation<C>(
-    input: RunLlmInvestigationInput<C>,
-) -> Result<InvestigationRunOutcome, AgentRunFailedError>
+pub async fn run_cycle_agent<C>(
+    input: RunCycleAgentLlmInput<C>,
+) -> Result<CycleAgentOutcome, AgentRunFailedError>
 where
     C: CompletionClient + Clone + Send + Sync + 'static,
     C::CompletionModel: 'static,
 {
     let run = input.run;
     if run.cancellation.is_cancelled() {
-        return Ok(InvestigationRunOutcome::Cancelled);
+        return Ok(CycleAgentOutcome::Cancelled);
     }
     let usage_collector = LlmUsageCollector::new();
     let runtime = TaskRuntime {
@@ -131,7 +129,7 @@ where
     let final_text = match response {
         Ok(response) => response.output().to_string(),
         Err(PromptError::PromptCancelled { .. }) if run.cancellation.is_cancelled() => {
-            return Ok(InvestigationRunOutcome::Cancelled);
+            return Ok(CycleAgentOutcome::Cancelled);
         }
         // A budget stop or turn limit still returns whatever report was submitted before it.
         Err(PromptError::PromptCancelled { .. } | PromptError::MaxTurnsError { .. }) => {
@@ -153,7 +151,7 @@ where
         }
     };
     if run.cancellation.is_cancelled() {
-        return Ok(InvestigationRunOutcome::Cancelled);
+        return Ok(CycleAgentOutcome::Cancelled);
     }
     Ok(completed(
         report_slot.take(),
@@ -164,12 +162,12 @@ where
 }
 
 fn completed(
-    report: Option<reili_core::work::InvestigationReport>,
+    report: Option<reili_core::work::CycleReport>,
     usage_collector: &LlmUsageCollector,
     settings: &LlmProviderSettings,
     final_text: String,
-) -> InvestigationRunOutcome {
-    InvestigationRunOutcome::Completed(Box::new(InvestigationRunReport {
+) -> CycleAgentOutcome {
+    CycleAgentOutcome::Completed(Box::new(CycleAgentRun {
         report,
         usage: usage_collector.snapshot(),
         execution: LlmExecutionMetadata {
