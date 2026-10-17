@@ -1,4 +1,4 @@
-//! Backend-neutral identities of Work State records and of the comments on them.
+//! Backend-neutral identity of a work item on the tracker.
 
 use std::fmt;
 
@@ -33,28 +33,4 @@ impl fmt::Display for RecordKey {
 pub struct RecordRef {
     pub key: RecordKey,
     pub url: String,
-}
-
-/// Backend-assigned id of a comment. Opaque to Reili: only the backend can order ids, so it is
-/// passed back as the cursor for reading newer comments.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct CommentId(String);
-
-impl CommentId {
-    #[must_use]
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for CommentId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
 }

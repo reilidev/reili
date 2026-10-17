@@ -3,7 +3,6 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::fingerprint::stable_fingerprint;
 use super::schedule::ObjectiveSchedule;
 
 /// GitHub label names are limited to 50 characters and objectives are labelled `reili-objective:<id>`.
@@ -17,7 +16,7 @@ pub enum ObjectiveDefinitionError {
     Invalid { objective: String, message: String },
 }
 
-/// Stable, label-safe objective identifier (used in GitHub labels and Slack commands).
+/// Stable, label-safe objective identifier (used in tracker labels).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct ObjectiveId(String);
@@ -70,17 +69,14 @@ pub struct ObjectiveScope {
     pub environments: Vec<String>,
 }
 
+/// Cost limits for one cycle. Cycles run on the objective's schedule, so these also bound the
+/// daily cost.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectiveBudget {
     pub max_cycle_duration_secs: u64,
     pub max_llm_tokens_per_cycle: u64,
-    pub max_llm_tokens_per_day: u64,
     pub max_tool_calls_per_cycle: u32,
-    pub max_sub_agents_per_cycle: u32,
-    pub max_parallel_tools: u32,
     pub max_new_work_items_per_cycle: u32,
-    pub max_open_work_items: u32,
-    pub max_cycle_attempts: u32,
 }
 
 impl Default for ObjectiveBudget {
@@ -88,27 +84,14 @@ impl Default for ObjectiveBudget {
         Self {
             max_cycle_duration_secs: 30 * 60,
             max_llm_tokens_per_cycle: 2_000_000,
-            max_llm_tokens_per_day: 8_000_000,
             max_tool_calls_per_cycle: 200,
-            max_sub_agents_per_cycle: 12,
-            max_parallel_tools: 4,
             max_new_work_items_per_cycle: 3,
-            max_open_work_items: 20,
-            max_cycle_attempts: 3,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ObjectiveReportPolicy {
-    /// Slack channel ID reports are posted to.
-    pub channel_id: String,
-    pub min_interval_minutes: u32,
-    pub max_reports_per_day: u32,
-}
-
-/// What an objective is allowed to write. Writes are always limited to the configured management
-/// repository, the objective's report channel, and the configured Canvas; these flags only narrow that.
+/// What an objective is allowed to write. Writes are always limited to the configured tracker
+/// project, the objective's report channel, and the configured Canvas; these flags only narrow that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObjectivePermissions {
     pub save_knowledge: bool,
@@ -130,7 +113,8 @@ pub struct ObjectiveDefinition {
     pub description: String,
     pub scope: ObjectiveScope,
     pub schedule: ObjectiveSchedule,
-    pub report: ObjectiveReportPolicy,
+    /// Slack channel ID reports are posted to.
+    pub report_channel_id: String,
     pub budget: ObjectiveBudget,
     pub permissions: ObjectivePermissions,
     pub enabled: bool,
@@ -146,31 +130,16 @@ impl ObjectiveDefinition {
         if self.description.trim().is_empty() {
             return Err(invalid("description must not be empty"));
         }
-        if self.report.channel_id.trim().is_empty() {
+        if self.report_channel_id.trim().is_empty() {
             return Err(invalid("report_channel must not be empty"));
         }
         if self.budget.max_cycle_duration_secs == 0
             || self.budget.max_llm_tokens_per_cycle == 0
             || self.budget.max_tool_calls_per_cycle == 0
-            || self.budget.max_parallel_tools == 0
-            || self.budget.max_cycle_attempts == 0
         {
             return Err(invalid("budget limits must be positive"));
         }
-        if self.budget.max_llm_tokens_per_cycle > self.budget.max_llm_tokens_per_day {
-            return Err(invalid(
-                "max_llm_tokens_per_cycle must not exceed max_llm_tokens_per_day",
-            ));
-        }
         Ok(())
-    }
-
-    /// Fingerprint of everything that changes what the objective asks for. Persisted in the objective
-    /// ledger so definition changes are detected across restarts.
-    #[must_use]
-    pub fn fingerprint(&self) -> String {
-        let canonical = serde_json::to_string(self).unwrap_or_default();
-        stable_fingerprint(&canonical)
     }
 }
 
@@ -194,22 +163,9 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_changes_with_definition() {
-        let objective = sample_objective("checkout");
-        let mut changed = objective.clone();
-        changed.description = "Reduce checkout latency".to_string();
-
-        assert_eq!(
-            objective.fingerprint(),
-            sample_objective("checkout").fingerprint()
-        );
-        assert_ne!(objective.fingerprint(), changed.fingerprint());
-    }
-
-    #[test]
-    fn rejects_inconsistent_budget() {
+    fn rejects_empty_budget() {
         let mut objective = sample_objective("checkout");
-        objective.budget.max_llm_tokens_per_cycle = objective.budget.max_llm_tokens_per_day + 1;
+        objective.budget.max_llm_tokens_per_cycle = 0;
 
         assert!(objective.validate().is_err());
         assert!(sample_objective("checkout").validate().is_ok());

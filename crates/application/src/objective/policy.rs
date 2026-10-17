@@ -1,46 +1,46 @@
-//! The report policy: the model's report is screened before anything is recorded. Citations to
-//! unknown evidence are dropped, statuses reserved for humans are refused, and knowledge
-//! candidates that read like instructions or lack a reproducible source are rejected. Every
-//! adjustment leaves an audit note explaining why.
+//! The report policy: the model's report is screened before anything is written to the tracker.
+//! Citations to unknown evidence are dropped, statuses without their justification are downgraded,
+//! and knowledge candidates that read like instructions or lack a reproducible source are rejected.
+//! Every adjustment leaves a note that is shown on the work item.
 
 use reili_core::work::{
     CycleReport, EvidenceRef, KnowledgeDraft, WorkItemProposal, WorkItemStatus,
-    sanitize::looks_like_instruction,
+    sanitize::{looks_like_instruction, truncate_chars},
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PolicyOutcome {
-    pub proposals: Vec<WorkItemProposal>,
-    pub knowledge: Vec<KnowledgeDraft>,
+pub struct ScreenedProposal {
+    pub proposal: WorkItemProposal,
+    /// Why the policy changed the proposal, if it did.
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolicyOutcome {
+    pub proposals: Vec<ScreenedProposal>,
+    pub knowledge: Vec<KnowledgeDraft>,
     pub rejected_knowledge: Vec<String>,
 }
 
 #[must_use]
 pub fn apply_report_policy(report: &CycleReport) -> PolicyOutcome {
-    let mut notes = Vec::new();
     let proposals = report
         .work_items
         .iter()
-        .map(|proposal| screen_proposal(proposal, report, &mut notes))
+        .map(|proposal| screen_proposal(proposal, report))
         .collect();
     let (knowledge, rejected_knowledge) = screen_knowledge(report);
 
     PolicyOutcome {
         proposals,
         knowledge,
-        notes,
         rejected_knowledge,
     }
 }
 
-fn screen_proposal(
-    proposal: &WorkItemProposal,
-    report: &CycleReport,
-    notes: &mut Vec<String>,
-) -> WorkItemProposal {
+fn screen_proposal(proposal: &WorkItemProposal, report: &CycleReport) -> ScreenedProposal {
     let mut screened = proposal.clone();
-    let label = format!("work item `{}`", proposal.key);
+    let mut notes = Vec::new();
     let known = |id: &String| report.evidence_by_id(id).is_some();
 
     for hypothesis in &mut screened.hypotheses {
@@ -55,38 +55,30 @@ fn screen_proposal(
         .findings
         .iter()
         .any(|finding| !finding.evidence_ids.is_empty());
-    screened.proposed_status = match proposal.proposed_status {
+    screened.status = match proposal.status {
         WorkItemStatus::Resolved if !has_evidenced_finding => {
-            notes.push(format!(
-                "{label}: `resolved` requires a finding that cites evidence; kept as `in-progress`"
-            ));
+            notes.push(
+                "`resolved` requires a finding that cites evidence; kept in progress".to_string(),
+            );
             WorkItemStatus::InProgress
         }
-        WorkItemStatus::NeedsHuman
+        WorkItemStatus::NeedsDecision
             if proposal
-                .human_decision_needed
+                .decision_needed
                 .as_deref()
                 .is_none_or(|question| question.trim().is_empty()) =>
         {
-            notes.push(format!(
-                "{label}: `needs-human` without a concrete question; recorded as `proposed`/`in-progress`"
-            ));
-            if proposal.recommendation.is_some() {
-                WorkItemStatus::Proposed
-            } else {
-                WorkItemStatus::InProgress
-            }
-        }
-        WorkItemStatus::Dismissed => {
-            notes.push(format!(
-                "{label}: `dismissed` is set only by humans (in the Work State backend); recorded as `in-progress`"
-            ));
+            notes
+                .push("`needs-decision` without a concrete question; kept in progress".to_string());
             WorkItemStatus::InProgress
         }
         status => status,
     };
 
-    screened
+    ScreenedProposal {
+        proposal: screened,
+        notes,
+    }
 }
 
 fn screen_knowledge(report: &CycleReport) -> (Vec<KnowledgeDraft>, Vec<String>) {
@@ -109,7 +101,7 @@ fn screen_knowledge(report: &CycleReport) -> (Vec<KnowledgeDraft>, Vec<String>) 
             None
         };
         match reason {
-            Some(reason) => rejected.push(format!("{} ({reason})", truncate(fact, 80))),
+            Some(reason) => rejected.push(format!("{} ({reason})", truncate_chars(fact, 80))),
             None => accepted.push(KnowledgeDraft {
                 fact: fact.to_string(),
                 evidence: candidate.evidence.trim().to_string(),
@@ -128,15 +120,11 @@ fn has_reproducible_source(evidence: &EvidenceRef) -> bool {
         .is_some_and(|url| url.starts_with("https://") || url.starts_with("http://"))
 }
 
-fn truncate(text: &str, max: usize) -> String {
-    reili_core::work::sanitize::truncate_chars(text, max)
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use reili_core::work::{
         CycleReport, EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus,
-        KnowledgeCandidate, Severity, WorkItemKind, WorkItemProposal, WorkItemStatus,
+        KnowledgeCandidate, Severity, WorkItemProposal, WorkItemStatus,
     };
 
     use super::apply_report_policy;
@@ -146,11 +134,10 @@ pub(crate) mod tests {
             key: "checkout:5xx-after-deploy".to_string(),
             existing_record: None,
             title: "5xx after deploy".to_string(),
-            kind: WorkItemKind::Incident,
             severity: Severity::High,
-            proposed_status: WorkItemStatus::NeedsHuman,
+            status: WorkItemStatus::NeedsDecision,
             problem_statement: "5xx rate doubled".to_string(),
-            plan: vec!["compare windows".to_string()],
+            work_log: "Compared the 5xx rate before and after deploy 42.".to_string(),
             hypotheses: vec![Hypothesis {
                 id: "H1".to_string(),
                 statement: "deploy 42 introduced the regression".to_string(),
@@ -163,8 +150,7 @@ pub(crate) mod tests {
                 evidence_ids: vec!["E1".to_string(), "E404".to_string()],
             }],
             recommendation: None,
-            open_questions: Vec::new(),
-            human_decision_needed: Some("Roll back deploy 42?".to_string()),
+            decision_needed: Some("Roll back deploy 42?".to_string()),
             next_actions: Vec::new(),
             evidence_ids: vec!["E1".to_string()],
         }
@@ -193,50 +179,48 @@ pub(crate) mod tests {
         let outcome = apply_report_policy(&report(vec![proposal(HypothesisStatus::Supported)]));
 
         let screened = &outcome.proposals[0];
-        assert_eq!(screened.hypotheses[0].status, HypothesisStatus::Supported);
-        assert_eq!(screened.findings[0].evidence_ids, vec!["E1".to_string()]);
-        assert_eq!(screened.proposed_status, WorkItemStatus::NeedsHuman);
-        assert!(outcome.notes.is_empty());
+        assert_eq!(
+            screened.proposal.hypotheses[0].status,
+            HypothesisStatus::Supported
+        );
+        assert_eq!(
+            screened.proposal.findings[0].evidence_ids,
+            vec!["E1".to_string()]
+        );
+        assert_eq!(screened.proposal.status, WorkItemStatus::NeedsDecision);
+        assert!(screened.notes.is_empty());
     }
 
     #[test]
-    fn resolved_requires_evidenced_finding_and_dismissed_is_human_only() {
-        let mut resolved = proposal(HypothesisStatus::Proposed);
-        resolved.proposed_status = WorkItemStatus::Resolved;
-        resolved.findings[0].evidence_ids = vec!["E404".to_string()];
+    fn resolved_requires_an_evidenced_finding() {
+        let mut unproven = proposal(HypothesisStatus::Proposed);
+        unproven.status = WorkItemStatus::Resolved;
+        unproven.findings[0].evidence_ids = vec!["E404".to_string()];
         let mut evidenced = proposal(HypothesisStatus::Proposed);
-        evidenced.key = "evidenced".to_string();
-        evidenced.proposed_status = WorkItemStatus::Resolved;
-        let mut dismissed = proposal(HypothesisStatus::Proposed);
-        dismissed.key = "other".to_string();
-        dismissed.proposed_status = WorkItemStatus::Dismissed;
+        evidenced.status = WorkItemStatus::Resolved;
 
-        let outcome = apply_report_policy(&report(vec![resolved, evidenced, dismissed]));
+        let outcome = apply_report_policy(&report(vec![unproven, evidenced]));
 
         assert_eq!(
-            outcome.proposals[0].proposed_status,
+            outcome.proposals[0].proposal.status,
             WorkItemStatus::InProgress
         );
+        assert_eq!(outcome.proposals[0].notes.len(), 1);
         assert_eq!(
-            outcome.proposals[1].proposed_status,
+            outcome.proposals[1].proposal.status,
             WorkItemStatus::Resolved
         );
-        assert_eq!(
-            outcome.proposals[2].proposed_status,
-            WorkItemStatus::InProgress
-        );
-        assert_eq!(outcome.notes.len(), 2);
     }
 
     #[test]
-    fn needs_human_requires_a_question() {
+    fn needs_decision_requires_a_question() {
         let mut item = proposal(HypothesisStatus::Proposed);
-        item.human_decision_needed = None;
+        item.decision_needed = None;
 
         let outcome = apply_report_policy(&report(vec![item]));
 
         assert_eq!(
-            outcome.proposals[0].proposed_status,
+            outcome.proposals[0].proposal.status,
             WorkItemStatus::InProgress
         );
     }

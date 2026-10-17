@@ -1,28 +1,28 @@
 # Objective-driven autonomy
 
-Reili can pursue long-term objectives on its own: it periodically observes the services an objective covers,
-decides what work moves the objective forward, records it as GitHub Issues, reports what matters to Slack,
-and learns reusable facts into the Slack Canvas memory.
+Reili can pursue long-term objectives on its own. It works on the team's tracker the way a
+teammate does: on its schedule it picks up the items assigned to it, does read-only work that
+moves the objective forward, writes progress as comments, opens items for new work, asks the
+team when a decision is needed, and reports what matters to Slack.
 
 The existing Slack-triggered, single-shot investigations keep working unchanged.
 
-- Objectives live in `reili.toml` (the source of truth for *what* to pursue).
-- Work State lives in one configured backend (the source of truth for *what has been done,
-  decided, and is pending*). Today that is GitHub Issues of one dedicated management repository;
-  see [Work State backends](#work-state-backends).
+- Objectives live in `reili.toml` (*what* to pursue).
+- Work lives on the team's tracker as ordinary issues (GitHub Issues today; see
+  [Work State backends](#work-state-backends)). An objective's progress is the set of items
+  labelled for it; Reili's own work is the subset assigned to it.
 - Knowledge lives in the Slack Canvas memory (reusable facts).
-- Nothing else is persisted. There is no database; process memory is only a cache.
+- Nothing else is persisted: no database, no state issue, no hidden state store.
 
 ## Contents
 
 - [Configuring objectives](#configuring-objectives)
+- [How Reili works with the team](#how-reili-works-with-the-team)
 - [The cycle](#the-cycle)
 - [Work State backends](#work-state-backends)
-- [Work State on GitHub Issues](#work-state-on-github-issues)
-- [Durability and what is not guaranteed](#durability-and-what-is-not-guaranteed)
+- [GitHub Issues](#github-issues)
+- [What is and is not guaranteed](#what-is-and-is-not-guaranteed)
 - [Report policy](#report-policy)
-- [Learning](#learning)
-- [Working with Reili on GitHub](#working-with-reili-on-github)
 - [Safety, permissions, and limits](#safety-permissions-and-limits)
 - [Operations runbook](#operations-runbook)
 - [Known limitations](#known-limitations)
@@ -31,9 +31,9 @@ The existing Slack-triggered, single-shot investigations keep working unchanged.
 
 ```toml
 # Required when [[objectives]] are configured: exactly one [work_state.<backend>] section.
-# Supported backends: github. A dedicated repository for Reili's Work State.
+# Supported backends: github. The repository the team tracks its work in.
 [work_state.github]
-repository = "acme/reili-work"
+repository = "acme/platform"
 # Optional: App credentials default to [connector.github.app]. Tokens are always down-scoped to
 # this repository with issues:write + metadata:read, whatever the installation itself allows.
 # app_id = "123456"
@@ -44,9 +44,8 @@ repository = "acme/reili-work"
 
 # Optional: scheduler settings (defaults shown).
 [autonomy]
-tick_interval_seconds = 60   # how often objectives are evaluated
+tick_interval_seconds = 60   # how often schedules are checked
 max_concurrent_cycles = 1    # cycles running at once across objectives
-lease_minutes = 15           # cycle lease; renewed while the agent runs
 
 [[objectives]]
 id = "checkout-reliability"           # 1-34 chars: a-z 0-9 - _
@@ -63,262 +62,224 @@ timezone = "Asia/Tokyo"               # IANA name; defaults to UTC
 report_channel = "C0123456789"        # Slack channel ID (not name)
 enabled = true
 
-[objectives.report]                        # optional
-min_interval_minutes = 60             # non-urgent reports are batched at least this far apart
-max_reports_per_day = 6
-
 [objectives.budget]                        # optional; defaults shown
 max_cycle_minutes = 30
 max_llm_tokens_per_cycle = 2000000
-max_llm_tokens_per_day = 8000000
 max_tool_calls_per_cycle = 200
-max_sub_agents_per_cycle = 12
-max_parallel_tools = 4
 max_new_work_items_per_cycle = 3
-max_open_work_items = 20
-max_cycle_attempts = 3
 
 [objectives.permissions]                   # optional; can only narrow what is already allowed
 save_knowledge = true                 # write screened facts to the Canvas memory
 post_reports = true                   # post reports to report_channel
-
 ```
 
 Startup fails with a clear message for invalid cron expressions, unknown time zones, channel
-names instead of IDs, duplicate objective IDs, inconsistent budgets, or objectives without a
-`[work_state.<backend>]` section.
+names instead of IDs, duplicate objective IDs, empty budgets, or objectives without a
+`[work_state.<backend>]` section. Cycles run only on the schedule, so the budget per cycle also
+bounds the daily cost.
 
-### Changing, disabling, and removing objectives
+Editing, disabling (`enabled = false`), or removing an objective takes effect on restart. Its
+items stay on the tracker as they are; Reili simply stops (or resumes) working on them.
 
-The ledger stores a fingerprint of each objective definition. On startup and hourly, Reili reconciles
-config with the ledgers:
+## How Reili works with the team
 
-| Change in `reili.toml` | Effect on Work State |
+Everything happens on the tracker, with the same tools the team already uses:
+
+| On GitHub | Meaning |
 |---|---|
-| Definition changed (description, scope, schedule, budget, …) | Ledger records the change and posts a notice; open work items are kept and the next cycle is told to re-check whether each is still in scope. |
-| `enabled = false` | Ledger lifecycle → `disabled`; no cycles, requests are refused, open work items are left untouched; an interrupted cycle is not resumed. |
-| Objective removed | Ledger lifecycle → `retired` with a notice; work items stay open for humans to close or keep. Re-adding the same `id` resumes the objective. |
+| Label `reili-objective:<id>` | The item belongs to that objective. Filter by it to see the objective's progress. |
+| Label `reili:assignee` | The item is assigned to Reili (labels stand in for assignees, which GitHub Apps cannot reliably be). |
+| Label `reili:needs-decision` | Reili is waiting for the team's decision; the question is in its last comment. |
 
-Objectives cannot be created or edited from Slack.
+| The team does | Reili does at its next scheduled time |
+|---|---|
+| Adds `reili:assignee` (and the objective label) to an item | Takes it on: reads the description and discussion and works on it |
+| Removes `reili:assignee` | Stops working on it and does not open a duplicate |
+| Comments (owners, members, collaborators) | Reads the comments that arrived since its last comment and acts on them |
+| Closes an item as not planned | Does not reopen or re-propose it without new evidence |
+| Closes an item as completed | Treats it as done; opens a follow-up only if the problem comes back |
+
+Reili, in turn:
+
+- writes a **progress comment** on each of its items it worked on in a cycle (what it did, what it
+  found with evidence links, hypotheses, recommendation, next steps);
+- **opens a new item** for new work, labelled for the objective and assigned to itself, with a
+  readable description (problem, findings, evidence) and hidden metadata (its de-duplication key);
+- adds `reili:needs-decision` with a concrete question when it needs the team, and removes it when
+  it continues;
+- **closes items it opened** when they are done; for items a teammate opened it says it considers
+  them done and leaves closing to the team.
+
+Reili never edits the description of an item after opening it and never removes labels other than
+its own needs-decision label.
 
 ## The cycle
 
 Each cycle runs Observe → Work → Decide → Report → Learn. The cycle does not assume what kind of
 work the agent does: investigating a signal, reviewing recent changes, checking whether an earlier
-recommendation took effect, following up on open items, or preparing a proposal all go through the
+recommendation took effect, following up on its items, or preparing a proposal all go through the
 same phases, as long as the work is read-only.
 
 ```mermaid
 flowchart LR
-    T["Schedule"] --> L["Acquire lease<br/>(ledger issue)"]
-    L --> O["Observe<br/>human labels & comments ·<br/>Canvas knowledge"]
-    O --> I["Work<br/>(lead agent + spawned sub-agents)"]
-    I --> G["Report policy<br/>(deterministic)"]
-    G --> D["Decide<br/>dedupe · limits ·<br/>human precedence"]
-    D --> R["Report<br/>Slack (only changes)"]
+    T["Scheduled time"] --> O["Observe<br/>items for the objective ·<br/>discussion on Reili's items ·<br/>Canvas knowledge"]
+    O --> W["Work<br/>(lead agent + spawned sub-agents)"]
+    W --> G["Report policy<br/>(deterministic)"]
+    G --> D["Decide<br/>progress comments · new items ·<br/>needs-decision · close own items"]
+    D --> R["Report<br/>Slack (only what the team should see)"]
     R --> K["Learn<br/>screened facts → Canvas"]
-    K --> F["Finalize<br/>cycle record"]
 ```
 
-- **Observe** (no LLM): folds human label changes, closed issues, and comments into Work State and loads
-  Canvas memories.
-- **Work** (LLM): the lead agent receives a brief (objective, open and past work items with
-  refuted hypotheses, human feedback, knowledge), chooses the work that moves the objective
-  forward most, and does it. It composes sub-agents with `spawn_agent` from the connector catalog,
-  keeps evidence, hypotheses, and findings apart, and ends by calling `submit_cycle_report` with a
-  structured report.
-- **Decide** (no LLM): the report policy screens the report (below), proposals are matched
-  to existing work items by stable key, `existing_record`, then fuzzy key/title similarity;
-  limits are enforced (critical first); human decisions win (dismissed items are never reopened,
-  `needs-human` is not overridden).
-- **Report** (no LLM): posts to Slack only when something a human should know changed (new item,
-  status change, decision needed), within the
-  objective's rate limits. Critical items and decision requests skip the minimum interval.
-- **Learn** (no LLM): persists screened knowledge drafts to the Canvas with the ledger issue as
-  source, at most five per cycle, never the same fact twice.
+- **Observe** (no LLM): lists the objective's items (all open ones and those closed in the last
+  30 days), reads the discussion on Reili's own open items (up to 15, most recently updated
+  first), and loads Canvas memories.
+- **Work** (LLM): the lead agent receives a brief: the objective; its items with their
+  description and recent trusted comments, new ones marked `NEW`; other open items it must leave
+  alone; recently closed items; and knowledge. It chooses the work that moves the objective
+  forward most, does it with sub-agents composed from the connector catalog (`spawn_agent`), and
+  ends by calling `submit_cycle_report` with a structured report.
+- **Decide** (no LLM): the report policy screens the report (below). Proposals continue an item
+  when they name it (`existing_record`) or share its key; items assigned away from Reili and items
+  closed as not planned are left alone; new items are limited per cycle (most severe first).
+- **Report** (no LLM): posts to Slack only when the team should look at something: new items,
+  decisions needed, items done. Routine progress stays on the items.
+- **Learn** (no LLM): persists screened knowledge drafts to the Canvas, at most five per cycle,
+  never a fact the Canvas already holds.
 
-"No new findings" is a normal, quiet outcome: no issue, no Slack post.
+"No new findings" is a normal, quiet outcome: nothing is written, nothing is posted.
 
 ## Work State backends
 
-The objective cycle talks to Work State only through the `WorkStateRepositoryPort` trait
-(`crates/core/src/work/repository.rs`), so the tracker that holds ledgers and work items is a
-configuration choice. Records are identified by a backend-specific key that humans recognize
-(`#12` on GitHub; a JIRA backend would use keys such as `OPS-123`) plus a URL, and comment cursors
-are opaque strings.
+The cycle talks to the tracker only through the `WorkStatePort` trait
+(`crates/core/src/work/port.rs`), so the tracker is a configuration choice. Items are identified by
+the key humans already use (`#12` on GitHub; a JIRA backend would use keys such as `OPS-123`) plus
+a URL.
 
 | Backend | Section | Status |
 |---|---|---|
 | GitHub Issues | `[work_state.github]` | Supported |
 
-A backend must provide:
+A backend must provide, inside one configured project:
 
-- listing an objective's ledger and work items **in creation order** from a strongly consistent
-  API (the oldest record wins when racing creates are collapsed);
-- the machine state block with its `revision` number, plus a human-notes area it preserves;
-- a status humans can change (labels, workflow states) that maps onto the work item statuses;
+- an objective label, an assignee label for Reili, and a needs-decision label (a JIRA backend
+  could map them to labels, a component, or a service-account assignee);
+- listing by objective label **in creation order** from a strongly consistent API (the oldest item
+  wins when racing creates are collapsed);
+- hidden metadata on the items Reili opens (its de-duplication key);
 - comments, with detection of Reili's own comments and of trusted authors;
-- writes confined to one dedicated project, refusing records outside it.
+- refusal of any item outside the configured project.
 
 Adding a backend means implementing the port in `crates/adapters`, adding its
 `[work_state.<backend>]` section and a `WorkStateConfig` variant in `crates/runtime/src/config`,
-and one arm in `build_work_state_repository` (`crates/runtime/src/bootstrap/objectives.rs`).
-The application layer does not change. The contract above is executable:
-`assert_work_state_contract` (`crates/core/src/work/conformance.rs`) runs against the in-memory
-fake and, over HTTP, against the GitHub backend; a new backend passes it with a small harness that
-can act as a human (comment, change a status).
+and one arm in `build_work_state` (`crates/runtime/src/bootstrap/objectives.rs`). The application
+layer does not change. The contract is executable: `assert_work_state_contract`
+(`crates/core/src/work/conformance.rs`) runs against the in-memory fake and, over HTTP, against
+the GitHub backend; a new backend passes it with a small harness that can act as a teammate (open
+an item, comment, assign or unassign Reili).
 
-Machine state carries a `schema_version`. State written by a newer Reili is refused, never skipped
-or overwritten: the cycle stops with an "upgrade Reili" error until the running version can read it.
+## GitHub Issues
 
-## Work State on GitHub Issues
+- Reads use the issue *listing* API filtered by labels (strongly consistent), never search, whose
+  index lags behind writes.
+- Labels are added and removed with the per-label endpoints, so labels the team sets are never
+  overwritten.
+- Reili recognises its own issues and comments by the App's bot account plus a hidden marker; a
+  marker copied into someone else's issue or comment is not trusted.
+- Comments count as team input only from repository owners, members, and collaborators; other
+  authors and other bots never reach the agent.
+- Text Reili writes holds references (URLs, queries, time windows), never raw logs, and passes
+  through secret redaction (tokens, keys, private keys, bearer values, `password=…`, emails) and
+  size limits.
 
-One **objective ledger** issue per objective (`reili:objective`, `reili-objective:<id>`) and one **work item** issue
-per problem (`reili:work-item`, `reili-objective:<id>`, `reili-status:<status>`,
-`reili-severity:<sev>`, `reili-kind:<kind>`).
+## What is and is not guaranteed
 
-| Part of the issue | Owner | Purpose |
-|---|---|---|
-| Title, rendered sections | Reili | Human-readable current state: decision needed, problem, hypotheses with status, findings with cited evidence, recommendation, evidence links, history |
-| **Human notes** section | Humans | Free text Reili preserves verbatim and passes to the agent as guidance |
-| Machine state block (`<details>`) | Reili | JSON source of truth with a `revision` number |
-| Labels `reili-status:*`, open/closed | Shared | Humans may change them; Reili adopts the change on the next cycle |
-| Other labels | Humans | Preserved on every Reili write |
-| Comments | Both | Reili: cycle logs, decisions, notices (marked). Humans: feedback |
+- **No state to lose.** A cycle that dies halfway leaves the comments it already wrote; the next
+  scheduled time starts again from the tracker.
+- **Scheduling.** Cycles run at the scheduled times only. A time that passes while Reili is
+  stopped, or while the objective's previous cycle is still running, is skipped; the next one
+  picks the work up. Several times missed between two checks collapse into one cycle.
+- **No duplicates.** After opening an item Reili lists the objective's items again and, if an
+  older open item with the same key exists (another instance opened it at the same time), closes
+  its own as a duplicate pointing to the older one.
+- **Slack report idempotency.** Reports carry a key per objective and scheduled time in Slack
+  message metadata; before posting, Reili checks recent channel history for that key.
+- **Tracker unavailable.** Nothing runs without a readable tracker; the cycle stops before the
+  agent runs and the next scheduled time tries again.
 
-Work item statuses: `in-progress`, `needs-human`, `proposed`, `resolved`, `dismissed`.
-`dismissed` is set only by humans (closing the issue as not planned); `resolved` by Reili requires a finding that
-cites evidence.
-
-Issues store references (URLs, queries, time windows), never raw logs. All text written to
-GitHub, Slack, and Canvas passes through secret redaction (tokens, keys, private keys, bearer
-values, `password=…`, emails) and size limits; the state is bounded so a body always fits
-GitHub's limit.
-
-## Durability and what is not guaranteed
-
-- **Restart recovery.** A cycle holds a lease in its ledger (`lease_minutes`, renewed every third
-  of that while the agent runs). Every phase boundary is checkpointed. After a crash the lease
-  expires and the next tick resumes the same cycle (same run id, attempt + 1). If the crash
-  happened after Decide, Report and Learn continue without re-running (or re-paying for) the
-  agent. After `max_cycle_attempts` interruptions the cycle is abandoned and humans are
-  told once.
-- **Scheduling.** Due slots derive from the ledger only. Missed slots after downtime coalesce into
-  one catch-up cycle. Failed cycles retry the same slot with exponential back-off (5 min doubling,
-  capped at 6 h) and are abandoned after `max_cycle_attempts`.
-- **No duplicates.** Reads use the issue *listing* API filtered by labels (strongly consistent),
-  never search, whose index lags. Creates re-list afterwards and close racing duplicates in favour
-  of the oldest record (on GitHub, the lowest issue number).
-- **Conflicts.** Every write re-reads the issue and checks `revision`; on conflict the change is
-  re-applied to the fresh state (up to three times).
-- **GitHub unavailable.** Nothing runs without readable Work State; transient errors stop the
-  cycle without finalizing and the lease-based resume takes over.
-- **Slack report idempotency.** Reports carry a key in Slack message metadata; before posting,
-  Reili checks recent channel history for that key.
-
-**Not guaranteed** (GitHub Issues has no transactions or conditional writes): exactly-once
-execution. A crash between a work item write and the ledger checkpoint re-runs the agent;
-its results merge into the same items by key. Two instances writing within milliseconds of each
-other can still both pass the revision check. Without `channels:history`, a crash right after a
-Slack post can repeat that report once. Running more than one Reili instance against the same
-repository is supported by the lease, not recommended.
+**Not guaranteed:** exactly-once work. A cycle that crashes after commenting and is followed by a
+later cycle may comment on the same topic again. Without `channels:history`, a re-run of the same
+scheduled time can repeat a Slack report once.
 
 ## Report policy
 
-The model's report is screened by application code before anything is stored:
+The model's report is screened by application code before anything is written:
 
 - hypothesis statuses (`proposed`, `supported`, `refuted`, `inconclusive`) are the agent's own
-  assessment and are stored as reported, together with their rationale and cited evidence;
+  assessment and are written as reported, with their cited evidence;
 - citations to evidence ids that are not in the report's `evidence` list are dropped;
-- `resolved` needs a finding that cites evidence, `needs-human` needs a concrete question,
-  `dismissed` is human-only;
-- every adjustment is posted as an audit comment on the ledger.
-
-## Learning
-
-- **Experience reuse.** Briefs include open items, recently closed items with refuted hypotheses
-  ("do not re-propose without new evidence"), dismissal reasons, human feedback, human notes, and
-  Canvas memories.
-- **Human feedback.** Comments from repository owners, members, and collaborators become feedback
-  notes that reach the next cycle (marked as applied once delivered). Other authors and
-  other bots are ignored.
-- **Knowledge screening.** Facts reach the Canvas only when they cite evidence with a source URL
-  and the text does not read like an instruction. Hypotheses and
-  time-bounded observations are never learned. Reili never edits its own safety policy: limits and
-  permissions are code and config, not memory.
-
-## Working with Reili on GitHub
-
-Objectives have no Slack commands; Slack mentions are ordinary investigations, as before. Humans steer
-objective work on the work item issues, and every change is picked up by the next scheduled cycle:
-
-| On the issue | Effect |
-|---|---|
-| Comment (trusted members only) | Feedback for the next cycle |
-| Change the `reili-status:*` label | Adopted as the item's new status |
-| Close as completed / not planned | → `resolved` / `dismissed`; dismissed items are never reopened by Reili |
-
-Edit the **Human notes** section freely; do not edit the machine
-state block: an unreadable block makes Reili skip that work item (warning log), and an unreadable
-objective ledger stops that objective until it is restored from the issue's edit history.
+- `resolved` needs a finding that cites evidence and `needs_decision` a concrete question;
+  otherwise the item stays in progress;
+- every adjustment is noted in the item's progress comment;
+- knowledge candidates reach the Canvas only when they cite evidence with a source URL and do not
+  read like instructions; hypotheses and time-bounded observations are never learned.
 
 ## Safety, permissions, and limits
 
-- **Read-only operations.** Agents get only read-only connector tools. Production changes, deploys, rollbacks, and monitor changes remain impossible.
-- **Write exception, narrowly scoped.** Work State writes (issues, comments, labels) go only to
-  the configured repository: the installation token is requested down-scoped to that single
-  repository with `issues: write` and `metadata: read`, and the adapter refuses any issue
-  reference outside it before making a request. The investigation GitHub connector is unchanged
-  and read-only. The model never chooses where to write; all writes are application code.
-- **Budgets.** Per objective: wall-clock time, LLM tokens per cycle and per day (persisted in the
-  ledger, so restarts do not reset it), tool calls, sub-agents, parallel tools, new and open work
-  items, attempts, and Slack reports. Tool calls beyond the budget are refused with an instruction
-  to submit what the agent has; a hard stop applies at twice the token budget.
-- **Prompt injection.** Issue text, comments, Slack excerpts, and memories are framed as
+- **Read-only operations.** Agents get only read-only connector tools. Production changes,
+  deploys, rollbacks, and monitor changes remain impossible.
+- **Write exception, narrowly scoped.** Tracker writes (issues, comments, labels) go only to the
+  configured repository: the installation token is requested down-scoped to that single repository
+  with `issues: write` and `metadata: read`, and the adapter refuses any issue reference outside it
+  before making a request. The investigation GitHub connector is unchanged and read-only. The
+  model never chooses where to write; all writes are application code.
+- **Budgets.** Per objective and cycle: wall-clock time, LLM tokens, tool calls, and new items.
+  Tool calls beyond the budget are refused with an instruction to submit what the agent has; a
+  hard stop applies at a multiple of the token budget.
+- **Prompt injection.** Item text, comments, Slack excerpts, and memories are framed as
   `<untrusted_data>`; the agent is told never to follow instructions found there. Only comments
-  from trusted members are used, and none can change permissions, budgets, or scope. Broadcast mentions (`@channel`, `@here`) are neutralized in reports. Instruction-like
-  "facts" are rejected by knowledge screening.
-- **Audit.** Every status change carries actor and reason; cycle logs and report policy
-  adjustments are comments; the ledger keeps the last cycles with tokens used.
+  from trusted members are passed on, and none can change permissions, budgets, or scope.
+  Broadcast mentions (`@channel`, `@here`) are neutralized in reports.
+- **Audit.** Every change Reili makes is visible on the tracker: its comments, the labels it sets,
+  and the items it opens or closes.
 
 ## Operations runbook
 
 **Setup**
 
-1. Create a private repository for Work State (e.g. `acme/reili-work`).
+1. Pick the repository the team tracks its work in (e.g. `acme/platform`).
 2. Install the Reili GitHub App on it with repository permissions **Issues: read & write** and
    **Metadata: read** (or use a separate App and set `[work_state.github]` credentials). The
    investigation installation keeps its read-only permissions.
 3. Slack: invite Reili to each `report_channel`. `chat:write` posts reports; `channels:history`
    enables report idempotency checks.
-4. Add `[[objectives]]` and restart. The first cycle of a new objective runs immediately as a baseline.
+4. Add `[[objectives]]` and restart. The first cycle runs at the next scheduled time.
 
 **Day to day**
 
-- The ledger issue for history, usage, and audit comments.
-- Answer `needs-human` items on GitHub with a comment, a status label, or by closing the issue.
-- Logs: `objective_cycle_started`, `objective_cycle_finished`, `objective_cycle_skipped`,
-  `objective_cycle_interrupted`, `objective_cycle_aborted`, `objective_ledger_sync_failed`,
-  `objective_cycle_report_deferred`.
+- Filter issues by `reili-objective:<id>` to see an objective's work, and by `reili:assignee` to see
+  what Reili is working on.
+- Answer `reili:needs-decision` items with a comment. Hand Reili work by adding `reili:assignee`
+  and the objective label; take it back by removing `reili:assignee`.
+- Logs: `objective_cycle_started`, `objective_cycle_finished`, `objective_cycle_ended`,
+  `objective_cycle_cancelled`, `objective_cycle_failed`, `objective_cycle_skipped`,
+  `objective_proposal_skipped`, `objective_cycle_report_failed`.
 
 **Troubleshooting**
 
 | Symptom | Check |
 |---|---|
-| No cycles run | `enabled`, lifecycle in the ledger, `objective_ledger_sync_failed` logs, failure back-off in recent cycles, daily token budget |
-| "already running" for a long time | The lease holder crashed; it resumes after `lease_minutes`. |
-| Item ignored by Reili | Unreadable machine block (warning log): restore it from the issue history. |
-| Cycles fail with "upgrade Reili" | A newer Reili wrote the state (`schema_version`); run that version or newer. |
-| Reports missing | `post_reports`, `max_reports_per_day`, `min_interval_minutes` (`objective_cycle_report_deferred` logs), bot not in channel |
-| Repeated budget notices | Raise `max_llm_tokens_per_day` or reduce schedule frequency |
-| Write refused (`Forbidden`) | Installation not on the management repository or missing Issues: write |
+| No cycles run | `enabled`, the schedule and time zone, `objective_cycle_failed` logs (tracker access) |
+| Reili ignores an item | It needs both `reili-objective:<id>` and `reili:assignee`, and must be open |
+| A comment had no effect | Only owners, members, and collaborators are read; it is read at the next scheduled time |
+| Reports missing | `post_reports`, routine progress is not reported, bot not in channel, `objective_cycle_report_failed` logs |
+| Write refused (`Forbidden`) | Installation not on the configured repository or missing Issues: write |
 
 ## Known limitations
 
-- GitHub Issues provide no transactions; see [Durability](#durability-and-what-is-not-guaranteed).
 - Reili does not independently check the agent's conclusions: hypothesis statuses and findings
   are the agent's assessment, backed only by the evidence it cites.
-- Reili does not measure progress toward the objective or the effect of implemented recommendations;
-  humans judge both and close the issues themselves.
-- Objective cycles run only on their schedule; Slack messages, alerts, and issue comments never start
-  one. Human comments and label changes are picked up by the next scheduled cycle.
+- Reili does not measure progress toward the objective or the effect of implemented
+  recommendations; the team judges both and closes the items.
+- Objective cycles run only on their schedule; Slack messages, alerts, and issue comments never
+  start one. Comments and label changes are picked up at the next scheduled time.
+- Reili works in one configured repository per deployment.

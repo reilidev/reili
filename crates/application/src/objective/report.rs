@@ -1,267 +1,163 @@
-//! Report: compose a Slack message only for meaningful changes (new items, status changes,
-//! decisions needed), with per-objective rate limits and an
-//! idempotency key so a crash between "posted" and "recorded" does not double-post.
+//! Report: what a cycle did on the tracker, and the Slack message composed from it. Reili posts
+//! only when there is something the team should look at (new items, decisions needed, items done);
+//! routine progress stays on the items.
 
 use std::fmt::Write as _;
 
-use chrono::{DateTime, Duration, Utc};
-use reili_core::objective::{ObjectiveDefinition, stable_fingerprint};
+use chrono::{DateTime, Utc};
+use reili_core::objective::ObjectiveDefinition;
 use reili_core::work::{
-    ObjectiveLedgerState, RecordKey, Severity, StoredWorkItem, WorkItemStatus,
+    RecordRef, Severity,
     sanitize::{neutralize_slack_broadcasts, redact_sensitive, truncate_chars},
 };
 
 const MAX_REPORT_CHARS: usize = 3_500;
 
-/// Digest of everything a human would want to be told about again when it changes.
-#[must_use]
-pub fn notification_digest(item: &StoredWorkItem) -> String {
-    let state = &item.state;
-    stable_fingerprint(&format!(
-        "{}|{}|{}|{}|{}",
-        state.status.as_str(),
-        state.severity.as_str(),
-        state.title,
-        state
-            .human_decision
-            .as_ref()
-            .map_or("", |decision| decision.question.as_str()),
-        state.findings.len(),
-    ))
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReportDecision {
-    Nothing,
-    Deferred {
-        reason: String,
-    },
-    Post {
-        text: String,
-        item_keys: Vec<RecordKey>,
-    },
+pub struct ItemLine {
+    pub record: RecordRef,
+    pub title: String,
+    pub severity: Severity,
+    pub question: Option<String>,
 }
 
-pub struct ComposeReportInput<'a> {
-    pub objective: &'a ObjectiveDefinition,
-    pub ledger: &'a ObjectiveLedgerState,
-    pub ledger_url: &'a str,
-    pub items: &'a [StoredWorkItem],
-    pub candidate_keys: &'a [RecordKey],
-    pub summary: &'a str,
-    pub run_id: &'a str,
-    pub now: DateTime<Utc>,
+/// What one cycle did on the tracker.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Activity {
+    pub created: Vec<ItemLine>,
+    pub updated: Vec<ItemLine>,
+    /// Items that started waiting for a team decision in this cycle.
+    pub needs_decision: Vec<ItemLine>,
+    pub resolved: Vec<ItemLine>,
+    pub skipped: Vec<String>,
 }
 
+impl Activity {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.created.is_empty() && self.updated.is_empty()
+    }
+}
+
+/// Key of the Slack report for one scheduled slot, so a re-run of the slot never posts twice.
 #[must_use]
-pub fn compose_report(input: &ComposeReportInput<'_>) -> ReportDecision {
-    let changed: Vec<&StoredWorkItem> = input
-        .items
-        .iter()
-        .filter(|item| input.candidate_keys.contains(&item.record.key))
-        .filter(|item| {
-            item.state.notification.last_digest.as_deref()
-                != Some(notification_digest(item).as_str())
-        })
-        .collect();
-    if changed.is_empty() {
-        return ReportDecision::Nothing;
-    }
-
-    let today = input.now.date_naive();
-    if input.ledger.reports_posted_on(today) >= input.objective.report.max_reports_per_day {
-        return ReportDecision::Deferred {
-            reason: format!(
-                "daily report limit ({}) reached",
-                input.objective.report.max_reports_per_day
-            ),
-        };
-    }
-    let urgent = changed.iter().any(|item| {
-        item.state.severity == Severity::Critical || item.state.status == WorkItemStatus::NeedsHuman
-    });
-    if !urgent
-        && let Some(last) = input.ledger.reports.last_report_at
-        && input.now
-            < last + Duration::minutes(i64::from(input.objective.report.min_interval_minutes))
-    {
-        return ReportDecision::Deferred {
-            reason: format!(
-                "minimum report interval ({} min) not elapsed",
-                input.objective.report.min_interval_minutes
-            ),
-        };
-    }
-
-    ReportDecision::Post {
-        text: render_report(input, &changed),
-        item_keys: changed.iter().map(|item| item.record.key.clone()).collect(),
-    }
+pub fn report_key(objective: &ObjectiveDefinition, slot: DateTime<Utc>) -> String {
+    format!("{}:{}", objective.id, slot.to_rfc3339())
 }
 
-fn render_report(input: &ComposeReportInput<'_>, changed: &[&StoredWorkItem]) -> String {
+/// `None` when nothing in the cycle needs the team's attention.
+#[must_use]
+pub fn compose_report(
+    objective: &ObjectiveDefinition,
+    summary: &str,
+    run_id: &str,
+    activity: &Activity,
+) -> Option<String> {
+    if activity.created.is_empty()
+        && activity.needs_decision.is_empty()
+        && activity.resolved.is_empty()
+    {
+        return None;
+    }
     let mut text = format!(
         "*Objective `{}`* — {}\n",
-        input.objective.id,
-        truncate_chars(input.summary.trim(), 600)
+        objective.id,
+        truncate_chars(summary.trim(), 600)
     );
-    let decisions: Vec<&&StoredWorkItem> = changed
-        .iter()
-        .filter(|item| item.state.status == WorkItemStatus::NeedsHuman)
-        .collect();
-    if !decisions.is_empty() {
+    if !activity.needs_decision.is_empty() {
         text.push_str("\n*Needs your decision*\n");
-        for item in decisions {
+        for item in &activity.needs_decision {
             let _ = writeln!(
                 text,
                 "• <{}|{}> {} — {}",
                 item.record.url,
                 item.record.key,
-                item.state.title,
-                item.state
-                    .human_decision
-                    .as_ref()
-                    .map_or("see the work item", |decision| decision.question.as_str())
+                item.title,
+                item.question.as_deref().unwrap_or("see the item")
             );
         }
-        text.push_str("_Answer on the work item: comment there, or change its status._\n");
+        text.push_str("_Answer with a comment on the item._\n");
     }
-    let updates: Vec<&&StoredWorkItem> = changed
-        .iter()
-        .filter(|item| item.state.status != WorkItemStatus::NeedsHuman)
-        .collect();
-    if !updates.is_empty() {
-        text.push_str("\n*Updates*\n");
-        for item in updates {
-            let _ = writeln!(
-                text,
-                "• <{}|{}> [{} · {}] {} — {} finding(s)",
-                item.record.url,
-                item.record.key,
-                item.state.status.as_str(),
-                item.state.severity.as_str(),
-                item.state.title,
-                item.state.findings.len(),
-            );
-        }
-    }
-    let _ = write!(
-        text,
-        "\nHypotheses are not conclusions. Details: <{}|objective ledger> · run `{}`",
-        input.ledger_url, input.run_id
-    );
-    truncate_chars(
+    write_section(&mut text, "New work items", &activity.created);
+    write_section(&mut text, "Done", &activity.resolved);
+    let _ = write!(text, "\nHypotheses are not conclusions. Run `{run_id}`");
+    Some(truncate_chars(
         &neutralize_slack_broadcasts(&redact_sensitive(&text)),
         MAX_REPORT_CHARS,
-    )
+    ))
 }
 
-#[must_use]
-pub fn report_key(objective_id: &str, run_id: &str) -> String {
-    format!("{objective_id}:{run_id}")
+fn write_section(text: &mut String, heading: &str, items: &[ItemLine]) {
+    if items.is_empty() {
+        return;
+    }
+    let _ = writeln!(text, "\n*{heading}*");
+    for item in items {
+        let _ = writeln!(
+            text,
+            "• <{}|{}> [{}] {}",
+            item.record.url,
+            item.record.key,
+            item.severity.as_str(),
+            item.title
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::Duration;
-    use reili_core::work::{
-        HumanDecisionRequest, ObjectiveLedgerState, RecordKey, RecordRef, StoredWorkItem,
-        WorkItemStatus, test_support::sample_work_item,
-    };
+    use reili_core::work::{RecordKey, RecordRef, Severity};
 
-    use super::{ComposeReportInput, ReportDecision, compose_report, notification_digest};
-    use crate::objective::testing::at;
+    use super::{Activity, ItemLine, compose_report};
     use crate::objective::tests_support::sample_objective;
 
-    fn stored(number: u64, status: WorkItemStatus) -> StoredWorkItem {
-        let mut state = sample_work_item(&format!("checkout:{number}"));
-        state.status = status;
-        if status == WorkItemStatus::NeedsHuman {
-            state.human_decision = Some(HumanDecisionRequest {
-                question: "Roll back <!channel>?".to_string(),
-                requested_at: at("2026-10-15T00:00:00Z"),
-            });
-        }
-        StoredWorkItem {
+    fn line(number: u64, question: Option<&str>) -> ItemLine {
+        ItemLine {
             record: RecordRef {
                 key: RecordKey::new(format!("#{number}")),
                 url: format!("https://github.com/acme/work/issues/{number}"),
             },
-            state,
-            human_notes: String::new(),
-            observed_status: status,
-            remote_updated_at: at("2026-10-15T00:00:00Z"),
+            title: format!("Item {number}"),
+            severity: Severity::High,
+            question: question.map(str::to_string),
         }
     }
 
     #[test]
-    fn posts_changed_items_and_skips_already_notified() {
-        let objective = sample_objective("checkout");
-        let ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
-        let mut notified = stored(2, WorkItemStatus::InProgress);
-        notified.state.notification.last_digest = Some(notification_digest(&notified));
-        let items = vec![stored(1, WorkItemStatus::NeedsHuman), notified];
-
-        let decision = compose_report(&ComposeReportInput {
-            objective: &objective,
-            ledger: &ledger,
-            ledger_url: "https://github.com/acme/work/issues/9",
-            items: &items,
-            candidate_keys: &[RecordKey::new("#1"), RecordKey::new("#2")],
-            summary: "Found a regression.",
-            run_id: "run-1",
-            now: at("2026-10-15T01:00:00Z"),
-        });
-
-        let ReportDecision::Post { text, item_keys } = decision else {
-            panic!("expected post");
+    fn reports_decisions_and_new_items() {
+        let activity = Activity {
+            created: vec![line(1, None)],
+            updated: vec![line(2, Some("Roll back <!channel>?"))],
+            needs_decision: vec![line(2, Some("Roll back <!channel>?"))],
+            ..Activity::default()
         };
-        assert_eq!(item_keys, vec![RecordKey::new("#1")]);
+
+        let text = compose_report(
+            &sample_objective("checkout"),
+            "Found a regression.",
+            "run-1",
+            &activity,
+        )
+        .expect("report");
+
         assert!(text.contains("Needs your decision"));
+        assert!(text.contains("<https://github.com/acme/work/issues/1|#1>"));
         assert!(
             !text.contains("<!channel>"),
             "broadcast mentions are neutralized"
         );
-        assert!(text.contains("Hypotheses are not conclusions"));
     }
 
     #[test]
-    fn stays_silent_without_changes() {
-        let objective = sample_objective("checkout");
-        let ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
+    fn stays_quiet_on_routine_progress() {
+        let activity = Activity {
+            updated: vec![line(2, None)],
+            ..Activity::default()
+        };
 
-        let decision = compose_report(&ComposeReportInput {
-            objective: &objective,
-            ledger: &ledger,
-            ledger_url: "",
-            items: &[],
-            candidate_keys: &[],
-            summary: "No new findings.",
-            run_id: "run-1",
-            now: at("2026-10-15T01:00:00Z"),
-        });
-
-        assert_eq!(decision, ReportDecision::Nothing);
-    }
-
-    #[test]
-    fn rate_limits_non_urgent_reports() {
-        let objective = sample_objective("checkout");
-        let mut ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
-        ledger.remember_report_key("k".to_string(), at("2026-10-15T00:30:00Z"));
-        let items = vec![stored(1, WorkItemStatus::InProgress)];
-
-        let decision = compose_report(&ComposeReportInput {
-            objective: &objective,
-            ledger: &ledger,
-            ledger_url: "",
-            items: &items,
-            candidate_keys: &[RecordKey::new("#1")],
-            summary: "s",
-            run_id: "run-1",
-            now: at("2026-10-15T00:30:00Z") + Duration::minutes(10),
-        });
-
-        assert!(matches!(decision, ReportDecision::Deferred { .. }));
+        assert_eq!(
+            compose_report(&sample_objective("checkout"), "s", "run-1", &activity),
+            None
+        );
     }
 }

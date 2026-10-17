@@ -43,8 +43,8 @@ flowchart TB
 ## Crate responsibilities
 
 - `crates/core`: domain types, typed errors, and trait-based ports. Independent from runtime
-  and adapter concerns. Includes objective definitions and schedules (`objective`), Work State and the
-  structured evidence vocabulary (`work`), and the cycle-agent, work-state, and
+  and adapter concerns. Includes objective definitions and schedules (`objective`), work items on the
+  tracker and the structured evidence vocabulary (`work`), and the cycle-agent, work-state, and
   objective-report ports.
 - `crates/application`: use cases and task orchestration — Slack ingress (routing,
   authorization, auto-response gating, enqueue), task execution (worker loop, cancellation),
@@ -72,10 +72,12 @@ flowchart TB
 - **Cancellation**: the Slack `Cancel` button flows through the interaction handler to an
   in-flight job registry that cancels queued or running tasks.
 - **Objective autonomy**: one provider runner implements both `TaskRunnerPort` (Slack tasks) and
-  `CycleAgentPort` (objective cycles). Durable state lives only in the Work State backend
-  (GitHub Issues today) and the Slack Canvas; see [autonomy.md](./autonomy.md).
-- **Pluggable Work State**: `WorkStateRepositoryPort` hides the tracker behind backend-neutral
-  record keys (`#12`, `OPS-123`) and opaque comment cursors. The runtime selects the backend from
+  `CycleAgentPort` (objective cycles). Objective work lives on the team's tracker (GitHub Issues
+  today) as ordinary items, knowledge in the Slack Canvas; Reili keeps no state of its own; see
+  [autonomy.md](./autonomy.md).
+- **Pluggable Work State**: `WorkStatePort` hides the tracker behind backend-neutral
+  record keys (`#12`, `OPS-123`) and labels for objective, assignee, and needs-decision. The
+  runtime selects the backend from
   `[work_state.<backend>]`; see [Work State backends](./autonomy.md#work-state-backends).
 
 For the runtime investigation flow, see the [Architecture section in README.md](../README.md#architecture).

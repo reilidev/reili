@@ -29,7 +29,7 @@ action is needed. Reili takes that work off your plate.
 Core:
 
 - **Objective-driven**: give Reili long-term objectives in `reili.toml` (for example "keep checkout
-  reliable"); it works toward them on a schedule, tracks work in GitHub Issues, and reports to Slack
+  reliable"); it works toward them on a schedule on the team's issues, like a teammate, and reports to Slack
 - **Read-focused**: Reili reads and reports — it never changes your infrastructure
 - **Cross-service**: works across Datadog, GitHub, JIRA, Slack, and optional knowledge base search today, with additional services planned over time
 - **Chat-based**: currently works in Slack
@@ -74,8 +74,8 @@ flowchart TD
     style More stroke-dasharray: 5 5
 ```
 
-Objective cycles run in the same binary: a scheduler reads objective ledgers from GitHub Issues and runs
-leased, checkpointed cycles with the same agent stack (see [docs/autonomy.md](./docs/autonomy.md)).
+Objective cycles run in the same binary: a scheduler runs each objective at its scheduled times with
+the same agent stack, working on the team's GitHub issues (see [docs/autonomy.md](./docs/autonomy.md)).
 
 A Slack mention is parsed, authorized, and enqueued as a task job into an in-memory queue
 (jobs are not durable across restarts). Worker tasks in the same process claim jobs and run
@@ -411,7 +411,7 @@ Besides answering mentions, Reili can pursue long-term objectives defined in `re
 
 ```toml
 [work_state.github]                 # Work State backend (GitHub Issues is supported today)
-repository = "acme/reili-work"      # dedicated repository for Reili's Work State
+repository = "acme/platform"        # the repository the team tracks its work in
 
 [[objectives]]
 id = "checkout-reliability"
@@ -423,20 +423,22 @@ report_channel = "C0123456789"
 enabled = true
 ```
 
-Each cycle observes the objective's services and prior work, does the read-only work that moves
-the objective forward (investigating, reviewing changes, following up on open items) with
-dynamically composed sub-agents, records the work as GitHub Issues that humans can read, comment on, and steer with labels, posts
-only meaningful changes to Slack, and
-saves screened reusable facts to the Canvas memory. Cycles survive restarts: state lives in GitHub
-Issues, not in the process.
+Reili works on the team's issues like a teammate. Items for an objective carry the
+`reili-objective:<id>` label; Reili works on those that also carry `reili:assignee` (the team hands
+it work by adding the label and takes it back by removing it). Each cycle reads the discussion on its
+items, does the read-only work that moves the objective forward (investigating, reviewing changes,
+following up) with dynamically composed sub-agents, writes progress as comments, opens new items for
+new work, adds `reili:needs-decision` when it needs the team, posts only what the team should see to
+Slack, and saves screened reusable facts to the Canvas memory. There is no state of its own: the
+issues are the record.
 No extra secret is needed by default: Work State reuses the `[connector.github.app]` credentials
-(install the App on the Work State repository with Issues read & write), unless
-`[work_state.github]` names a separate App.
+(install the App on that repository with Issues read & write), unless `[work_state.github]` names a
+separate App.
 Work State sits behind a backend-neutral port, so other trackers (for example JIRA) can be added
 as backends without changing the objective cycle; see
 [Work State backends](./docs/autonomy.md#work-state-backends).
 
-See [docs/autonomy.md](./docs/autonomy.md) for configuration, the Work State format, durability
+See [docs/autonomy.md](./docs/autonomy.md) for configuration, how Reili works with the team,
 guarantees and their limits, safety, and the operations runbook.
 
 ## Permissions and Tool Transparency
@@ -451,7 +453,7 @@ At a high level, the current runtime:
   Slack public-channel search, and web lookup integrations, and writes only Slack progress and
   result messages plus, when memory is configured, reusable notes in the shared memory Canvas
 - when objectives are configured, additionally writes issues, comments, and labels in exactly one
-  dedicated Work State repository, using a GitHub App token down-scoped to that repository with
+  configured repository, using a GitHub App token down-scoped to that repository with
   `issues: write` and `metadata: read`, and posts objective reports to each objective's report channel
 - exposes only read-only Datadog MCP tools, including dashboard detail retrieval and Synthetic
   test reads when Datadog returns them

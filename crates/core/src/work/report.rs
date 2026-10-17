@@ -1,35 +1,36 @@
-//! The structured report the agent submits at the end of an objective cycle. Reili's report policy screens it before
-//! anything is recorded.
+//! The structured report the agent submits at the end of an objective cycle. Reili's report policy
+//! screens it before anything is written to the tracker.
 
 use serde::{Deserialize, Serialize};
 
 use super::evidence::{EvidenceRef, Finding, Hypothesis, Recommendation};
-use super::item::{Severity, WorkItemKind, WorkItemStatus};
+use super::item::{Severity, WorkItemStatus};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkItemProposal {
     /// Stable de-duplication key; reuse the key of an existing work item for the same problem.
     pub key: String,
-    /// Record key of the existing work item for the same problem, as shown in the brief.
+    /// Record key of the existing work item this is about, as shown in the brief.
     #[serde(default)]
     pub existing_record: Option<String>,
     pub title: String,
-    pub kind: WorkItemKind,
     pub severity: Severity,
-    pub proposed_status: WorkItemStatus,
-    pub problem_statement: String,
+    pub status: WorkItemStatus,
+    /// What the problem or task is; becomes the description of a new item.
     #[serde(default)]
-    pub plan: Vec<String>,
+    pub problem_statement: String,
+    /// What was done on this item in this cycle; becomes the progress comment.
+    #[serde(default)]
+    pub work_log: String,
     #[serde(default)]
     pub hypotheses: Vec<Hypothesis>,
     #[serde(default)]
     pub findings: Vec<Finding>,
     #[serde(default)]
     pub recommendation: Option<Recommendation>,
+    /// The concrete question for the team when `status` is `needs_decision`.
     #[serde(default)]
-    pub open_questions: Vec<String>,
-    #[serde(default)]
-    pub human_decision_needed: Option<String>,
+    pub decision_needed: Option<String>,
     #[serde(default)]
     pub next_actions: Vec<String>,
     #[serde(default)]
@@ -44,6 +45,15 @@ pub struct KnowledgeCandidate {
     #[serde(default)]
     pub evidence_ids: Vec<String>,
     #[serde(default)]
+    pub shared: bool,
+}
+
+/// A knowledge candidate that passed screening, ready for the Canvas memory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnowledgeDraft {
+    pub fact: String,
+    pub evidence: String,
+    pub scope: String,
     pub shared: bool,
 }
 
@@ -90,8 +100,8 @@ mod tests {
               "summary":"s",
               "evidence":[{"id":"E1","source":"datadog","url":"https://app.datadoghq.com/x","description":"5xx"}],
               "work_items":[{
-                "key":"checkout:5xx","title":"5xx","kind":"incident","severity":"high",
-                "proposed_status":"needs_human","problem_statement":"p",
+                "key":"checkout:5xx","title":"5xx","severity":"high",
+                "status":"needs_decision","problem_statement":"p","work_log":"compared windows",
                 "hypotheses":[{"id":"H1","statement":"deploy","status":"supported"}]
               }]
             }"#,
@@ -100,7 +110,7 @@ mod tests {
 
         let item = &report.work_items[0];
         assert_eq!(item.severity, Severity::High);
-        assert_eq!(item.proposed_status, WorkItemStatus::NeedsHuman);
+        assert_eq!(item.status, WorkItemStatus::NeedsDecision);
         assert!(report.evidence_by_id("E1").is_some());
     }
 }

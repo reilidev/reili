@@ -51,9 +51,22 @@ impl SubmitCycleReportTool {
                     item.title
                 ));
             }
-            if item.title.trim().is_empty() || item.problem_statement.trim().is_empty() {
+            if item.title.trim().is_empty() {
+                problems.push(format!("work item `{}` needs a title", item.key));
+            }
+            let continues_existing = item
+                .existing_record
+                .as_deref()
+                .is_some_and(|record| !record.trim().is_empty());
+            if continues_existing && item.work_log.trim().is_empty() {
                 problems.push(format!(
-                    "work item `{}` needs a title and a problem_statement",
+                    "work item `{}` continues an existing item and needs a `work_log`",
+                    item.key
+                ));
+            }
+            if !continues_existing && item.problem_statement.trim().is_empty() {
+                problems.push(format!(
+                    "work item `{}` is new and needs a `problem_statement`",
                     item.key
                 ));
             }
@@ -91,7 +104,7 @@ impl Tool for SubmitCycleReportTool {
     type Output = String;
 
     fn description(&self) -> String {
-        "Submit the final structured report for this objective cycle. Call exactly once, at the end. Reili screens it with its report policy and persists it to the Work State backend: cited evidence ids must exist in `evidence`, and `dismissed` is set only by humans.".to_string()
+        "Submit the final structured report for this objective cycle. Call exactly once, at the end. Reili screens it with its report policy and writes it to the team's tracker: a progress comment on each of your items you worked on, and a new item (assigned to you) for new work. Cited evidence ids must exist in `evidence`.".to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -193,13 +206,12 @@ fn work_item_schema() -> Value {
         "type": "object",
         "properties": {
             "key": { "type": "string", "description": "Stable dedupe key such as `checkout-api:db-pool-timeouts`; reuse the key of an existing work item for the same problem." },
-            "existing_record": { "type": "string", "description": "Record key of the existing work item for this problem, exactly as shown in the brief (e.g. `#12`)." },
+            "existing_record": { "type": "string", "description": "Record key of the item you worked on, exactly as shown in the brief (e.g. `#12`). Omit for new work." },
             "title": { "type": "string" },
-            "kind": { "type": "string", "enum": ["risk", "incident", "improvement", "toil", "security", "cost"] },
             "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },
-            "proposed_status": { "type": "string", "enum": ["in_progress", "needs_human", "proposed", "resolved"] },
-            "problem_statement": { "type": "string" },
-            "plan": { "type": "array", "items": { "type": "string" } },
+            "status": { "type": "string", "enum": ["in_progress", "needs_decision", "resolved"], "description": "needs_decision asks the team a question (decision_needed); resolved needs a finding that cites evidence." },
+            "problem_statement": { "type": "string", "description": "For new work: what the problem or task is. Becomes the item's description." },
+            "work_log": { "type": "string", "description": "What you did on this item in this cycle and what you learned. Becomes the progress comment; required when continuing an existing item." },
             "hypotheses": { "type": "array", "items": hypothesis_schema() },
             "findings": {
                 "type": "array",
@@ -213,12 +225,11 @@ fn work_item_schema() -> Value {
                 }
             },
             "recommendation": recommendation_schema(),
-            "open_questions": { "type": "array", "items": { "type": "string" } },
-            "human_decision_needed": { "type": "string", "description": "The concrete question for humans when proposed_status is needs_human." },
+            "decision_needed": { "type": "string", "description": "The concrete question for the team when status is needs_decision." },
             "next_actions": { "type": "array", "items": { "type": "string" } },
             "evidence_ids": id_list()
         },
-        "required": ["key", "title", "kind", "severity", "proposed_status", "problem_statement"]
+        "required": ["key", "title", "severity", "status"]
     })
 }
 
@@ -248,9 +259,8 @@ mod tests {
         json!({
             "key": "checkout:errors",
             "title": "errors",
-            "kind": "incident",
             "severity": "high",
-            "proposed_status": "in_progress",
+            "status": "in_progress",
             "problem_statement": "p",
             "hypotheses": [{ "id": "H1", "statement": "s", "status": "supported", "evidence_ids": [evidence] }]
         })
@@ -294,6 +304,22 @@ mod tests {
             .await
             .expect_err("rejected");
         assert!(error.message.contains("evidence `E9`"));
+
+        let mut continuation = item("E9");
+        continuation["existing_record"] = json!("#3");
+        let missing_log = tool
+            .call(
+                &mut ToolContext::new(),
+                json!({
+                    "summary": "s",
+                    "no_new_findings": false,
+                    "evidence": [{ "id": "E9", "source": "datadog", "description": "d" }],
+                    "work_items": [continuation]
+                }),
+            )
+            .await
+            .expect_err("rejected");
+        assert!(missing_log.message.contains("work_log"));
 
         let schema_error = tool
             .call(&mut ToolContext::new(), json!({ "summary": 3 }))

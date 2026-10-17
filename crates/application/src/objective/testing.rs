@@ -1,12 +1,12 @@
-//! In-memory test doubles that mimic the semantics the production adapters rely on: GitHub-style
-//! records (`#<number>` keys), revision checks, label-derived status, human comments, and durability across "restarts"
-//! (a new runner instance sharing the same fake).
+//! In-memory test doubles that mimic the semantics the production adapters rely on: a
+//! GitHub-like tracker (`#<number>` keys, labels for objective/assignee/needs-decision, comments
+//! with trusted authors), a scripted agent, Slack reports, and the Canvas memory.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Duration, TimeZone, Utc};
+use chrono::{DateTime, Duration, Utc};
 use reili_core::cycle_agent::{
     CycleAgentOutcome, CycleAgentPort, CycleAgentRun, RunCycleAgentInput,
 };
@@ -20,9 +20,8 @@ use reili_core::messaging::slack::{
 use reili_core::objective::ObjectiveId;
 use reili_core::task::{LlmExecutionMetadata, LlmUsageSnapshot};
 use reili_core::work::{
-    CommentId, CycleReport, HumanComment, ObjectiveLedgerState, RecordKey, RecordRef, StoredLedger,
-    StoredWorkItem, WorkItemState, WorkItemStatus, WorkStateComment, WorkStateError,
-    WorkStateRepositoryPort, decode_state_json,
+    CloseReason, CycleReport, NewWorkItem, RecordKey, RecordRef, WorkItem, WorkItemComment,
+    WorkItemKey, WorkItemState, WorkStateError, WorkStatePort,
 };
 
 use super::clock::Clock;
@@ -50,10 +49,6 @@ impl ManualClock {
         let mut now = self.now.lock().expect("lock clock");
         *now += duration;
     }
-
-    pub(crate) fn now_for_test(&self) -> DateTime<Utc> {
-        Clock::now(self)
-    }
 }
 
 impl Clock for ManualClock {
@@ -68,177 +63,56 @@ impl TaskLogger for NoopLogger {
     fn log(&self, _entry: LogEntry) {}
 }
 
+const REILI_LOGIN: &str = "reili[bot]";
+
 #[derive(Debug, Clone)]
 pub(crate) struct FakeComment {
-    pub id: u64,
     pub author: String,
+    pub by_reili: bool,
     pub trusted: bool,
     pub body: String,
-    pub by_reili: bool,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum FakeIssueBody {
-    Ledger(String),
-    WorkItem(String),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FakeIssue {
+pub(crate) struct FakeItem {
     pub number: u64,
     pub objective_id: ObjectiveId,
-    pub body: FakeIssueBody,
-    pub human_notes: String,
-    pub observed_status: Option<WorkItemStatus>,
-    pub closed: bool,
-    pub duplicate_of: Option<u64>,
-    pub comments: Vec<FakeComment>,
+    pub title: String,
+    pub body: String,
+    pub author: String,
+    pub key: Option<WorkItemKey>,
+    pub state: WorkItemState,
+    pub assigned_to_reili: bool,
+    pub needs_decision: bool,
+    pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub closed_at: Option<DateTime<Utc>>,
+    pub comments: Vec<FakeComment>,
 }
 
 #[derive(Default)]
-struct FakeRepositoryState {
-    issues: BTreeMap<u64, FakeIssue>,
+struct FakeTrackerState {
+    items: BTreeMap<u64, FakeItem>,
     next_number: u64,
-    next_comment_id: u64,
     unavailable: bool,
-    writes: u64,
-    /// Number of upcoming `save_*` calls that report a conflict (simulates a concurrent writer).
-    injected_conflicts: u32,
-    /// Creates a racing duplicate on the next work item create.
+    /// Opens a competing item with the same key just before the next create.
     race_next_create: bool,
 }
 
-/// GitHub-Issues-like in-memory repository. State is stored as serialized JSON, so every read
-/// goes through a serialization round trip like the real adapter.
-#[derive(Clone, Default)]
-pub(crate) struct FakeWorkStateRepository {
-    state: Arc<Mutex<FakeRepositoryState>>,
-    clock: Option<ManualClock>,
+/// GitHub-Issues-like in-memory tracker.
+#[derive(Clone)]
+pub(crate) struct FakeTracker {
+    state: Arc<Mutex<FakeTrackerState>>,
+    clock: ManualClock,
 }
 
-impl FakeWorkStateRepository {
+impl FakeTracker {
     pub(crate) fn new(clock: ManualClock) -> Self {
         Self {
-            state: Arc::new(Mutex::new(FakeRepositoryState {
-                next_number: 1,
-                next_comment_id: 1,
-                ..FakeRepositoryState::default()
-            })),
-            clock: Some(clock),
+            state: Arc::new(Mutex::new(FakeTrackerState::default())),
+            clock,
         }
-    }
-
-    fn now(&self) -> DateTime<Utc> {
-        self.clock.as_ref().map_or_else(
-            || Utc.timestamp_opt(0, 0).single().expect("time"),
-            Clock::now,
-        )
-    }
-
-    pub(crate) fn set_unavailable(&self, unavailable: bool) {
-        self.state.lock().expect("lock").unavailable = unavailable;
-    }
-
-    pub(crate) fn inject_conflicts(&self, count: u32) {
-        self.state.lock().expect("lock").injected_conflicts = count;
-    }
-
-    pub(crate) fn race_next_create(&self) {
-        self.state.lock().expect("lock").race_next_create = true;
-    }
-
-    pub(crate) fn issues(&self) -> Vec<FakeIssue> {
-        self.state
-            .lock()
-            .expect("lock")
-            .issues
-            .values()
-            .cloned()
-            .collect()
-    }
-
-    pub(crate) fn work_items(&self) -> Vec<WorkItemState> {
-        self.issues()
-            .into_iter()
-            .filter_map(|issue| match issue.body {
-                FakeIssueBody::WorkItem(json) => serde_json::from_str(&json).ok(),
-                FakeIssueBody::Ledger(_) => None,
-            })
-            .collect()
-    }
-
-    pub(crate) fn open_work_items(&self) -> Vec<(u64, WorkItemState)> {
-        self.issues()
-            .into_iter()
-            .filter(|issue| !issue.closed)
-            .filter_map(|issue| match issue.body {
-                FakeIssueBody::WorkItem(json) => serde_json::from_str(&json)
-                    .ok()
-                    .map(|state| (issue.number, state)),
-                FakeIssueBody::Ledger(_) => None,
-            })
-            .collect()
-    }
-
-    pub(crate) fn ledger(&self, objective_id: &str) -> Option<ObjectiveLedgerState> {
-        self.issues()
-            .into_iter()
-            .find_map(|issue| match issue.body {
-                FakeIssueBody::Ledger(json)
-                    if issue.objective_id.as_str() == objective_id && !issue.closed =>
-                {
-                    serde_json::from_str(&json).ok()
-                }
-                _ => None,
-            })
-    }
-
-    pub(crate) fn comments(&self, number: u64) -> Vec<FakeComment> {
-        self.state
-            .lock()
-            .expect("lock")
-            .issues
-            .get(&number)
-            .map(|issue| issue.comments.clone())
-            .unwrap_or_default()
-    }
-
-    /// Simulates a human changing the status label (or closing the issue).
-    pub(crate) fn human_set_status(&self, number: u64, status: WorkItemStatus) {
-        let now = self.now();
-        let mut state = self.state.lock().expect("lock");
-        if let Some(issue) = state.issues.get_mut(&number) {
-            issue.observed_status = Some(status);
-            issue.closed = !status.is_open();
-            issue.updated_at = now;
-        }
-    }
-
-    pub(crate) fn human_comment(&self, number: u64, author: &str, trusted: bool, body: &str) {
-        let now = self.now();
-        let mut state = self.state.lock().expect("lock");
-        let id = state.next_comment_id;
-        state.next_comment_id += 1;
-        if let Some(issue) = state.issues.get_mut(&number) {
-            issue.comments.push(FakeComment {
-                id,
-                author: author.to_string(),
-                trusted,
-                body: body.to_string(),
-                by_reili: false,
-            });
-            issue.updated_at = now;
-        }
-    }
-
-    fn check_available(state: &FakeRepositoryState) -> Result<(), WorkStateError> {
-        if state.unavailable {
-            return Err(WorkStateError::Unavailable(PortError::connection_failed(
-                "GitHub API unreachable",
-            )));
-        }
-        Ok(())
     }
 
     pub(crate) fn number_of(record: &RecordRef) -> u64 {
@@ -250,328 +124,250 @@ impl FakeWorkStateRepository {
             .expect("fake records use `#<number>` keys")
     }
 
-    fn issue_ref(number: u64) -> RecordRef {
+    fn record(number: u64) -> RecordRef {
         RecordRef {
             key: RecordKey::new(format!("#{number}")),
             url: format!("https://github.com/acme/reili-work/issues/{number}"),
         }
     }
 
-    fn to_ledger(issue: &FakeIssue) -> Result<StoredLedger, WorkStateError> {
-        let FakeIssueBody::Ledger(json) = &issue.body else {
-            return Err(WorkStateError::Corrupted {
-                record: Self::issue_ref(issue.number).key,
-                message: "not a ledger".to_string(),
-            });
-        };
-        Ok(StoredLedger {
-            record: Self::issue_ref(issue.number),
-            state: decode_state_json(json).map_err(|error| {
-                WorkStateError::undecodable(Self::issue_ref(issue.number).key, error)
-            })?,
-            human_notes: issue.human_notes.clone(),
-        })
+    pub(crate) fn set_unavailable(&self, unavailable: bool) {
+        self.state.lock().expect("lock").unavailable = unavailable;
     }
 
-    fn to_work_item(issue: &FakeIssue) -> Result<StoredWorkItem, WorkStateError> {
-        let FakeIssueBody::WorkItem(json) = &issue.body else {
-            return Err(WorkStateError::Corrupted {
-                record: Self::issue_ref(issue.number).key,
-                message: "not a work item".to_string(),
+    pub(crate) fn race_next_create(&self) {
+        self.state.lock().expect("lock").race_next_create = true;
+    }
+
+    pub(crate) fn items(&self) -> Vec<FakeItem> {
+        self.state
+            .lock()
+            .expect("lock")
+            .items
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    pub(crate) fn item(&self, number: u64) -> FakeItem {
+        self.state
+            .lock()
+            .expect("lock")
+            .items
+            .get(&number)
+            .cloned()
+            .expect("item exists")
+    }
+
+    fn insert(&self, state: &mut FakeTrackerState, mut item: FakeItem) -> u64 {
+        state.next_number += 1;
+        item.number = state.next_number;
+        let number = item.number;
+        state.items.insert(number, item);
+        number
+    }
+
+    fn new_item(&self, objective: &ObjectiveId, title: &str, body: &str, author: &str) -> FakeItem {
+        let now = self.clock.now();
+        FakeItem {
+            number: 0,
+            objective_id: objective.clone(),
+            title: title.to_string(),
+            body: body.to_string(),
+            author: author.to_string(),
+            key: None,
+            state: WorkItemState::Open,
+            assigned_to_reili: false,
+            needs_decision: false,
+            created_at: now,
+            updated_at: now,
+            closed_at: None,
+            comments: Vec::new(),
+        }
+    }
+
+    /// A team member opens an item for the objective, optionally assigning it to Reili.
+    pub(crate) fn human_create(
+        &self,
+        objective: &str,
+        title: &str,
+        body: &str,
+        assigned: bool,
+    ) -> u64 {
+        let objective = ObjectiveId::new(objective).expect("objective id");
+        let mut item = self.new_item(&objective, title, body, "alice");
+        item.assigned_to_reili = assigned;
+        let mut state = self.state.lock().expect("lock");
+        self.insert(&mut state, item)
+    }
+
+    pub(crate) fn human_comment(&self, number: u64, author: &str, trusted: bool, body: &str) {
+        let now = self.clock.now();
+        self.update(number, |item| {
+            item.comments.push(FakeComment {
+                author: author.to_string(),
+                by_reili: false,
+                trusted,
+                body: body.to_string(),
+                created_at: now,
             });
-        };
-        let state: WorkItemState = decode_state_json(json).map_err(|error| {
-            WorkStateError::undecodable(Self::issue_ref(issue.number).key, error)
-        })?;
-        let observed_status = match issue.observed_status {
-            Some(status) => status,
-            None => state.status,
-        };
-        let observed_status = if issue.closed && observed_status.is_open() {
-            WorkItemStatus::Resolved
-        } else if !issue.closed && !observed_status.is_open() {
-            WorkItemStatus::InProgress
-        } else {
-            observed_status
-        };
-        Ok(StoredWorkItem {
-            record: Self::issue_ref(issue.number),
-            state,
-            human_notes: issue.human_notes.clone(),
-            observed_status,
-            remote_updated_at: issue.updated_at,
-        })
+        });
+    }
+
+    pub(crate) fn human_assign(&self, number: u64, assigned: bool) {
+        self.update(number, |item| item.assigned_to_reili = assigned);
+    }
+
+    pub(crate) fn human_close(&self, number: u64, state: WorkItemState) {
+        let now = self.clock.now();
+        self.update(number, |item| {
+            item.state = state;
+            item.closed_at = Some(now);
+        });
+    }
+
+    fn update(&self, number: u64, change: impl FnOnce(&mut FakeItem)) {
+        let now = self.clock.now();
+        let mut state = self.state.lock().expect("lock");
+        let item = state.items.get_mut(&number).expect("item exists");
+        change(item);
+        item.updated_at = now;
+    }
+
+    fn check_available(&self) -> Result<(), WorkStateError> {
+        if self.state.lock().expect("lock").unavailable {
+            return Err(WorkStateError::Unavailable(PortError::connection_failed(
+                "tracker down",
+            )));
+        }
+        Ok(())
+    }
+
+    fn to_work_item(item: &FakeItem) -> WorkItem {
+        WorkItem {
+            record: Self::record(item.number),
+            objective_id: item.objective_id.clone(),
+            title: item.title.clone(),
+            body: item.body.clone(),
+            author: item.author.clone(),
+            created_by_reili: item.author == REILI_LOGIN,
+            key: item.key.clone(),
+            state: item.state,
+            assigned_to_reili: item.assigned_to_reili,
+            needs_decision: item.needs_decision,
+            created_at: item.created_at,
+            updated_at: item.updated_at,
+        }
+    }
+
+    fn reili_comment(&self, number: u64, body: &str) {
+        let now = self.clock.now();
+        self.update(number, |item| {
+            item.comments.push(FakeComment {
+                author: REILI_LOGIN.to_string(),
+                by_reili: true,
+                trusted: true,
+                body: body.to_string(),
+                created_at: now,
+            });
+        });
     }
 }
 
 #[async_trait]
-impl WorkStateRepositoryPort for FakeWorkStateRepository {
-    async fn find_objective_ledger(
-        &self,
-        objective_id: &ObjectiveId,
-    ) -> Result<Option<StoredLedger>, WorkStateError> {
-        let state = self.state.lock().expect("lock");
-        Self::check_available(&state)?;
-        state
-            .issues
-            .values()
-            .filter(|issue| {
-                &issue.objective_id == objective_id
-                    && matches!(issue.body, FakeIssueBody::Ledger(_))
-                    && issue.duplicate_of.is_none()
-            })
-            .min_by_key(|issue| issue.number)
-            .map(Self::to_ledger)
-            .transpose()
-    }
-
-    async fn list_objective_ledgers(&self) -> Result<Vec<StoredLedger>, WorkStateError> {
-        let state = self.state.lock().expect("lock");
-        Self::check_available(&state)?;
-        state
-            .issues
-            .values()
-            .filter(|issue| {
-                matches!(issue.body, FakeIssueBody::Ledger(_)) && issue.duplicate_of.is_none()
-            })
-            .map(Self::to_ledger)
-            .collect()
-    }
-
-    async fn create_objective_ledger(
-        &self,
-        ledger: &ObjectiveLedgerState,
-    ) -> Result<StoredLedger, WorkStateError> {
-        let now = self.now();
-        let mut state = self.state.lock().expect("lock");
-        Self::check_available(&state)?;
-        let number = state.next_number;
-        state.next_number += 1;
-        state.writes += 1;
-        let mut stored = ledger.clone();
-        stored.revision = 1;
-        let issue = FakeIssue {
-            number,
-            objective_id: ledger.objective_id.clone(),
-            body: FakeIssueBody::Ledger(serde_json::to_string(&stored).expect("json")),
-            human_notes: String::new(),
-            observed_status: None,
-            closed: false,
-            duplicate_of: None,
-            comments: Vec::new(),
-            updated_at: now,
-        };
-        let result = Self::to_ledger(&issue);
-        state.issues.insert(number, issue);
-        result
-    }
-
-    async fn save_objective_ledger(
-        &self,
-        record: &RecordRef,
-        expected_revision: u64,
-        ledger: &ObjectiveLedgerState,
-    ) -> Result<StoredLedger, WorkStateError> {
-        let now = self.now();
-        let mut state = self.state.lock().expect("lock");
-        Self::check_available(&state)?;
-        if state.injected_conflicts > 0 {
-            state.injected_conflicts -= 1;
-            let stored = state
-                .issues
-                .get_mut(&Self::number_of(record))
-                .expect("issue");
-            let FakeIssueBody::Ledger(json) = &stored.body else {
-                panic!("not a ledger");
-            };
-            let mut current: ObjectiveLedgerState = serde_json::from_str(json).expect("json");
-            current.revision += 1;
-            stored.body = FakeIssueBody::Ledger(serde_json::to_string(&current).expect("json"));
-            return Err(WorkStateError::Conflict {
-                record: record.key.clone(),
-                expected: expected_revision,
-                found: current.revision,
-            });
-        }
-        let stored = state
-            .issues
-            .get_mut(&Self::number_of(record))
-            .expect("issue");
-        let current = Self::to_ledger(stored)?;
-        if current.state.revision != expected_revision {
-            return Err(WorkStateError::Conflict {
-                record: record.key.clone(),
-                expected: expected_revision,
-                found: current.state.revision,
-            });
-        }
-        let mut next = ledger.clone();
-        next.revision = expected_revision + 1;
-        stored.body = FakeIssueBody::Ledger(serde_json::to_string(&next).expect("json"));
-        stored.updated_at = now;
-        let result = Self::to_ledger(stored);
-        state.writes += 1;
-        result
-    }
-
+impl WorkStatePort for FakeTracker {
     async fn list_work_items(
         &self,
         objective_id: &ObjectiveId,
-    ) -> Result<Vec<StoredWorkItem>, WorkStateError> {
-        let state = self.state.lock().expect("lock");
-        Self::check_available(&state)?;
-        state
-            .issues
+        closed_since: DateTime<Utc>,
+    ) -> Result<Vec<WorkItem>, WorkStateError> {
+        self.check_available()?;
+        Ok(self
+            .state
+            .lock()
+            .expect("lock")
+            .items
             .values()
-            .filter(|issue| {
-                &issue.objective_id == objective_id
-                    && matches!(issue.body, FakeIssueBody::WorkItem(_))
-                    && issue.duplicate_of.is_none()
+            .filter(|item| &item.objective_id == objective_id)
+            .filter(|item| {
+                item.state == WorkItemState::Open
+                    || item.closed_at.is_some_and(|closed| closed >= closed_since)
             })
             .map(Self::to_work_item)
-            .collect()
+            .collect())
     }
 
-    async fn create_work_item(
-        &self,
-        item: &WorkItemState,
-    ) -> Result<StoredWorkItem, WorkStateError> {
-        let now = self.now();
-        let mut state = self.state.lock().expect("lock");
-        Self::check_available(&state)?;
-        let mut stored = item.clone();
-        stored.revision = 1;
-        let make_issue = |number: u64| FakeIssue {
-            number,
-            objective_id: item.objective_id.clone(),
-            body: FakeIssueBody::WorkItem(serde_json::to_string(&stored).expect("json")),
-            human_notes: String::new(),
-            observed_status: None,
-            closed: !item.status.is_open(),
-            duplicate_of: None,
-            comments: Vec::new(),
-            updated_at: now,
-        };
-        if state.race_next_create {
-            state.race_next_create = false;
-            let racing = state.next_number;
-            state.next_number += 1;
-            state.issues.insert(racing, make_issue(racing));
-        }
-        let number = state.next_number;
-        state.next_number += 1;
-        state.writes += 1;
-        let issue = make_issue(number);
-        let result = Self::to_work_item(&issue);
-        state.issues.insert(number, issue);
-        result
-    }
-
-    async fn save_work_item(
+    async fn list_comments(
         &self,
         record: &RecordRef,
-        expected_revision: u64,
-        item: &WorkItemState,
-    ) -> Result<StoredWorkItem, WorkStateError> {
-        let now = self.now();
-        let mut state = self.state.lock().expect("lock");
-        Self::check_available(&state)?;
-        let stored = state
-            .issues
-            .get_mut(&Self::number_of(record))
-            .expect("issue");
-        let current = Self::to_work_item(stored)?;
-        if current.state.revision != expected_revision {
-            return Err(WorkStateError::Conflict {
-                record: record.key.clone(),
-                expected: expected_revision,
-                found: current.state.revision,
-            });
-        }
-        let mut next = item.clone();
-        next.revision = expected_revision + 1;
-        stored.body = FakeIssueBody::WorkItem(serde_json::to_string(&next).expect("json"));
-        stored.observed_status = Some(next.status);
-        stored.closed = !next.status.is_open();
-        stored.updated_at = now;
-        let result = Self::to_work_item(stored);
-        state.writes += 1;
-        result
-    }
-
-    async fn append_comment(
-        &self,
-        record: &RecordRef,
-        comment: WorkStateComment,
-    ) -> Result<(), WorkStateError> {
-        let now = self.now();
-        let mut state = self.state.lock().expect("lock");
-        Self::check_available(&state)?;
-        let id = state.next_comment_id;
-        state.next_comment_id += 1;
-        state.writes += 1;
-        let stored = state
-            .issues
-            .get_mut(&Self::number_of(record))
-            .expect("issue");
-        stored.comments.push(FakeComment {
-            id,
-            author: "reili[bot]".to_string(),
-            trusted: true,
-            body: format!("[{}] {}", comment.kind.as_str(), comment.body),
-            by_reili: true,
-        });
-        stored.updated_at = now;
-        Ok(())
-    }
-
-    async fn list_human_comments(
-        &self,
-        record: &RecordRef,
-        after_comment_id: Option<CommentId>,
-    ) -> Result<Vec<HumanComment>, WorkStateError> {
-        let state = self.state.lock().expect("lock");
-        Self::check_available(&state)?;
-        let stored = state.issues.get(&Self::number_of(record)).expect("issue");
-        Ok(stored
+    ) -> Result<Vec<WorkItemComment>, WorkStateError> {
+        self.check_available()?;
+        let item = self.item(Self::number_of(record));
+        Ok(item
             .comments
             .iter()
-            .filter(|comment| !comment.by_reili)
-            .filter(|comment| {
-                after_comment_id
-                    .as_ref()
-                    .map(CommentId::as_str)
-                    .and_then(|after| after.parse::<u64>().ok())
-                    .is_none_or(|after| comment.id > after)
-            })
-            .map(|comment| HumanComment {
-                id: CommentId::new(comment.id.to_string()),
+            .map(|comment| WorkItemComment {
                 author: comment.author.clone(),
+                by_reili: comment.by_reili,
                 author_trusted: comment.trusted,
                 body: comment.body.clone(),
-                created_at: stored.updated_at,
-                url: format!(
-                    "{}#issuecomment-{}",
-                    Self::issue_ref(Self::number_of(record)).url,
-                    comment.id
-                ),
+                created_at: comment.created_at,
+                url: format!("{}#comment", record.url),
             })
             .collect())
     }
 
-    async fn close_duplicate(
-        &self,
-        duplicate: &RecordRef,
-        canonical: &RecordRef,
-    ) -> Result<(), WorkStateError> {
+    async fn create_work_item(&self, new: &NewWorkItem) -> Result<WorkItem, WorkStateError> {
+        self.check_available()?;
         let mut state = self.state.lock().expect("lock");
-        Self::check_available(&state)?;
-        let stored = state
-            .issues
-            .get_mut(&Self::number_of(duplicate))
-            .expect("issue");
-        stored.closed = true;
-        stored.duplicate_of = Some(Self::number_of(canonical));
+        let mut item = self.new_item(&new.objective_id, &new.title, &new.body, REILI_LOGIN);
+        item.key = Some(new.key.clone());
+        item.assigned_to_reili = true;
+        item.needs_decision = new.needs_decision;
+        if std::mem::take(&mut state.race_next_create) {
+            self.insert(&mut state, item.clone());
+        }
+        let number = self.insert(&mut state, item);
+        Ok(Self::to_work_item(&state.items[&number]))
+    }
+
+    async fn add_comment(&self, record: &RecordRef, body: &str) -> Result<(), WorkStateError> {
+        self.check_available()?;
+        self.reili_comment(Self::number_of(record), body);
+        Ok(())
+    }
+
+    async fn set_needs_decision(
+        &self,
+        record: &RecordRef,
+        needs_decision: bool,
+    ) -> Result<(), WorkStateError> {
+        self.check_available()?;
+        self.update(Self::number_of(record), |item| {
+            item.needs_decision = needs_decision;
+        });
+        Ok(())
+    }
+
+    async fn close_work_item(
+        &self,
+        record: &RecordRef,
+        reason: &CloseReason,
+    ) -> Result<(), WorkStateError> {
+        self.check_available()?;
+        let number = Self::number_of(record);
+        let now = self.clock.now();
+        let state = match reason {
+            CloseReason::Done => WorkItemState::Done,
+            CloseReason::DuplicateOf(canonical) => {
+                self.reili_comment(number, &format!("Duplicate of {}.", canonical.key));
+                WorkItemState::NotPlanned
+            }
+        };
+        self.update(number, |item| {
+            item.state = state;
+            item.closed_at = Some(now);
+        });
         Ok(())
     }
 }
@@ -782,32 +578,32 @@ impl SlackCanvasMemoryPort for RecordingCanvasMemory {
     }
 }
 
-struct FakeWorkStateHarness(FakeWorkStateRepository);
+struct FakeTrackerHarness(FakeTracker);
 
 #[async_trait]
-impl reili_core::work::conformance::WorkStateBackendHarness for FakeWorkStateHarness {
-    fn repository(&self) -> Arc<dyn WorkStateRepositoryPort> {
+impl reili_core::work::conformance::WorkStateBackendHarness for FakeTrackerHarness {
+    fn repository(&self) -> Arc<dyn WorkStatePort> {
         Arc::new(self.0.clone())
     }
 
-    async fn comment_as_human(&self, record: &RecordRef, author: &str, trusted: bool, body: &str) {
-        self.0.human_comment(
-            FakeWorkStateRepository::number_of(record),
-            author,
-            trusted,
-            body,
-        );
+    async fn create_as_human(&self, objective: &ObjectiveId, title: &str, body: &str) -> RecordRef {
+        FakeTracker::record(self.0.human_create(objective.as_str(), title, body, false))
     }
 
-    async fn set_status_as_human(&self, record: &RecordRef, status: WorkItemStatus) {
+    async fn comment_as_human(&self, record: &RecordRef, author: &str, trusted: bool, body: &str) {
         self.0
-            .human_set_status(FakeWorkStateRepository::number_of(record), status);
+            .human_comment(FakeTracker::number_of(record), author, trusted, body);
+    }
+
+    async fn set_assigned_to_reili_as_human(&self, record: &RecordRef, assigned: bool) {
+        self.0
+            .human_assign(FakeTracker::number_of(record), assigned);
     }
 }
 
 #[tokio::test]
-async fn fake_work_state_satisfies_the_backend_contract() {
-    let harness = FakeWorkStateHarness(FakeWorkStateRepository::new(ManualClock::new(at(
+async fn fake_tracker_satisfies_the_backend_contract() {
+    let harness = FakeTrackerHarness(FakeTracker::new(ManualClock::new(at(
         "2026-10-15T00:00:00Z",
     ))));
 

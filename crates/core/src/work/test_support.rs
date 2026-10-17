@@ -1,14 +1,9 @@
 //! Shared fixtures for tests in this crate and downstream crates (`test-support` feature).
 
-use chrono::{TimeZone, Utc};
-
-use super::item::{
-    NotificationState, Severity, WORK_ITEM_SCHEMA_VERSION, WorkItemKey, WorkItemKind,
-    WorkItemState, WorkItemStatus,
-};
+use super::item::{NewWorkItem, WorkItemKey};
 use crate::objective::{
-    ObjectiveBudget, ObjectiveDefinition, ObjectiveId, ObjectivePermissions, ObjectiveReportPolicy,
-    ObjectiveSchedule, ObjectiveScope,
+    ObjectiveBudget, ObjectiveDefinition, ObjectiveId, ObjectivePermissions, ObjectiveSchedule,
+    ObjectiveScope,
 };
 
 #[must_use]
@@ -23,11 +18,7 @@ pub fn sample_objective(id: &str) -> ObjectiveDefinition {
         },
         schedule: ObjectiveSchedule::parse("0 */6 * * *", "Asia/Tokyo")
             .unwrap_or_else(|_| unreachable!()),
-        report: ObjectiveReportPolicy {
-            channel_id: "C0123456789".to_string(),
-            min_interval_minutes: 60,
-            max_reports_per_day: 6,
-        },
+        report_channel_id: "C0123456789".to_string(),
         budget: ObjectiveBudget::default(),
         permissions: ObjectivePermissions::default(),
         enabled: true,
@@ -35,36 +26,12 @@ pub fn sample_objective(id: &str) -> ObjectiveDefinition {
 }
 
 #[must_use]
-pub fn sample_work_item(key: &str) -> WorkItemState {
-    let at = Utc
-        .timestamp_opt(1_760_000_000, 0)
-        .single()
-        .unwrap_or_default();
-    WorkItemState {
-        schema_version: WORK_ITEM_SCHEMA_VERSION,
-        key: WorkItemKey::normalize(key)
-            .unwrap_or_else(|| WorkItemKey::normalize("sample").unwrap_or_else(|| unreachable!())),
-        objective_id: ObjectiveId::new("checkout").unwrap_or_else(|_| unreachable!()),
+pub fn sample_new_work_item(objective: &str, key: &str) -> NewWorkItem {
+    NewWorkItem {
+        objective_id: ObjectiveId::new(objective).unwrap_or_else(|_| unreachable!()),
+        key: WorkItemKey::normalize(key).unwrap_or_else(|| unreachable!()),
         title: format!("Sample {key}"),
-        kind: WorkItemKind::Incident,
-        severity: Severity::Medium,
-        status: WorkItemStatus::InProgress,
-        problem_statement: "sample problem".to_string(),
-        plan: Vec::new(),
-        hypotheses: Vec::new(),
-        findings: Vec::new(),
-        recommendation: None,
-        evidence: Vec::new(),
-        open_questions: Vec::new(),
-        human_decision: None,
-        next_actions: Vec::new(),
-        feedback: Vec::new(),
-        history: Vec::new(),
-        last_run_id: None,
-        created_at: at,
-        updated_at: at,
-        last_processed_comment_id: None,
-        notification: NotificationState::default(),
-        revision: 0,
+        body: "sample problem".to_string(),
+        needs_decision: false,
     }
 }

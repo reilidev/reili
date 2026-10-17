@@ -1,17 +1,19 @@
 //! Stateful stand-in for the GitHub Issues REST API, so the real adapter can be run against the
 //! backend contract over HTTP.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
-use reili_core::work::{RecordRef, WorkItemStatus, WorkStateRepositoryPort};
+use reili_core::objective::ObjectiveId;
+use reili_core::work::{RecordKey, RecordRef, WorkStatePort};
 use serde_json::{Value, json};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate, matchers::any};
 
-use super::repository::GitHubWorkStateRepository;
+use super::repository::{ASSIGNEE_LABEL, GitHubWorkStateRepository};
 
 const REPOSITORY_PATH: &str = "/repos/acme/reili-work";
 const WEB_URL: &str = "https://github.com/acme/reili-work";
+const BOT: (&str, &str) = ("reili[bot]", "Bot");
 
 #[derive(Default)]
 struct FakeState {
@@ -35,7 +37,27 @@ impl FakeState {
             .find(|issue| issue["number"].as_u64() == Some(number))
     }
 
-    fn add_comment(&mut self, number: u64, body: &str, login: &str, kind: &str, association: &str) {
+    fn add_issue(&mut self, title: &str, body: &str, labels: &Value, user: (&str, &str)) -> Value {
+        let number = self.issues.len() as u64 + 1;
+        let now = self.tick();
+        let issue = json!({
+            "number": number,
+            "html_url": format!("{WEB_URL}/issues/{number}"),
+            "title": title,
+            "body": body,
+            "user": { "login": user.0, "type": user.1 },
+            "state": "open",
+            "state_reason": null,
+            "labels": label_objects(labels),
+            "created_at": now,
+            "updated_at": now,
+            "closed_at": null,
+        });
+        self.issues.push(issue.clone());
+        issue
+    }
+
+    fn add_comment(&mut self, number: u64, body: &str, user: (&str, &str), association: &str) {
         self.next_comment_id += 1;
         let id = self.next_comment_id;
         let created_at = self.tick();
@@ -44,12 +66,31 @@ impl FakeState {
             json!({
                 "id": id,
                 "body": body,
-                "user": { "login": login, "type": kind },
+                "user": { "login": user.0, "type": user.1 },
                 "author_association": association,
                 "created_at": created_at,
                 "html_url": format!("{WEB_URL}/issues/{number}#issuecomment-{id}"),
             }),
         ));
+    }
+
+    fn set_label(&mut self, number: u64, name: &str, present: bool) -> bool {
+        let Some(issue) = self.issue_mut(number) else {
+            return false;
+        };
+        let mut labels: Vec<Value> = issue["labels"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|label| label["name"] != name)
+            .cloned()
+            .collect();
+        let had = labels.len() != issue["labels"].as_array().map_or(0, Vec::len);
+        if present {
+            labels.push(json!({ "name": name }));
+        }
+        issue["labels"] = Value::Array(labels);
+        had || present
     }
 }
 
@@ -66,10 +107,8 @@ impl FakeGitHub {
             .await;
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, FakeState> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    fn lock(&self) -> MutexGuard<'_, FakeState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn list_issues(state: &FakeState, request: &Request) -> ResponseTemplate {
@@ -86,11 +125,19 @@ impl FakeGitHub {
             .filter(|label| !label.is_empty())
             .map(str::to_string)
             .collect();
+        let wanted_state = query("state").unwrap_or_else(|| "open".to_string());
+        let since = query("since");
         let per_page: usize = query("per_page").and_then(|v| v.parse().ok()).unwrap_or(30);
         let page: usize = query("page").and_then(|v| v.parse().ok()).unwrap_or(1);
         let matching: Vec<&Value> = state
             .issues
             .iter()
+            .filter(|issue| wanted_state == "all" || issue["state"] == wanted_state.as_str())
+            .filter(|issue| {
+                since
+                    .as_deref()
+                    .is_none_or(|since| issue["updated_at"].as_str().is_some_and(|at| at >= since))
+            })
             .filter(|issue| {
                 labels.iter().all(|wanted| {
                     issue["labels"]
@@ -107,25 +154,8 @@ impl FakeGitHub {
         ResponseTemplate::new(200).set_body_json(page_items)
     }
 
-    fn create_issue(state: &mut FakeState, payload: &Value) -> ResponseTemplate {
-        let number = state.issues.len() as u64 + 1;
-        let updated_at = state.tick();
-        let issue = json!({
-            "number": number,
-            "html_url": format!("{WEB_URL}/issues/{number}"),
-            "title": payload["title"],
-            "body": payload["body"],
-            "state": "open",
-            "state_reason": null,
-            "labels": label_objects(&payload["labels"]),
-            "updated_at": updated_at,
-        });
-        state.issues.push(issue.clone());
-        ResponseTemplate::new(201).set_body_json(issue)
-    }
-
     fn update_issue(state: &mut FakeState, number: u64, payload: &Value) -> ResponseTemplate {
-        let updated_at = state.tick();
+        let now = state.tick();
         let Some(issue) = state.issue_mut(number) else {
             return ResponseTemplate::new(404);
         };
@@ -134,10 +164,10 @@ impl FakeGitHub {
                 issue[field] = value.clone();
             }
         }
-        if let Some(labels) = payload.get("labels") {
-            issue["labels"] = label_objects(labels);
+        if payload.get("state").and_then(Value::as_str) == Some("closed") {
+            issue["closed_at"] = json!(now);
         }
-        issue["updated_at"] = json!(updated_at);
+        issue["updated_at"] = json!(now);
         ResponseTemplate::new(200).set_body_json(issue.clone())
     }
 
@@ -151,9 +181,8 @@ impl FakeGitHub {
         let comments: Vec<&Value> = state
             .comments
             .iter()
-            .filter(|(issue, _)| *issue == number)
+            .filter(|(issue, _)| *issue == number && page == 1)
             .map(|(_, comment)| comment)
-            .filter(|_| page == 1)
             .collect();
         ResponseTemplate::new(200).set_body_json(comments)
     }
@@ -181,12 +210,15 @@ impl Respond for FakeGitHub {
         let number = segments.get(1).and_then(|value| value.parse::<u64>().ok());
         match (request.method.as_str(), segments.as_slice(), number) {
             ("GET", ["issues"], _) => Self::list_issues(&state, request),
-            ("POST", ["issues"], _) => Self::create_issue(&mut state, &payload),
-            ("GET", ["issues", _], Some(number)) => state
-                .issue_mut(number)
-                .map_or(ResponseTemplate::new(404), |issue| {
-                    ResponseTemplate::new(200).set_body_json(issue.clone())
-                }),
+            ("POST", ["issues"], _) => {
+                let issue = state.add_issue(
+                    payload["title"].as_str().unwrap_or_default(),
+                    payload["body"].as_str().unwrap_or_default(),
+                    &payload["labels"],
+                    BOT,
+                );
+                ResponseTemplate::new(201).set_body_json(issue)
+            }
             ("PATCH", ["issues", _], Some(number)) => {
                 Self::update_issue(&mut state, number, &payload)
             }
@@ -195,8 +227,22 @@ impl Respond for FakeGitHub {
             }
             ("POST", ["issues", _, "comments"], Some(number)) => {
                 let body = payload["body"].as_str().unwrap_or_default().to_string();
-                state.add_comment(number, &body, "reili[bot]", "Bot", "NONE");
+                state.add_comment(number, &body, BOT, "NONE");
                 ResponseTemplate::new(201).set_body_json(json!({}))
+            }
+            ("POST", ["issues", _, "labels"], Some(number)) => {
+                for label in payload["labels"].as_array().into_iter().flatten() {
+                    state.set_label(number, label.as_str().unwrap_or_default(), true);
+                }
+                ResponseTemplate::new(200).set_body_json(json!([]))
+            }
+            ("DELETE", ["issues", _, "labels", label], Some(number)) => {
+                let label = label.replace("%3A", ":");
+                if state.set_label(number, &label, false) {
+                    ResponseTemplate::new(200).set_body_json(json!([]))
+                } else {
+                    ResponseTemplate::new(404)
+                }
             }
             ("POST", ["labels"], _) => ResponseTemplate::new(201).set_body_json(json!({})),
             _ => ResponseTemplate::new(404),
@@ -220,37 +266,34 @@ fn issue_number(record: &RecordRef) -> u64 {
 
 #[async_trait]
 impl reili_core::work::conformance::WorkStateBackendHarness for GitHubContractHarness {
-    fn repository(&self) -> Arc<dyn WorkStateRepositoryPort> {
+    fn repository(&self) -> Arc<dyn WorkStatePort> {
         self.repository.clone()
+    }
+
+    async fn create_as_human(&self, objective: &ObjectiveId, title: &str, body: &str) -> RecordRef {
+        let issue = self.fake.lock().add_issue(
+            title,
+            body,
+            &json!([format!("reili-objective:{objective}")]),
+            ("alice", "User"),
+        );
+        let number = issue["number"].as_u64().unwrap_or_default();
+        RecordRef {
+            key: RecordKey::new(format!("#{number}")),
+            url: format!("{WEB_URL}/issues/{number}"),
+        }
     }
 
     async fn comment_as_human(&self, record: &RecordRef, author: &str, trusted: bool, body: &str) {
         let association = if trusted { "MEMBER" } else { "NONE" };
         self.fake
             .lock()
-            .add_comment(issue_number(record), body, author, "User", association);
+            .add_comment(issue_number(record), body, (author, "User"), association);
     }
 
-    async fn set_status_as_human(&self, record: &RecordRef, status: WorkItemStatus) {
-        let mut state = self.fake.lock();
-        let updated_at = state.tick();
-        let Some(issue) = state.issue_mut(issue_number(record)) else {
-            return;
-        };
-        let mut labels: Vec<Value> = issue["labels"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|label| {
-                !label["name"]
-                    .as_str()
-                    .is_some_and(|name| name.starts_with("reili-status:"))
-            })
-            .cloned()
-            .collect();
-        labels.push(json!({ "name": format!("reili-status:{}", status.as_str()) }));
-        issue["labels"] = Value::Array(labels);
-        issue["state"] = json!(if status.is_open() { "open" } else { "closed" });
-        issue["updated_at"] = json!(updated_at);
+    async fn set_assigned_to_reili_as_human(&self, record: &RecordRef, assigned: bool) {
+        self.fake
+            .lock()
+            .set_label(issue_number(record), ASSIGNEE_LABEL, assigned);
     }
 }

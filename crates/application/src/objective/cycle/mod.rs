@@ -1,89 +1,64 @@
 //! One objective cycle: Observe → Work (agent) → Decide → Report → Learn. The agent chooses the
-//! work that moves the objective forward (investigating, reviewing, following up, proposing);
-//! the cycle does not depend on what kind of work it is.
+//! work that moves the objective forward (investigating, reviewing, following up, proposing); the
+//! cycle does not depend on what kind of work it is.
 //!
-//! Durability: every phase boundary is checkpointed in the objective ledger record. A cycle
-//! holds a time-limited lease that is renewed while the agent runs; if the process dies, the lease
-//! expires and the next scheduler tick resumes the cycle. Phases after Decide never re-run the
-//! agent, so a crash during reporting does not repeat (or pay for) the agent's work. Work State
-//! backends offer no transactions, so these are best-effort, at-least-once semantics: a crash
-//! between a work item write and the ledger checkpoint re-runs the agent, whose results
-//! merge into the same work items by stable key instead of creating duplicates.
+//! A cycle keeps no state of its own. Everything it needs is on the tracker (items labelled for the
+//! objective, Reili's progress comments, the team's comments), so a cycle that dies halfway simply
+//! leaves the comments it already wrote, and the next scheduled cycle starts from the tracker
+//! again.
 //!
-//! One file per phase: `lease` (acquire and renew), `observe`, `work`, `apply` (Decide),
-//! `notify` (Report), `learn`, and `finalize`.
+//! One file per phase: `observe`, `work`, `apply` (Decide), `notify` (Report), and `learn`.
 
 mod apply;
-mod finalize;
 mod learn;
-mod lease;
 mod notify;
 mod observe;
 mod work;
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use reili_core::cycle_agent::CycleAgentPort;
-use reili_core::error::PortError;
 use reili_core::messaging::slack::ObjectiveReportPort;
 use reili_core::objective::ObjectiveDefinition;
 use reili_core::task::{TaskCancellation, TaskResources};
-use reili_core::work::{ActiveCycle, CyclePhase, CycleResult, StoredLedger, WorkStateError};
-use thiserror::Error;
+use reili_core::work::{WorkStateError, WorkStatePort};
 use uuid::Uuid;
 
-use self::lease::{AcquireInput, Acquisition, acquire};
-use self::notify::ReportError;
 use self::work::WorkOutcome;
 use super::clock::Clock;
-use super::store::WorkStateStore;
+use super::policy::apply_report_policy;
 use crate::{TaskLogger, string_log_meta};
 
 #[derive(Clone)]
 pub struct ObjectiveCycleDeps {
-    pub store: WorkStateStore,
+    pub work_state: Arc<dyn WorkStatePort>,
     pub cycle_agent: Arc<dyn CycleAgentPort>,
     pub report_port: Arc<dyn ObjectiveReportPort>,
     pub task_resources: TaskResources,
     pub clock: Arc<dyn Clock>,
     pub logger: Arc<dyn TaskLogger>,
-    /// Identifies this process as lease holder.
-    pub instance_id: String,
-    pub lease_duration: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CycleStart {
-    New {
-        scheduled_for: Option<DateTime<Utc>>,
-    },
-    /// Continue an interrupted cycle whose lease expired.
-    Resume,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CycleRunOutcome {
-    Finished {
+pub enum CycleOutcome {
+    Completed {
         run_id: String,
-        result: CycleResult,
+        created: usize,
+        updated: usize,
+        reported: bool,
     },
-    Skipped {
-        reason: String,
+    NothingNew {
+        run_id: String,
     },
-    /// Stopped without finalizing; the lease expires and a later tick resumes.
-    Interrupted {
+    /// The agent failed or ran out of budget before submitting a report; nothing was written.
+    Ended {
         run_id: String,
         reason: String,
     },
-}
-
-#[derive(Debug, Error)]
-pub enum ObjectiveCycleError {
-    #[error(transparent)]
-    WorkState(#[from] WorkStateError),
-    #[error("objective `{objective}` cannot run: {reason}")]
-    NotRunnable { objective: String, reason: String },
+    Cancelled {
+        run_id: String,
+    },
 }
 
 pub struct ObjectiveCycleRunner {
@@ -95,205 +70,90 @@ impl ObjectiveCycleRunner {
         Self { deps }
     }
 
+    /// Runs the cycle for the scheduled `slot` (which also keys the Slack report, so a re-run of
+    /// the same slot never posts twice).
     pub async fn run(
         &self,
         objective: &ObjectiveDefinition,
-        start: CycleStart,
+        slot: DateTime<Utc>,
         cancellation: TaskCancellation,
-    ) -> Result<CycleRunOutcome, ObjectiveCycleError> {
-        if !objective.enabled {
-            return Err(ObjectiveCycleError::NotRunnable {
-                objective: objective.id.to_string(),
-                reason: "objective is disabled in config".to_string(),
-            });
-        }
-        let now = self.deps.clock.now();
-        let ledger = self.deps.store.ensure_ledger(objective, now).await?;
-
-        if let Some(active) = &ledger.state.active_cycle
-            && active.lease_is_live(now)
+    ) -> Result<CycleOutcome, WorkStateError> {
+        let run_id = Uuid::new_v4().simple().to_string();
+        self.log("objective_cycle_started", objective, &run_id, None);
+        let observed = self.observe(objective).await?;
+        let (report, tokens) = match self
+            .work(objective, &run_id, &observed, &cancellation)
+            .await
         {
-            return Ok(CycleRunOutcome::Skipped {
-                reason: format!(
-                    "cycle {} is already running (lease held by {} until {})",
-                    active.run_id,
-                    active.lease_holder,
-                    active.lease_expires_at.to_rfc3339()
-                ),
-            });
-        }
-        if matches!(start, CycleStart::Resume) && ledger.state.active_cycle.is_none() {
-            return Ok(CycleRunOutcome::Skipped {
-                reason: "no interrupted cycle to resume".to_string(),
-            });
-        }
-
-        let candidate_run_id = Uuid::new_v4().simple().to_string();
-        let instance_id = self.deps.instance_id.clone();
-        let lease = self.deps.lease_duration;
-        let (ledger, acquisition) = self
-            .deps
-            .store
-            .mutate_ledger(&ledger, |state| {
-                acquire(
-                    state,
-                    &AcquireInput {
-                        objective,
-                        start: &start,
-                        instance_id: &instance_id,
-                        run_id: &candidate_run_id,
-                        now,
-                        lease,
-                    },
-                )
-            })
-            .await?;
-        let active = match acquisition {
-            Acquisition::Run(active) => active,
-            Acquisition::Busy(reason) => return Ok(CycleRunOutcome::Skipped { reason }),
-            Acquisition::Finished(result) => {
-                self.notify_terminal_result(objective, &ledger, &result)
-                    .await;
-                return Ok(CycleRunOutcome::Finished {
-                    run_id: candidate_run_id,
-                    result,
-                });
+            WorkOutcome::Report { report, tokens } => (report, tokens),
+            WorkOutcome::Ended { reason, tokens } => {
+                self.log_tokens(objective, &run_id, tokens);
+                return Ok(CycleOutcome::Ended { run_id, reason });
+            }
+            WorkOutcome::Cancelled { tokens } => {
+                self.log_tokens(objective, &run_id, tokens);
+                return Ok(CycleOutcome::Cancelled { run_id });
             }
         };
+        self.log_tokens(objective, &run_id, tokens);
 
-        // Read back to detect a concurrent instance that wrote its own lease in between.
-        let confirmed = self.deps.store.reload_ledger(&objective.id).await?;
-        let still_ours = confirmed.state.active_cycle.as_ref().is_some_and(|cycle| {
-            cycle.run_id == active.run_id && cycle.lease_holder == self.deps.instance_id
-        });
-        if !still_ours {
-            return Ok(CycleRunOutcome::Skipped {
-                reason: "lost the cycle lease to another instance".to_string(),
-            });
+        let policy = apply_report_policy(&report);
+        for rejected in &policy.rejected_knowledge {
+            self.log(
+                "objective_knowledge_rejected",
+                objective,
+                &run_id,
+                Some(rejected),
+            );
+        }
+        let activity = self
+            .apply(objective, &run_id, &observed, &report, &policy.proposals)
+            .await?;
+        for note in &activity.skipped {
+            self.log("objective_proposal_skipped", objective, &run_id, Some(note));
+        }
+        let reported = self
+            .notify(objective, &run_id, slot, &report.summary, &activity)
+            .await;
+        if objective.permissions.save_knowledge {
+            self.learn(objective, &run_id, &observed, &policy.knowledge)
+                .await;
         }
 
-        self.log("objective_cycle_started", objective, &active, None);
-        self.continue_cycle(objective, confirmed, active, cancellation)
-            .await
+        if activity.is_empty() {
+            return Ok(CycleOutcome::NothingNew { run_id });
+        }
+        Ok(CycleOutcome::Completed {
+            run_id,
+            created: activity.created.len(),
+            updated: activity.updated.len(),
+            reported,
+        })
     }
 
-    async fn continue_cycle(
-        &self,
-        objective: &ObjectiveDefinition,
-        mut ledger: StoredLedger,
-        mut active: ActiveCycle,
-        cancellation: TaskCancellation,
-    ) -> Result<CycleRunOutcome, ObjectiveCycleError> {
-        let run_id = active.run_id.clone();
-        if !active.phase.work_persisted() {
-            let observed = self.observe(objective, &ledger).await?;
-            let now = self.deps.clock.now();
-            let lease = self.deps.lease_duration;
-            let (saved, ()) = self
-                .deps
-                .store
-                .mutate_ledger(&ledger, |state| {
-                    if let Some(cycle) = state.active_cycle.as_mut() {
-                        cycle.phase = CyclePhase::Working;
-                        cycle.lease_expires_at = now + lease;
-                    }
-                    state.updated_at = now;
-                })
-                .await?;
-            ledger = saved;
-
-            let outcome = self
-                .work(objective, &mut ledger, &active, &observed, &cancellation)
-                .await?;
-            match outcome {
-                WorkOutcome::Interrupted { tokens } => {
-                    self.record_usage(&ledger, tokens).await?;
-                    return Ok(CycleRunOutcome::Interrupted {
-                        run_id,
-                        reason: "shutdown requested while the agent was working".to_string(),
-                    });
-                }
-                WorkOutcome::Ended { result, tokens } => {
-                    let result = self
-                        .finalize(objective, &ledger, &active, result, tokens)
-                        .await?;
-                    return Ok(CycleRunOutcome::Finished { run_id, result });
-                }
-                WorkOutcome::Report { report, tokens } => {
-                    ledger = self
-                        .decide(objective, &ledger, &active, &observed, &report, tokens)
-                        .await?;
-                }
-            }
-            active = ledger
-                .state
-                .active_cycle
-                .clone()
-                .ok_or_else(|| missing_cycle(objective))?;
-        }
-
-        if active.phase == CyclePhase::Reporting {
-            match self.report(objective, &ledger, &active).await {
-                Ok(saved) => ledger = saved,
-                Err(ReportError::WorkState(error)) => return Err(error.into()),
-                Err(ReportError::Slack(error)) => {
-                    self.log(
-                        "objective_cycle_report_failed",
-                        objective,
-                        &active,
-                        Some(&error.message),
-                    );
-                    return Ok(CycleRunOutcome::Interrupted {
-                        run_id,
-                        reason: format!("Slack report failed; will retry: {}", error.message),
-                    });
-                }
-            }
-            active = ledger
-                .state
-                .active_cycle
-                .clone()
-                .ok_or_else(|| missing_cycle(objective))?;
-        }
-
-        if active.phase == CyclePhase::Learning {
-            ledger = self.learn(objective, &ledger, &active).await?;
-        }
-
-        let result = if active.no_new_findings {
-            CycleResult::NoNewFindings
-        } else {
-            CycleResult::Completed
-        };
-        let result = self
-            .finalize(objective, &ledger, &active, result, 0)
-            .await?;
-        Ok(CycleRunOutcome::Finished { run_id, result })
+    fn log_tokens(&self, objective: &ObjectiveDefinition, run_id: &str, tokens: u64) {
+        self.log(
+            "objective_cycle_usage",
+            objective,
+            run_id,
+            Some(&format!("{tokens} LLM tokens")),
+        );
     }
 
     fn log(
         &self,
         event: &'static str,
         objective: &ObjectiveDefinition,
-        active: &ActiveCycle,
+        run_id: &str,
         detail: Option<&str>,
     ) {
         let mut fields = string_log_meta([
             ("objectiveId", objective.id.to_string()),
-            ("runId", active.run_id.clone()),
-            ("attempt", active.attempt.to_string()),
-            ("phase", format!("{:?}", active.phase)),
+            ("runId", run_id.to_string()),
         ]);
         if let Some(detail) = detail {
             fields.insert("detail".to_string(), detail.to_string().into());
         }
         self.deps.logger.info(event, fields);
     }
-}
-
-fn missing_cycle(objective: &ObjectiveDefinition) -> ObjectiveCycleError {
-    ObjectiveCycleError::WorkState(WorkStateError::Other(PortError::new(format!(
-        "active cycle for `{}` disappeared from the ledger",
-        objective.id
-    ))))
 }

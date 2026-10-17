@@ -1,5 +1,5 @@
 //! GitHub App installation tokens for Work State writes. Tokens are requested *down-scoped* to the
-//! single management repository and to `issues: write` + `metadata: read`, so even an App
+//! single configured repository and to `issues: write` + `metadata: read`, so even an App
 //! installation with broader permissions cannot write anywhere else through Reili.
 //! API: <https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app>
 

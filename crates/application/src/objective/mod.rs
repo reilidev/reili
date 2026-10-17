@@ -1,15 +1,14 @@
-//! Objective-driven autonomous work: scheduling, the durable Observe → Work → Decide → Report →
-//! Learn cycle, and human collaboration.
+//! Objective-driven autonomous work on the team's tracker: scheduling and the Observe → Work →
+//! Decide → Report → Learn cycle.
 
 mod brief;
 mod clock;
 mod cycle;
 mod decide;
 mod policy;
-mod reconcile;
+mod render;
 mod report;
 mod scheduler;
-mod store;
 
 #[cfg(test)]
 mod scenarios;
@@ -19,6 +18,5 @@ pub(crate) mod testing;
 pub(crate) mod tests_support;
 
 pub use clock::{Clock, SystemClock};
-pub use cycle::{ObjectiveCycleDeps, ObjectiveCycleRunner};
+pub use cycle::{CycleOutcome, ObjectiveCycleDeps, ObjectiveCycleRunner};
 pub use scheduler::{ObjectiveScheduler, ObjectiveSchedulerDeps};
-pub use store::WorkStateStore;

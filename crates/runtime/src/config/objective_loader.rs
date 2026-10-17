@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use reili_core::objective::{
-    ObjectiveBudget, ObjectiveDefinition, ObjectiveId, ObjectivePermissions, ObjectiveReportPolicy,
-    ObjectiveSchedule, ObjectiveScope,
+    ObjectiveBudget, ObjectiveDefinition, ObjectiveId, ObjectivePermissions, ObjectiveSchedule,
+    ObjectiveScope,
 };
 
 use super::ConfigError;
@@ -32,16 +32,15 @@ pub(super) fn resolve_autonomy(file_config: &FileConfig) -> Result<AutonomyConfi
             "must be at least 10",
         ));
     }
-    if autonomy.max_concurrent_cycles == 0 || autonomy.lease_minutes < 2 {
+    if autonomy.max_concurrent_cycles == 0 {
         return Err(invalid(
-            "autonomy",
-            "max_concurrent_cycles must be positive and lease_minutes at least 2",
+            "autonomy.max_concurrent_cycles",
+            "must be positive",
         ));
     }
     Ok(AutonomyConfig {
         tick_interval_seconds: autonomy.tick_interval_seconds,
         max_concurrent_cycles: autonomy.max_concurrent_cycles,
-        lease_minutes: autonomy.lease_minutes,
     })
 }
 
@@ -82,7 +81,7 @@ fn resolve_github_work_state(
         _ => {
             return Err(invalid(
                 "work_state.github.repository",
-                "must be `owner/name` of the dedicated management repository",
+                "must be `owner/name` of the repository the team tracks its work in",
             ));
         }
     }
@@ -185,11 +184,7 @@ fn resolve_objective(
             environments: objective.environments.clone(),
         },
         schedule,
-        report: ObjectiveReportPolicy {
-            channel_id: channel.to_string(),
-            min_interval_minutes: objective.report.min_interval_minutes,
-            max_reports_per_day: objective.report.max_reports_per_day,
-        },
+        report_channel_id: channel.to_string(),
         budget: ObjectiveBudget {
             max_cycle_duration_secs: budget
                 .max_cycle_minutes
@@ -199,27 +194,12 @@ fn resolve_objective(
             max_llm_tokens_per_cycle: budget
                 .max_llm_tokens_per_cycle
                 .unwrap_or(defaults.max_llm_tokens_per_cycle),
-            max_llm_tokens_per_day: budget
-                .max_llm_tokens_per_day
-                .unwrap_or(defaults.max_llm_tokens_per_day),
             max_tool_calls_per_cycle: budget
                 .max_tool_calls_per_cycle
                 .unwrap_or(defaults.max_tool_calls_per_cycle),
-            max_sub_agents_per_cycle: budget
-                .max_sub_agents_per_cycle
-                .unwrap_or(defaults.max_sub_agents_per_cycle),
-            max_parallel_tools: budget
-                .max_parallel_tools
-                .unwrap_or(defaults.max_parallel_tools),
             max_new_work_items_per_cycle: budget
                 .max_new_work_items_per_cycle
                 .unwrap_or(defaults.max_new_work_items_per_cycle),
-            max_open_work_items: budget
-                .max_open_work_items
-                .unwrap_or(defaults.max_open_work_items),
-            max_cycle_attempts: budget
-                .max_cycle_attempts
-                .unwrap_or(defaults.max_cycle_attempts),
         },
         permissions: ObjectivePermissions {
             save_knowledge: objective.permissions.save_knowledge,

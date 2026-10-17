@@ -98,7 +98,7 @@ pub async fn run_app_with_options(options: AppStartupOptions) -> Result<(), AppR
 
     deps.worker_runner.stop();
     if let Some(scheduler) = &deps.objective_scheduler {
-        // Running cycles are interrupted; their leases expire and they resume after restart.
+        // Running cycles are cancelled; the next scheduled time picks the work up from the tracker.
         scheduler.stop();
     }
     tracing_shutdown.shutdown();

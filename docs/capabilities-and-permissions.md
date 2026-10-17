@@ -274,7 +274,7 @@ Everything in this section applies only when `[[objectives]]` are configured (se
 
 Work State writes are the one write exception. Exactly one backend is configured
 (`[work_state.<backend>]`); GitHub Issues is the only backend today. Any future backend is held
-to the same rule: writes confined to one dedicated project, nothing else.
+to the same rule: writes confined to one configured project, nothing else.
 
 GitHub Work State (`[work_state.github]`):
 
@@ -285,8 +285,10 @@ GitHub Work State (`[work_state.github]`):
   App installation is broader
   ([create an installation access token](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app))
 - Required App permissions on that repository: **Issues** (read & write) and **Metadata** (read)
-- Endpoints: `GET/POST /repos/{owner}/{repo}/issues`, `GET/PATCH /repos/{owner}/{repo}/issues/{n}`,
-  `GET/POST /repos/{owner}/{repo}/issues/{n}/comments`, `POST /repos/{owner}/{repo}/labels`
+- Endpoints: `GET/POST /repos/{owner}/{repo}/issues`, `PATCH /repos/{owner}/{repo}/issues/{n}`
+  (closing items Reili opened), `GET/POST /repos/{owner}/{repo}/issues/{n}/comments`,
+  `POST /repos/{owner}/{repo}/issues/{n}/labels`, `DELETE /repos/{owner}/{repo}/issues/{n}/labels/{name}`
+  (only `reili:needs-decision`), `POST /repos/{owner}/{repo}/labels`
   ([Issues REST API](https://docs.github.com/en/rest/issues))
 - The adapter refuses issue references outside the repository before sending any request
 - Only comments from repository owners, members, and collaborators are treated as human input

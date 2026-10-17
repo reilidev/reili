@@ -1,595 +1,277 @@
-//! Decide: map screened proposals onto existing work items (stable keys, then fuzzy matching),
-//! enforce per-objective limits, and merge the agent's results into durable state while respecting
-//! human decisions.
+//! Decide: map screened proposals onto the objective's work items, the way a teammate would. Reili
+//! continues only items assigned to it, leaves items assigned away to the team, never reopens
+//! work the team closed as not planned, and opens a limited number of new items.
 
-use chrono::{DateTime, Utc};
 use reili_core::objective::ObjectiveDefinition;
-use reili_core::work::{
-    CycleReport, EvidenceRef, Finding, HumanDecisionRequest, Hypothesis, NotificationState,
-    Recommendation, RecordKey, StatusActor, StoredWorkItem, WORK_ITEM_SCHEMA_VERSION, WorkItemKey,
-    WorkItemProposal, WorkItemState, WorkItemStatus, sanitize::sanitize_for_storage, token_jaccard,
-};
+use reili_core::work::{RecordRef, WorkItem, WorkItemKey, WorkItemState, WorkItemStatus};
 
-const KEY_SIMILARITY_THRESHOLD: f64 = 0.75;
-const TITLE_SIMILARITY_THRESHOLD: f64 = 0.8;
-const STATEMENT_SIMILARITY_THRESHOLD: f64 = 0.8;
-const MAX_TITLE_CHARS: usize = 200;
-const MAX_TEXT_CHARS: usize = 2_000;
-const MAX_SHORT_TEXT_CHARS: usize = 500;
+use super::policy::ScreenedProposal;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlannedChange {
     Update {
-        record_key: RecordKey,
-        proposal: WorkItemProposal,
+        item: Box<WorkItem>,
+        proposal: ScreenedProposal,
     },
     Create {
-        proposal: WorkItemProposal,
+        key: WorkItemKey,
+        proposal: ScreenedProposal,
+        /// A done item for the same problem that this one follows up on.
+        follows_up: Option<RecordRef>,
     },
     Skipped {
-        key: String,
+        title: String,
         reason: String,
     },
 }
 
 pub struct PlanChangesInput<'a> {
     pub objective: &'a ObjectiveDefinition,
-    pub existing: &'a [StoredWorkItem],
-    pub proposals: &'a [WorkItemProposal],
+    pub items: &'a [WorkItem],
+    pub proposals: &'a [ScreenedProposal],
 }
 
 #[must_use]
 pub fn plan_changes(input: &PlanChangesInput<'_>) -> Vec<PlannedChange> {
     let mut changes = Vec::new();
     let mut creates = Vec::new();
-    let mut claimed_records = std::collections::BTreeSet::new();
-
-    for proposal in input.proposals {
+    let mut claimed: Vec<&RecordRef> = Vec::new();
+    for screened in input.proposals {
+        let proposal = &screened.proposal;
+        let skip = |reason: &str| PlannedChange::Skipped {
+            title: proposal.title.clone(),
+            reason: reason.to_string(),
+        };
         let Some(key) = WorkItemKey::normalize(&proposal.key) else {
-            changes.push(PlannedChange::Skipped {
-                key: proposal.key.clone(),
-                reason: "work item key is empty after normalization".to_string(),
-            });
+            changes.push(skip("the proposal has no usable key"));
             continue;
         };
-        match find_match(input.existing, proposal, &key) {
-            Some(existing) if claimed_records.contains(&existing.record.key) => {
-                changes.push(PlannedChange::Skipped {
-                    key: key.to_string(),
-                    reason: format!(
-                        "duplicates another proposal for {} in the same cycle",
-                        existing.record.key
-                    ),
-                });
+        match find_match(input.items, proposal.existing_record.as_deref(), &key) {
+            Some(item) if claimed.contains(&&item.record) => {
+                changes.push(skip("another proposal in this report already covers it"));
             }
-            Some(existing) if existing.state.status == WorkItemStatus::Dismissed => {
-                changes.push(PlannedChange::Skipped {
-                    key: key.to_string(),
-                    reason: format!(
-                        "matches {} which a human dismissed; not reopening without a human request",
-                        existing.record.key
-                    ),
-                });
-            }
-            Some(existing) => {
-                claimed_records.insert(existing.record.key.clone());
+            Some(item) if item.is_reili_work() => {
+                claimed.push(&item.record);
                 changes.push(PlannedChange::Update {
-                    record_key: existing.record.key.clone(),
-                    proposal: proposal.clone(),
+                    item: Box::new(item.clone()),
+                    proposal: screened.clone(),
                 });
             }
-            None => creates.push(proposal.clone()),
+            Some(item) if item.state == WorkItemState::Open => {
+                changes.push(skip(&format!(
+                    "{} is not assigned to Reili; left to the team",
+                    item.record.key
+                )));
+            }
+            Some(item) if item.state == WorkItemState::NotPlanned => {
+                changes.push(skip(&format!(
+                    "the team closed {} as not planned",
+                    item.record.key
+                )));
+            }
+            Some(_) if proposal.status == WorkItemStatus::Resolved => {
+                changes.push(skip("already done"));
+            }
+            matched => {
+                if proposal.status == WorkItemStatus::Resolved {
+                    changes.push(skip("nothing open to resolve"));
+                    continue;
+                }
+                creates.push(PlannedChange::Create {
+                    key,
+                    proposal: screened.clone(),
+                    follows_up: matched.map(|item| item.record.clone()),
+                });
+            }
         }
     }
 
-    creates.sort_by_key(|proposal| proposal.severity);
-    let mut open_count = input
-        .existing
-        .iter()
-        .filter(|item| item.state.status.is_open())
-        .count();
-    let mut created = 0_u32;
-    let mut created_keys = std::collections::BTreeSet::new();
-    for proposal in creates {
-        let key = WorkItemKey::normalize(&proposal.key)
-            .map_or_else(|| proposal.key.clone(), |key| key.to_string());
-        if !created_keys.insert(key.clone()) {
+    creates.sort_by_key(|change| match change {
+        PlannedChange::Create { proposal, .. } => proposal.proposal.severity,
+        _ => reili_core::work::Severity::Low,
+    });
+    let limit = input.objective.budget.max_new_work_items_per_cycle as usize;
+    for (index, change) in creates.into_iter().enumerate() {
+        if index < limit {
+            changes.push(change);
+        } else if let PlannedChange::Create { proposal, .. } = change {
             changes.push(PlannedChange::Skipped {
-                key,
-                reason: "duplicate key within the same report".to_string(),
+                title: proposal.proposal.title,
+                reason: format!("limit of {limit} new work item(s) per cycle reached"),
             });
-            continue;
-        }
-        let reason = if created >= input.objective.budget.max_new_work_items_per_cycle {
-            Some(format!(
-                "max_new_work_items_per_cycle ({}) reached",
-                input.objective.budget.max_new_work_items_per_cycle
-            ))
-        } else if open_count >= input.objective.budget.max_open_work_items as usize {
-            Some(format!(
-                "max_open_work_items ({}) reached",
-                input.objective.budget.max_open_work_items
-            ))
-        } else {
-            None
-        };
-        match reason {
-            Some(reason) => changes.push(PlannedChange::Skipped { key, reason }),
-            None => {
-                created += 1;
-                open_count += 1;
-                changes.push(PlannedChange::Create { proposal });
-            }
         }
     }
     changes
 }
 
+/// The explicit record reference wins; otherwise the newest item with the same key.
 fn find_match<'a>(
-    existing: &'a [StoredWorkItem],
-    proposal: &WorkItemProposal,
+    items: &'a [WorkItem],
+    existing_record: Option<&str>,
     key: &WorkItemKey,
-) -> Option<&'a StoredWorkItem> {
-    if let Some(record_key) = proposal.existing_record.as_deref().map(str::trim)
-        && let Some(found) = existing
-            .iter()
-            .find(|item| item.record.key.as_str() == record_key)
+) -> Option<&'a WorkItem> {
+    if let Some(record) = existing_record
+        .map(str::trim)
+        .filter(|record| !record.is_empty())
+        && let Some(found) = items.iter().find(|item| item.record.key.as_str() == record)
     {
         return Some(found);
     }
-    if let Some(found) = existing.iter().find(|item| &item.state.key == key) {
-        return Some(found);
-    }
-    existing
+    items
         .iter()
-        .map(|item| {
-            let score = item.state.key.similarity(key).max(
-                if token_jaccard(&item.state.title, &proposal.title) >= TITLE_SIMILARITY_THRESHOLD {
-                    1.0
-                } else {
-                    0.0
-                },
-            );
-            (item, score)
-        })
-        .filter(|(_, score)| *score >= KEY_SIMILARITY_THRESHOLD)
-        .max_by(|left, right| {
-            left.1.total_cmp(&right.1).then(
-                left.0
-                    .state
-                    .status
-                    .is_open()
-                    .cmp(&right.0.state.status.is_open()),
-            )
-        })
-        .map(|(item, _)| item)
-}
-
-/// Context for merging one cycle's results into a work item.
-pub struct ApplyContext<'a> {
-    pub run_id: &'a str,
-    pub now: DateTime<Utc>,
-    pub report: &'a CycleReport,
-}
-
-impl ApplyContext<'_> {
-    fn scoped_id(&self, id: &str) -> String {
-        format!("{}-{}", short_run_id(self.run_id), id)
-    }
-}
-
-#[must_use]
-pub fn short_run_id(run_id: &str) -> String {
-    run_id
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .take(6)
-        .collect()
-}
-
-#[must_use]
-pub fn new_work_item_state(
-    objective: &ObjectiveDefinition,
-    proposal: &WorkItemProposal,
-    context: &ApplyContext<'_>,
-) -> Option<WorkItemState> {
-    let key = WorkItemKey::normalize(&proposal.key)?;
-    let mut state = WorkItemState {
-        schema_version: WORK_ITEM_SCHEMA_VERSION,
-        key,
-        objective_id: objective.id.clone(),
-        title: String::new(),
-        kind: proposal.kind,
-        severity: proposal.severity,
-        status: WorkItemStatus::InProgress,
-        problem_statement: String::new(),
-        plan: Vec::new(),
-        hypotheses: Vec::new(),
-        findings: Vec::new(),
-        recommendation: None,
-        evidence: Vec::new(),
-        open_questions: Vec::new(),
-        human_decision: None,
-        next_actions: Vec::new(),
-        feedback: Vec::new(),
-        history: vec![reili_core::work::StatusChange {
-            at: context.now,
-            from: None,
-            to: WorkItemStatus::InProgress,
-            actor: StatusActor::Reili,
-            reason: format!("discovered in cycle {}", context.run_id),
-        }],
-        last_run_id: None,
-        created_at: context.now,
-        updated_at: context.now,
-        last_processed_comment_id: None,
-        notification: NotificationState::default(),
-        revision: 0,
-    };
-    apply_proposal(&mut state, proposal, context);
-    Some(state)
-}
-
-/// Merges a screened proposal into `state`. Human-owned states win: `needs-human` waits for a
-/// human answer, and `dismissed` is never reopened.
-pub fn apply_proposal(
-    state: &mut WorkItemState,
-    proposal: &WorkItemProposal,
-    context: &ApplyContext<'_>,
-) {
-    let text = |value: &str, max: usize| sanitize_for_storage(value, max);
-    if !proposal.title.trim().is_empty() {
-        state.title = text(&proposal.title, MAX_TITLE_CHARS);
-    }
-    state.kind = proposal.kind;
-    state.severity = proposal.severity;
-    if !proposal.problem_statement.trim().is_empty() {
-        state.problem_statement = text(&proposal.problem_statement, MAX_TEXT_CHARS);
-    }
-    if !proposal.plan.is_empty() {
-        state.plan = sanitize_list(&proposal.plan);
-    }
-    state.open_questions = sanitize_list(&proposal.open_questions);
-    state.next_actions = sanitize_list(&proposal.next_actions);
-
-    merge_evidence(state, proposal, context);
-    merge_hypotheses(state, &proposal.hypotheses, context);
-    merge_findings(state, &proposal.findings, context);
-    if let Some(recommendation) = &proposal.recommendation {
-        state.recommendation = Some(sanitize_recommendation(recommendation));
-    }
-
-    let target = proposal.proposed_status;
-    let reason = format!("cycle {}", context.run_id);
-    match state.status {
-        WorkItemStatus::Dismissed => {}
-        WorkItemStatus::NeedsHuman if target != WorkItemStatus::Resolved => {}
-        WorkItemStatus::Resolved => {
-            if target.is_open() {
-                state.transition(
-                    target,
-                    StatusActor::Reili,
-                    format!("recurred; {reason}"),
-                    context.now,
-                );
-            }
-        }
-        _ => state.transition(target, StatusActor::Reili, reason, context.now),
-    }
-    state.human_decision = match (&state.status, &proposal.human_decision_needed) {
-        (WorkItemStatus::NeedsHuman, Some(question)) if !question.trim().is_empty() => {
-            Some(HumanDecisionRequest {
-                question: text(question, MAX_SHORT_TEXT_CHARS),
-                requested_at: state
-                    .human_decision
-                    .as_ref()
-                    .map_or(context.now, |existing| existing.requested_at),
-            })
-        }
-        (WorkItemStatus::NeedsHuman, _) => state.human_decision.clone(),
-        _ => None,
-    };
-
-    for note in &mut state.feedback {
-        if note.applied_in_run.is_none() {
-            note.applied_in_run = Some(context.run_id.to_string());
-        }
-    }
-    state.last_run_id = Some(context.run_id.to_string());
-    state.updated_at = context.now;
-}
-
-fn sanitize_list(values: &[String]) -> Vec<String> {
-    values
-        .iter()
-        .map(|value| sanitize_for_storage(value, MAX_SHORT_TEXT_CHARS))
-        .filter(|value| !value.is_empty())
-        .collect()
-}
-
-fn sanitize_recommendation(recommendation: &Recommendation) -> Recommendation {
-    Recommendation {
-        action: sanitize_for_storage(&recommendation.action, MAX_TEXT_CHARS),
-        rationale: sanitize_for_storage(&recommendation.rationale, MAX_TEXT_CHARS),
-        expected_effect: sanitize_for_storage(
-            &recommendation.expected_effect,
-            MAX_SHORT_TEXT_CHARS,
-        ),
-        risk: sanitize_for_storage(&recommendation.risk, MAX_SHORT_TEXT_CHARS),
-    }
-}
-
-fn referenced_evidence_ids(proposal: &WorkItemProposal) -> Vec<String> {
-    let mut ids: Vec<String> = proposal.evidence_ids.clone();
-    for hypothesis in &proposal.hypotheses {
-        ids.extend(hypothesis.evidence_ids.iter().cloned());
-    }
-    for finding in &proposal.findings {
-        ids.extend(finding.evidence_ids.iter().cloned());
-    }
-    ids.sort();
-    ids.dedup();
-    ids
-}
-
-fn merge_evidence(
-    state: &mut WorkItemState,
-    proposal: &WorkItemProposal,
-    context: &ApplyContext<'_>,
-) {
-    for id in referenced_evidence_ids(proposal) {
-        let Some(evidence) = context.report.evidence_by_id(&id) else {
-            continue;
-        };
-        let duplicate = state.evidence.iter().any(|existing| {
-            existing.url.is_some()
-                && existing.url == evidence.url
-                && existing.description == evidence.description
-        });
-        if duplicate {
-            continue;
-        }
-        state.evidence.push(EvidenceRef {
-            id: context.scoped_id(&evidence.id),
-            source: evidence.source,
-            url: evidence.url.clone(),
-            description: sanitize_for_storage(&evidence.description, MAX_SHORT_TEXT_CHARS),
-            observed_at: evidence.observed_at,
-            time_range: evidence.time_range.clone(),
-            query: evidence
-                .query
-                .as_deref()
-                .map(|query| sanitize_for_storage(query, MAX_SHORT_TEXT_CHARS)),
-        });
-    }
-}
-
-fn scope_ids(ids: &[String], context: &ApplyContext<'_>) -> Vec<String> {
-    ids.iter().map(|id| context.scoped_id(id)).collect()
-}
-
-fn merge_hypotheses(
-    state: &mut WorkItemState,
-    hypotheses: &[Hypothesis],
-    context: &ApplyContext<'_>,
-) {
-    for hypothesis in hypotheses {
-        let statement = sanitize_for_storage(&hypothesis.statement, MAX_SHORT_TEXT_CHARS);
-        let evidence_ids = scope_ids(&hypothesis.evidence_ids, context);
-        let rationale = sanitize_for_storage(&hypothesis.rationale, MAX_SHORT_TEXT_CHARS);
-        match state.hypotheses.iter_mut().find(|existing| {
-            token_jaccard(&existing.statement, &statement) >= STATEMENT_SIMILARITY_THRESHOLD
-        }) {
-            Some(existing) => {
-                existing.status = hypothesis.status;
-                existing.evidence_ids.extend(evidence_ids);
-                existing.evidence_ids.dedup();
-                if !rationale.is_empty() {
-                    existing.rationale = rationale;
-                }
-            }
-            None => state.hypotheses.push(Hypothesis {
-                id: context.scoped_id(&hypothesis.id),
-                statement,
-                status: hypothesis.status,
-                evidence_ids,
-                rationale,
-            }),
-        }
-    }
-}
-
-fn merge_findings(state: &mut WorkItemState, findings: &[Finding], context: &ApplyContext<'_>) {
-    for finding in findings {
-        let statement = sanitize_for_storage(&finding.statement, MAX_SHORT_TEXT_CHARS);
-        let evidence_ids = scope_ids(&finding.evidence_ids, context);
-        match state.findings.iter_mut().find(|existing| {
-            token_jaccard(&existing.statement, &statement) >= STATEMENT_SIMILARITY_THRESHOLD
-        }) {
-            Some(existing) => existing.evidence_ids = evidence_ids,
-            None => state.findings.push(Finding {
-                statement,
-                evidence_ids,
-            }),
-        }
-    }
+        .rev()
+        .find(|item| item.key.as_ref() == Some(key))
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::{TimeZone, Utc};
-    use reili_core::objective::ObjectiveDefinition;
     use reili_core::work::{
-        HypothesisStatus, RecordKey, RecordRef, Severity, StoredWorkItem, WorkItemKey,
-        WorkItemStatus, test_support::sample_work_item,
+        HypothesisStatus, RecordKey, RecordRef, Severity, WorkItem, WorkItemKey, WorkItemState,
+        WorkItemStatus,
     };
 
-    use super::{
-        ApplyContext, PlanChangesInput, PlannedChange, apply_proposal, new_work_item_state,
-        plan_changes,
-    };
-    use crate::objective::policy::tests::{proposal, report};
+    use super::{PlanChangesInput, PlannedChange, plan_changes};
+    use crate::objective::policy::ScreenedProposal;
+    use crate::objective::policy::tests::proposal;
+    use crate::objective::testing::at;
     use crate::objective::tests_support::sample_objective;
 
-    fn stored(number: u64, key: &str, status: WorkItemStatus) -> StoredWorkItem {
-        let mut state = sample_work_item(key);
-        state.status = status;
-        StoredWorkItem {
+    fn item(number: u64, key: Option<&str>, state: WorkItemState, assigned: bool) -> WorkItem {
+        WorkItem {
             record: RecordRef {
                 key: RecordKey::new(format!("#{number}")),
                 url: format!("https://github.com/acme/work/issues/{number}"),
             },
+            objective_id: reili_core::objective::ObjectiveId::new("checkout").expect("id"),
+            title: format!("Item {number}"),
+            body: String::new(),
+            author: "reili[bot]".to_string(),
+            created_by_reili: key.is_some(),
+            key: key.and_then(WorkItemKey::normalize),
             state,
-            human_notes: String::new(),
-            observed_status: status,
-            remote_updated_at: Utc.timestamp_opt(0, 0).single().expect("time"),
+            assigned_to_reili: assigned,
+            needs_decision: false,
+            created_at: at("2026-10-15T00:00:00Z"),
+            updated_at: at("2026-10-15T00:00:00Z"),
         }
     }
 
-    fn objective() -> ObjectiveDefinition {
-        sample_objective("checkout")
+    fn screened(key: &str, status: WorkItemStatus) -> ScreenedProposal {
+        let mut proposal = proposal(HypothesisStatus::Proposed);
+        proposal.key = key.to_string();
+        proposal.status = status;
+        ScreenedProposal {
+            proposal,
+            notes: Vec::new(),
+        }
+    }
+
+    fn plan(items: &[WorkItem], proposals: &[ScreenedProposal]) -> Vec<PlannedChange> {
+        plan_changes(&PlanChangesInput {
+            objective: &sample_objective("checkout"),
+            items,
+            proposals,
+        })
     }
 
     #[test]
-    fn matches_existing_items_by_key_and_similarity() {
-        let existing = vec![stored(
-            7,
-            "checkout:after-deploy-5xx",
-            WorkItemStatus::InProgress,
-        )];
-        let objective = objective();
-        let proposals = vec![proposal(HypothesisStatus::Proposed)];
+    fn continues_own_items_by_key_or_record() {
+        let items = vec![
+            item(1, Some("checkout:5xx"), WorkItemState::Open, true),
+            item(2, None, WorkItemState::Open, true),
+        ];
+        let mut by_record = screened("anything", WorkItemStatus::InProgress);
+        by_record.proposal.existing_record = Some("#2".to_string());
 
-        let changes = plan_changes(&PlanChangesInput {
-            objective: &objective,
-            existing: &existing,
-            proposals: &proposals,
-        });
+        let changes = plan(
+            &items,
+            &[
+                screened("checkout:5xx", WorkItemStatus::InProgress),
+                by_record,
+            ],
+        );
 
         assert!(matches!(
-            changes.as_slice(),
-            [PlannedChange::Update { record_key, .. }] if record_key.as_str() == "#7"
+            &changes[..],
+            [PlannedChange::Update { item: first, .. }, PlannedChange::Update { item: second, .. }]
+                if first.record.key.as_str() == "#1" && second.record.key.as_str() == "#2"
         ));
     }
 
     #[test]
-    fn respects_human_dismissal() {
-        let existing = vec![stored(
-            7,
-            "checkout:5xx-after-deploy",
-            WorkItemStatus::Dismissed,
+    fn respects_the_teams_decisions() {
+        let items = vec![
+            item(1, Some("checkout:taken"), WorkItemState::Open, false),
+            item(
+                2,
+                Some("checkout:rejected"),
+                WorkItemState::NotPlanned,
+                false,
+            ),
+        ];
+
+        let changes = plan(
+            &items,
+            &[
+                screened("checkout:taken", WorkItemStatus::InProgress),
+                screened("checkout:rejected", WorkItemStatus::InProgress),
+            ],
+        );
+
+        assert!(
+            changes
+                .iter()
+                .all(|change| matches!(change, PlannedChange::Skipped { .. }))
+        );
+    }
+
+    #[test]
+    fn follows_up_on_done_items_and_limits_new_ones() {
+        let items = vec![item(
+            1,
+            Some("checkout:recurring"),
+            WorkItemState::Done,
+            false,
         )];
-        let objective = objective();
-        let proposals = vec![proposal(HypothesisStatus::Proposed)];
+        let mut objective = sample_objective("checkout");
+        objective.budget.max_new_work_items_per_cycle = 2;
+        let mut critical = screened("checkout:critical", WorkItemStatus::InProgress);
+        critical.proposal.severity = Severity::Critical;
+        let mut low = screened("checkout:low", WorkItemStatus::InProgress);
+        low.proposal.severity = Severity::Low;
 
         let changes = plan_changes(&PlanChangesInput {
             objective: &objective,
-            existing: &existing,
-            proposals: &proposals,
+            items: &items,
+            proposals: &[
+                low,
+                screened("checkout:recurring", WorkItemStatus::InProgress),
+                critical,
+            ],
         });
 
-        assert!(matches!(
-            changes.as_slice(),
-            [PlannedChange::Skipped { .. }]
-        ));
+        let created: Vec<&str> = changes
+            .iter()
+            .filter_map(|change| match change {
+                PlannedChange::Create { key, .. } => Some(key.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(created, vec!["checkout:critical", "checkout:recurring"]);
+        assert!(changes.iter().any(|change| matches!(
+            change,
+            PlannedChange::Create { follows_up: Some(record), .. } if record.key.as_str() == "#1"
+        )));
+        assert!(changes.iter().any(|change| matches!(
+            change,
+            PlannedChange::Skipped { reason, .. } if reason.contains("limit")
+        )));
     }
 
     #[test]
-    fn enforces_new_item_limits_by_severity() {
-        let mut objective = objective();
-        objective.budget.max_new_work_items_per_cycle = 1;
-        let mut low = proposal(HypothesisStatus::Proposed);
-        low.key = "a:low".to_string();
-        low.title = "low thing".to_string();
-        low.severity = Severity::Low;
-        let mut critical = proposal(HypothesisStatus::Proposed);
-        critical.key = "b:critical".to_string();
-        critical.title = "critical thing".to_string();
-        critical.severity = Severity::Critical;
+    fn does_not_open_items_only_to_resolve_them() {
+        let changes = plan(&[], &[screened("checkout:gone", WorkItemStatus::Resolved)]);
 
-        let changes = plan_changes(&PlanChangesInput {
-            objective: &objective,
-            existing: &[],
-            proposals: &[low, critical],
-        });
-
-        assert!(
-            matches!(&changes[0], PlannedChange::Create { proposal } if proposal.key == "b:critical")
-        );
-        assert!(
-            matches!(&changes[1], PlannedChange::Skipped { reason, .. } if reason.contains("max_new_work_items_per_cycle"))
-        );
-    }
-
-    #[test]
-    fn new_state_scopes_ids_and_keeps_only_cited_evidence() {
-        let objective = objective();
-        let screened = proposal(HypothesisStatus::Supported);
-        let report = report(vec![screened.clone()]);
-        let context = ApplyContext {
-            run_id: "run-abc123",
-            now: Utc.timestamp_opt(1_760_000_000, 0).single().expect("time"),
-            report: &report,
-        };
-
-        let state = new_work_item_state(&objective, &screened, &context).expect("state");
-
-        assert_eq!(state.status, WorkItemStatus::NeedsHuman);
-        assert_eq!(state.hypotheses[0].status, HypothesisStatus::Supported);
-        assert_eq!(
-            state.hypotheses[0].evidence_ids,
-            vec!["runabc-E1".to_string()]
-        );
-        assert_eq!(state.evidence.len(), 1);
-        assert_eq!(state.evidence[0].id, "runabc-E1");
-        assert_eq!(
-            state
-                .human_decision
-                .as_ref()
-                .map(|decision| decision.question.as_str()),
-            Some("Roll back deploy 42?")
-        );
-    }
-
-    #[test]
-    fn needs_human_and_dismissed_states_are_preserved() {
-        let report = report(Vec::new());
-        let context = ApplyContext {
-            run_id: "run-2",
-            now: Utc.timestamp_opt(1_760_000_000, 0).single().expect("time"),
-            report: &report,
-        };
-        let mut screened = proposal(HypothesisStatus::Proposed);
-        screened.proposed_status = WorkItemStatus::InProgress;
-        for status in [WorkItemStatus::NeedsHuman, WorkItemStatus::Dismissed] {
-            let mut state = sample_work_item("checkout:5xx-after-deploy");
-            state.status = status;
-
-            apply_proposal(&mut state, &screened, &context);
-
-            assert_eq!(state.status, status);
-            assert_eq!(
-                state.key,
-                WorkItemKey::normalize("checkout:5xx-after-deploy").expect("key")
-            );
-        }
-    }
-
-    #[test]
-    fn merges_repeated_hypotheses_instead_of_duplicating() {
-        let report = report(Vec::new());
-        let context = ApplyContext {
-            run_id: "run-3",
-            now: Utc.timestamp_opt(1_760_000_000, 0).single().expect("time"),
-            report: &report,
-        };
-        let screened = proposal(HypothesisStatus::Proposed);
-        let mut state = sample_work_item("checkout:5xx-after-deploy");
-
-        apply_proposal(&mut state, &screened, &context);
-        apply_proposal(&mut state, &screened, &context);
-
-        assert_eq!(state.hypotheses.len(), 1);
-        assert_eq!(state.findings.len(), 1);
+        assert!(matches!(&changes[..], [PlannedChange::Skipped { .. }]));
     }
 }

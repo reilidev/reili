@@ -1,18 +1,15 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::{TimeZone, Utc};
 use reili_core::error::PortError;
 use reili_core::objective::ObjectiveId;
 use reili_core::secret::SecretString;
-use reili_core::work::{
-    CommentId, RecordKey, RecordRef, WorkItemStatus, WorkStateComment, WorkStateCommentKind,
-    WorkStateError, WorkStateRepositoryPort, test_support::sample_work_item,
-};
-use serde_json::{Value, json};
-use wiremock::matchers::{body_partial_json, header, method, path, query_param};
+use reili_core::work::{CloseReason, RecordKey, RecordRef, WorkStateError, WorkStatePort};
+use serde_json::json;
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use super::codec::render_work_item_body;
 use super::repository::{AccessTokenSource, GitHubWorkStateConfig, GitHubWorkStateRepository};
 
 struct StaticToken;
@@ -39,36 +36,15 @@ fn repository(server: &MockServer) -> GitHubWorkStateRepository {
     .expect("repository")
 }
 
-fn issue_json(
-    number: u64,
-    state: &str,
-    state_reason: Option<&str>,
-    labels: &[&str],
-    revision: u64,
-) -> Value {
-    let mut item = sample_work_item("checkout:5xx");
-    item.revision = revision;
-    json!({
-        "number": number,
-        "html_url": format!("https://github.com/acme/reili-work/issues/{number}"),
-        "title": "[Reili] Sample",
-        "body": render_work_item_body(&item, "Owner: payments").expect("render"),
-        "state": state,
-        "state_reason": state_reason,
-        "labels": labels.iter().map(|name| json!({ "name": name })).collect::<Vec<_>>(),
-        "updated_at": "2026-10-15T00:00:00Z"
-    })
-}
-
-fn issue_ref(number: u64) -> RecordRef {
+fn record(key: &str, url: &str) -> RecordRef {
     RecordRef {
-        key: RecordKey::new(format!("#{number}")),
-        url: format!("https://github.com/acme/reili-work/issues/{number}"),
+        key: RecordKey::new(key),
+        url: url.to_string(),
     }
 }
 
 #[tokio::test]
-async fn refuses_issues_outside_the_management_repository() {
+async fn refuses_records_outside_the_configured_repository() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .respond_with(ResponseTemplate::new(201))
@@ -81,204 +57,84 @@ async fn refuses_issues_outside_the_management_repository() {
         .mount(&server)
         .await;
     let repository = repository(&server);
-    let foreign = RecordRef {
-        key: RecordKey::new("#5"),
-        url: "https://github.com/acme/production-service/issues/5".to_string(),
-    };
+    let foreign = record("#5", "https://github.com/acme/production-service/issues/5");
 
-    let comment = repository
-        .append_comment(
-            &foreign,
-            WorkStateComment {
-                kind: WorkStateCommentKind::Notice,
-                body: "hi".to_string(),
-            },
-        )
-        .await;
-    let save = repository
-        .save_work_item(&foreign, 1, &sample_work_item("x"))
+    let comment = repository.add_comment(&foreign, "hi").await;
+    let close = repository
+        .close_work_item(&foreign, &CloseReason::Done)
         .await;
     let mismatched_number = repository
-        .append_comment(
-            &RecordRef {
-                key: RecordKey::new("#6"),
-                url: "https://github.com/acme/reili-work/issues/5".to_string(),
-            },
-            WorkStateComment {
-                kind: WorkStateCommentKind::Notice,
-                body: "hi".to_string(),
-            },
+        .add_comment(
+            &record("#6", "https://github.com/acme/reili-work/issues/5"),
+            "hi",
         )
         .await;
-
     let foreign_key = repository
-        .append_comment(
-            &RecordRef {
-                key: RecordKey::new("OPS-5"),
-                url: "https://github.com/acme/reili-work/issues/5".to_string(),
-            },
-            WorkStateComment {
-                kind: WorkStateCommentKind::Notice,
-                body: "hi".to_string(),
-            },
+        .add_comment(
+            &record("OPS-5", "https://github.com/acme/reili-work/issues/5"),
+            "hi",
         )
         .await;
 
-    assert!(matches!(comment, Err(WorkStateError::Forbidden(_))));
-    assert!(matches!(foreign_key, Err(WorkStateError::Forbidden(_))));
-    assert!(matches!(save, Err(WorkStateError::Forbidden(_))));
-    assert!(matches!(
-        mismatched_number,
-        Err(WorkStateError::Forbidden(_))
-    ));
+    for result in [comment, close, mismatched_number, foreign_key] {
+        assert!(matches!(result, Err(WorkStateError::Forbidden(_))));
+    }
 }
 
 #[tokio::test]
-async fn lists_work_items_by_label_and_derives_observed_status() {
+async fn trusts_reili_metadata_only_on_issues_reili_opened() {
     let server = MockServer::start().await;
+    let issue = |number: u64, user: &str, kind: &str| {
+        json!({
+            "number": number,
+            "html_url": format!("https://github.com/acme/reili-work/issues/{number}"),
+            "title": "5xx after deploy",
+            "body": "Text\n\n<!-- reili:work-item key=checkout:5xx -->\n",
+            "user": { "login": user, "type": kind },
+            "state": "open",
+            "labels": [{ "name": "reili-objective:checkout" }, { "name": "reili:assignee" }],
+            "created_at": "2026-10-15T00:00:00Z",
+            "updated_at": "2026-10-15T00:00:00Z"
+        })
+    };
     Mock::given(method("GET"))
         .and(path("/repos/acme/reili-work/issues"))
-        .and(query_param("labels", "reili:work-item,reili-objective:checkout"))
-        .and(query_param("state", "all"))
-        .and(header("authorization", "Bearer installation-token"))
+        .and(query_param("state", "open"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            issue_json(1, "open", None, &["reili:work-item", "reili-status:needs-human"], 2),
-            issue_json(2, "closed", Some("not_planned"), &["reili:work-item", "reili-status:in-progress"], 1),
-            issue_json(3, "open", None, &["reili:work-item", "reili-status:resolved"], 1),
-            issue_json(4, "closed", Some("not_planned"), &["reili:duplicate"], 1),
-            { "number": 9, "html_url": "x", "state": "open", "labels": [], "updated_at": "2026-10-15T00:00:00Z", "pull_request": {} }
+            issue(1, "reili[bot]", "Bot"),
+            issue(2, "mallory", "User"),
+            { "number": 3, "html_url": "x", "state": "open", "labels": [], "created_at": "2026-10-15T00:00:00Z", "updated_at": "2026-10-15T00:00:00Z", "pull_request": {} }
         ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/reili-work/issues"))
+        .and(query_param("state", "closed"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
         .mount(&server)
         .await;
 
     let items = repository(&server)
-        .list_work_items(&ObjectiveId::new("checkout").expect("id"))
+        .list_work_items(
+            &ObjectiveId::new("checkout").expect("id"),
+            Utc.timestamp_opt(0, 0).single().expect("time"),
+        )
         .await
         .expect("list");
 
-    assert_eq!(items.len(), 3);
-    assert_eq!(items[0].observed_status, WorkItemStatus::NeedsHuman);
-    assert_eq!(items[0].human_notes, "Owner: payments");
-    assert_eq!(items[1].observed_status, WorkItemStatus::Dismissed);
+    assert_eq!(items.len(), 2, "pull requests are not work items");
+    assert!(items[0].created_by_reili);
     assert_eq!(
-        items[2].observed_status,
-        WorkItemStatus::InProgress,
-        "reopened by a human"
+        items[0].key.as_ref().map(|key| key.as_str()),
+        Some("checkout:5xx")
     );
-}
-
-#[tokio::test]
-async fn save_detects_conflicts_and_preserves_human_labels() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/repos/acme/reili-work/issues/7"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(issue_json(
-            7,
-            "open",
-            None,
-            &[
-                "reili:work-item",
-                "reili-status:in-progress",
-                "customer-facing",
-            ],
-            3,
-        )))
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/repos/acme/reili-work/labels"))
-        .respond_with(ResponseTemplate::new(422))
-        .mount(&server)
-        .await;
-    Mock::given(method("PATCH"))
-        .and(path("/repos/acme/reili-work/issues/7"))
-        .and(body_partial_json(
-            json!({ "state": "closed", "state_reason": "completed" }),
-        ))
-        .respond_with(move |request: &wiremock::Request| {
-            let body: Value = serde_json::from_slice(&request.body).expect("json");
-            let labels: Vec<String> = body["labels"]
-                .as_array()
-                .expect("labels")
-                .iter()
-                .map(|label| label.as_str().expect("label").to_string())
-                .collect();
-            assert!(labels.contains(&"customer-facing".to_string()));
-            assert!(labels.contains(&"reili-status:resolved".to_string()));
-            assert!(!labels.contains(&"reili-status:in-progress".to_string()));
-            assert!(
-                body["body"]
-                    .as_str()
-                    .expect("body")
-                    .contains("Owner: payments")
-            );
-            ResponseTemplate::new(200).set_body_json(json!({
-                "number": 7,
-                "html_url": "https://github.com/acme/reili-work/issues/7",
-                "body": body["body"],
-                "state": "closed",
-                "state_reason": "completed",
-                "labels": labels.iter().map(|name| json!({ "name": name })).collect::<Vec<_>>(),
-                "updated_at": "2026-10-15T01:00:00Z"
-            }))
-        })
-        .expect(1)
-        .mount(&server)
-        .await;
-    let repository = repository(&server);
-    let mut next = sample_work_item("checkout:5xx");
-    next.status = WorkItemStatus::Resolved;
-
-    let conflict = repository.save_work_item(&issue_ref(7), 2, &next).await;
-    let saved = repository
-        .save_work_item(&issue_ref(7), 3, &next)
-        .await
-        .expect("save");
-
-    assert!(matches!(
-        conflict,
-        Err(WorkStateError::Conflict {
-            expected: 2,
-            found: 3,
-            ..
-        })
-    ));
-    assert_eq!(saved.state.revision, 4);
-    assert_eq!(saved.observed_status, WorkItemStatus::Resolved);
-}
-
-#[tokio::test]
-async fn separates_human_comments_from_reili_comments() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/repos/acme/reili-work/issues/7/comments"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            { "id": 10, "body": "<!-- reili:comment kind=cycle-log -->\nRun x", "user": { "login": "reili[bot]", "type": "Bot" }, "author_association": "NONE", "created_at": "2026-10-15T00:00:00Z", "html_url": "u" },
-            { "id": 11, "body": "Raised the pool size in PR 42", "user": { "login": "alice", "type": "User" }, "author_association": "MEMBER", "created_at": "2026-10-15T00:01:00Z", "html_url": "u" },
-            { "id": 12, "body": "<!-- reili:comment kind=x --> spoof", "user": { "login": "mallory", "type": "User" }, "author_association": "NONE", "created_at": "2026-10-15T00:02:00Z", "html_url": "u" },
-            { "id": 13, "body": "bump", "user": { "login": "dependabot[bot]", "type": "Bot" }, "author_association": "CONTRIBUTOR", "created_at": "2026-10-15T00:03:00Z", "html_url": "u" }
-        ])))
-        .mount(&server)
-        .await;
-
-    let comments = repository(&server)
-        .list_human_comments(&issue_ref(7), Some(CommentId::new("10")))
-        .await
-        .expect("comments");
-
+    assert!(!items[1].created_by_reili);
     assert_eq!(
-        comments
-            .iter()
-            .map(|comment| comment.id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["11", "12", "13"]
+        items[1].key, None,
+        "a copied marker is not Reili's metadata"
     );
-    assert!(comments[0].author_trusted);
-    assert!(
-        !comments[1].author_trusted,
-        "spoofed marker from an outsider stays untrusted"
-    );
-    assert!(!comments[2].author_trusted, "other bots are never trusted");
+    assert!(items[1].assigned_to_reili);
+    assert_eq!(items[0].body, "Text");
 }
 
 #[tokio::test]
@@ -290,35 +146,14 @@ async fn maps_server_errors_to_retryable_unavailability() {
         .await;
 
     let error = repository(&server)
-        .find_objective_ledger(&ObjectiveId::new("checkout").expect("id"))
+        .list_work_items(
+            &ObjectiveId::new("checkout").expect("id"),
+            Utc.timestamp_opt(0, 0).single().expect("time"),
+        )
         .await
         .expect_err("unavailable");
 
     assert!(matches!(error, WorkStateError::Unavailable(_)));
-}
-
-#[tokio::test]
-async fn stops_on_work_items_written_by_a_newer_schema() {
-    let server = MockServer::start().await;
-    let mut newer = sample_work_item("checkout:5xx");
-    newer.schema_version = 99;
-    let mut issue = issue_json(1, "open", None, &["reili:work-item"], 1);
-    issue["body"] = json!(render_work_item_body(&newer, "").expect("render"));
-    Mock::given(method("GET"))
-        .and(path("/repos/acme/reili-work/issues"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([issue])))
-        .mount(&server)
-        .await;
-
-    let error = repository(&server)
-        .list_work_items(&ObjectiveId::new("checkout").expect("id"))
-        .await
-        .expect_err("newer schema is not skipped");
-
-    assert!(matches!(
-        error,
-        WorkStateError::UnsupportedSchema { found: 99, .. }
-    ));
 }
 
 #[tokio::test]

@@ -1,9 +1,12 @@
-//! `WorkStateRepositoryPort` on GitHub Issues of a single management repository.
+//! `WorkStatePort` on GitHub Issues of a single, explicitly configured repository — the one the
+//! team already uses for its work.
 //!
+//! - An objective's items carry `reili-objective:<id>`; Reili's own work carries `reili:assignee`
+//!   (labels stand in for assignees, which GitHub Apps cannot reliably be); `reili:needs-decision`
+//!   marks items waiting for the team.
 //! - Reads use the issue *listing* API filtered by labels (strongly consistent), never search,
 //!   which lags behind writes.
-//! - Writes are read-modify-write with a revision number stored in the issue body; GitHub has no
-//!   conditional updates, so a narrow race window remains and is documented, not hidden.
+//! - Label changes use the add/remove endpoints, so labels the team sets are never overwritten.
 //! - Every request targets the configured repository; issue references pointing anywhere else
 //!   are refused before any network call.
 
@@ -16,9 +19,8 @@ use reili_core::error::PortError;
 use reili_core::objective::ObjectiveId;
 use reili_core::secret::SecretString;
 use reili_core::work::{
-    CommentId, HumanComment, ObjectiveLedgerState, RecordKey, RecordRef, StoredLedger,
-    StoredWorkItem, WorkItemState, WorkItemStatus, WorkStateComment, WorkStateError,
-    WorkStateRepositoryPort, sanitize::truncate_chars,
+    CloseReason, NewWorkItem, RecordKey, RecordRef, WorkItem, WorkItemComment, WorkItemState,
+    WorkStateError, WorkStatePort, sanitize::truncate_chars,
 };
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderValue};
 use serde::Deserialize;
@@ -26,8 +28,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use super::codec::{
-    COMMENT_MARKER_PREFIX, decode_state, extract_human_notes, render_comment, render_ledger_body,
-    render_work_item_body,
+    COMMENT_MARKER, parse_issue_body, render_comment, render_issue_body, strip_comment_marker,
 };
 use crate::outbound::github::app_token::{GitHubAppTokenProvider, InstallationTokenScope};
 
@@ -35,21 +36,13 @@ const PER_PAGE: usize = 100;
 const MAX_PAGES: usize = 20;
 const API_VERSION: &str = "2022-11-28";
 const USER_AGENT: &str = "reili-work-state";
-pub(super) const OBJECTIVE_LEDGER_LABEL: &str = "reili:objective";
-pub(super) const WORK_ITEM_LABEL: &str = "reili:work-item";
-const DUPLICATE_LABEL: &str = "reili:duplicate";
-const MANAGED_LABEL_PREFIXES: &[&str] = &[
-    "reili:",
-    "reili-objective:",
-    "reili-status:",
-    "reili-severity:",
-    "reili-kind:",
-];
+pub(super) const ASSIGNEE_LABEL: &str = "reili:assignee";
+pub(super) const NEEDS_DECISION_LABEL: &str = "reili:needs-decision";
 const TRUSTED_ASSOCIATIONS: &[&str] = &["OWNER", "MEMBER", "COLLABORATOR"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitHubWorkStateConfig {
-    /// `owner/name` of the dedicated management repository.
+    /// `owner/name` of the repository the team tracks its work in.
     pub repository: String,
     pub app_id: String,
     pub private_key: SecretString,
@@ -122,51 +115,83 @@ struct ApiLabel {
 }
 
 #[derive(Debug, Deserialize)]
-struct ApiIssue {
-    number: u64,
-    html_url: String,
-    #[serde(default)]
-    body: Option<String>,
-    state: String,
-    #[serde(default)]
-    state_reason: Option<String>,
-    #[serde(default)]
-    labels: Vec<ApiLabel>,
-    updated_at: DateTime<Utc>,
-    #[serde(default)]
-    pull_request: Option<Value>,
-}
-
-impl ApiIssue {
-    fn label_names(&self) -> Vec<&str> {
-        self.labels
-            .iter()
-            .map(|label| label.name.as_str())
-            .collect()
-    }
-
-    fn record_ref(&self) -> RecordRef {
-        RecordRef {
-            key: record_key(self.number),
-            url: self.html_url.clone(),
-        }
-    }
-
-    fn is_duplicate(&self) -> bool {
-        self.label_names().contains(&DUPLICATE_LABEL)
-    }
-}
-
-#[derive(Debug, Deserialize)]
 struct ApiUser {
     login: String,
     #[serde(rename = "type", default)]
     kind: String,
 }
 
+impl ApiUser {
+    fn is_bot(&self) -> bool {
+        self.kind == "Bot"
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiIssue {
+    number: u64,
+    html_url: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    user: Option<ApiUser>,
+    state: String,
+    #[serde(default)]
+    state_reason: Option<String>,
+    #[serde(default)]
+    labels: Vec<ApiLabel>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    #[serde(default)]
+    closed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pull_request: Option<Value>,
+}
+
+impl ApiIssue {
+    fn has_label(&self, name: &str) -> bool {
+        self.labels.iter().any(|label| label.name == name)
+    }
+
+    fn work_state(&self) -> WorkItemState {
+        match (self.state.as_str(), self.state_reason.as_deref()) {
+            ("open", _) => WorkItemState::Open,
+            (_, Some("not_planned" | "duplicate")) => WorkItemState::NotPlanned,
+            _ => WorkItemState::Done,
+        }
+    }
+
+    fn to_work_item(&self, objective_id: &ObjectiveId) -> WorkItem {
+        let (body, key) = parse_issue_body(self.body.as_deref().unwrap_or_default());
+        let created_by_reili = self.user.as_ref().is_some_and(ApiUser::is_bot) && key.is_some();
+        WorkItem {
+            record: RecordRef {
+                key: record_key(self.number),
+                url: self.html_url.clone(),
+            },
+            objective_id: objective_id.clone(),
+            title: self.title.clone(),
+            body,
+            author: self
+                .user
+                .as_ref()
+                .map_or_else(|| "ghost".to_string(), |user| user.login.clone()),
+            created_by_reili,
+            // A key copied into someone else's issue is not Reili's metadata.
+            key: key.filter(|_| created_by_reili),
+            state: self.work_state(),
+            assigned_to_reili: self.has_label(ASSIGNEE_LABEL),
+            needs_decision: self.has_label(NEEDS_DECISION_LABEL),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ApiComment {
-    id: u64,
     #[serde(default)]
     body: Option<String>,
     #[serde(default)]
@@ -186,82 +211,16 @@ fn parse_record_key(key: &RecordKey) -> Option<u64> {
     key.as_str().strip_prefix('#')?.parse().ok()
 }
 
-fn objective_label(objective_id: &str) -> String {
+fn objective_label(objective_id: &ObjectiveId) -> String {
     format!("reili-objective:{objective_id}")
 }
 
-fn status_label(status: WorkItemStatus) -> String {
-    format!("reili-status:{}", status.as_str())
-}
-
-fn is_managed_label(name: &str) -> bool {
-    MANAGED_LABEL_PREFIXES
-        .iter()
-        .any(|prefix| name.starts_with(prefix))
-}
-
-/// Status implied by labels and open/closed state, so human edits on GitHub are visible.
-fn observed_status(issue: &ApiIssue, recorded: WorkItemStatus) -> WorkItemStatus {
-    let label = issue
-        .labels
-        .iter()
-        .find_map(|label| label.name.strip_prefix("reili-status:"))
-        .and_then(WorkItemStatus::parse);
-    if issue.state == "closed" {
-        match label {
-            Some(status) if !status.is_open() => status,
-            _ if issue.state_reason.as_deref() == Some("not_planned") => WorkItemStatus::Dismissed,
-            _ => WorkItemStatus::Resolved,
-        }
-    } else {
-        match label {
-            Some(status) if status.is_open() => status,
-            Some(_) => WorkItemStatus::InProgress,
-            None if recorded.is_open() => recorded,
-            None => WorkItemStatus::InProgress,
-        }
-    }
-}
-
-fn work_item_labels(state: &WorkItemState) -> Vec<String> {
-    vec![
-        WORK_ITEM_LABEL.to_string(),
-        objective_label(state.objective_id.as_str()),
-        status_label(state.status),
-        format!("reili-severity:{}", state.severity.as_str()),
-        format!("reili-kind:{}", state.kind.as_str()),
-    ]
-}
-
-fn ledger_labels(state: &ObjectiveLedgerState) -> Vec<String> {
-    vec![
-        OBJECTIVE_LEDGER_LABEL.to_string(),
-        objective_label(state.objective_id.as_str()),
-    ]
-}
-
 fn label_color(name: &str) -> &'static str {
-    if name.starts_with("reili-status:needs-human") {
-        "d93f0b"
-    } else if name.starts_with("reili-status:") {
-        "0e8a16"
-    } else if name.starts_with("reili-severity:") {
-        "fbca04"
-    } else {
-        "5319e7"
+    match name {
+        NEEDS_DECISION_LABEL => "d93f0b",
+        ASSIGNEE_LABEL => "0e8a16",
+        _ => "5319e7",
     }
-}
-
-fn work_item_title(state: &WorkItemState) -> String {
-    truncate_chars(&format!("[Reili] {}", state.title.trim()), 200)
-}
-
-fn ledger_title(state: &ObjectiveLedgerState) -> String {
-    let description = state.description.lines().next().unwrap_or_default().trim();
-    truncate_chars(
-        &format!("[Reili objective] {}: {description}", state.objective_id),
-        200,
-    )
 }
 
 fn map_status_error(status: u16, body: &str, context: &str) -> WorkStateError {
@@ -421,18 +380,26 @@ impl GitHubWorkStateRepository {
         })
     }
 
-    async fn list_issues(&self, labels: &[String]) -> Result<Vec<ApiIssue>, WorkStateError> {
+    async fn list_issues(
+        &self,
+        labels: &[String],
+        state: &str,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<Vec<ApiIssue>, WorkStateError> {
         let mut issues = Vec::new();
         for page in 1..=MAX_PAGES {
-            let query = serde_urlencoded::to_string([
-                ("state", "all".to_string()),
+            let mut query = vec![
+                ("state", state.to_string()),
                 ("labels", labels.join(",")),
                 ("per_page", PER_PAGE.to_string()),
                 ("page", page.to_string()),
                 ("sort", "created".to_string()),
                 ("direction", "asc".to_string()),
-            ])
-            .unwrap_or_default();
+            ];
+            if let Some(since) = since {
+                query.push(("since", since.to_rfc3339()));
+            }
+            let query = serde_urlencoded::to_string(query).unwrap_or_default();
             let batch: Vec<ApiIssue> = self
                 .request_json(
                     reqwest::Method::GET,
@@ -445,24 +412,13 @@ impl GitHubWorkStateRepository {
             issues.extend(
                 batch
                     .into_iter()
-                    .filter(|issue| issue.pull_request.is_none() && !issue.is_duplicate()),
+                    .filter(|issue| issue.pull_request.is_none()),
             );
             if count < PER_PAGE {
                 break;
             }
         }
-        issues.sort_by_key(|issue| issue.number);
         Ok(issues)
-    }
-
-    async fn get_issue(&self, number: u64) -> Result<ApiIssue, WorkStateError> {
-        self.request_json(
-            reqwest::Method::GET,
-            &format!("{}/issues/{number}", self.repo_url()),
-            None,
-            "get issue",
-        )
-        .await
     }
 
     async fn ensure_labels(&self, labels: &[String]) -> Result<(), WorkStateError> {
@@ -495,277 +451,36 @@ impl GitHubWorkStateRepository {
         }
         Ok(())
     }
-
-    fn to_ledger(issue: &ApiIssue) -> Result<StoredLedger, WorkStateError> {
-        let body = issue.body.as_deref().unwrap_or_default();
-        Ok(StoredLedger {
-            record: issue.record_ref(),
-            state: decode_state(body)
-                .map_err(|error| WorkStateError::undecodable(record_key(issue.number), error))?,
-            human_notes: extract_human_notes(body),
-        })
-    }
-
-    fn to_work_item(issue: &ApiIssue) -> Result<StoredWorkItem, WorkStateError> {
-        let body = issue.body.as_deref().unwrap_or_default();
-        let state: WorkItemState = decode_state(body)
-            .map_err(|error| WorkStateError::undecodable(record_key(issue.number), error))?;
-        Ok(StoredWorkItem {
-            record: issue.record_ref(),
-            observed_status: observed_status(issue, state.status),
-            state,
-            human_notes: extract_human_notes(body),
-            remote_updated_at: issue.updated_at,
-        })
-    }
-
-    fn merged_labels(issue: &ApiIssue, managed: Vec<String>) -> Vec<String> {
-        let mut labels: Vec<String> = issue
-            .labels
-            .iter()
-            .map(|label| label.name.clone())
-            .filter(|name| !is_managed_label(name))
-            .collect();
-        labels.extend(managed);
-        labels
-    }
-}
-
-fn state_fields(status: WorkItemStatus) -> Value {
-    match status {
-        WorkItemStatus::Resolved => json!({ "state": "closed", "state_reason": "completed" }),
-        WorkItemStatus::Dismissed => json!({ "state": "closed", "state_reason": "not_planned" }),
-        _ => json!({ "state": "open" }),
-    }
-}
-
-fn corrupted_skip(error: &WorkStateError) -> bool {
-    matches!(error, WorkStateError::Corrupted { .. })
 }
 
 #[async_trait]
-impl WorkStateRepositoryPort for GitHubWorkStateRepository {
-    async fn find_objective_ledger(
-        &self,
-        objective_id: &ObjectiveId,
-    ) -> Result<Option<StoredLedger>, WorkStateError> {
-        let issues = self
-            .list_issues(&[
-                OBJECTIVE_LEDGER_LABEL.to_string(),
-                objective_label(objective_id.as_str()),
-            ])
-            .await?;
-        issues
-            .iter()
-            .min_by_key(|issue| issue.number)
-            .map(Self::to_ledger)
-            .transpose()
-    }
-
-    async fn list_objective_ledgers(&self) -> Result<Vec<StoredLedger>, WorkStateError> {
-        let issues = self
-            .list_issues(&[OBJECTIVE_LEDGER_LABEL.to_string()])
-            .await?;
-        let mut ledgers = Vec::new();
-        for issue in &issues {
-            match Self::to_ledger(issue) {
-                Ok(ledger) => ledgers.push(ledger),
-                Err(error) if corrupted_skip(&error) => {
-                    tracing::warn!(record = %record_key(issue.number), error = %error, "Skipping unreadable objective ledger");
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        Ok(ledgers)
-    }
-
-    async fn create_objective_ledger(
-        &self,
-        state: &ObjectiveLedgerState,
-    ) -> Result<StoredLedger, WorkStateError> {
-        let mut state = state.clone();
-        state.revision = 1;
-        let labels = ledger_labels(&state);
-        self.ensure_labels(&labels).await?;
-        let body = render_ledger_body(&state, "")
-            .map_err(|message| WorkStateError::Other(PortError::invalid_input(message)))?;
-        let issue: ApiIssue = self
-            .request_json(
-                reqwest::Method::POST,
-                &format!("{}/issues", self.repo_url()),
-                Some(&json!({ "title": ledger_title(&state), "body": body, "labels": labels })),
-                "create objective ledger",
-            )
-            .await?;
-        Self::to_ledger(&issue)
-    }
-
-    async fn save_objective_ledger(
-        &self,
-        record: &RecordRef,
-        expected_revision: u64,
-        state: &ObjectiveLedgerState,
-    ) -> Result<StoredLedger, WorkStateError> {
-        let number = self.guard(record)?;
-        let current = self.get_issue(number).await?;
-        let stored = Self::to_ledger(&current)?;
-        if stored.state.revision != expected_revision {
-            return Err(WorkStateError::Conflict {
-                record: record.key.clone(),
-                expected: expected_revision,
-                found: stored.state.revision,
-            });
-        }
-        let mut next = state.clone();
-        next.revision = expected_revision + 1;
-        let labels = Self::merged_labels(&current, ledger_labels(&next));
-        let body = render_ledger_body(&next, &stored.human_notes)
-            .map_err(|message| WorkStateError::Other(PortError::invalid_input(message)))?;
-        let updated: ApiIssue = self
-            .request_json(
-                reqwest::Method::PATCH,
-                &format!("{}/issues/{number}", self.repo_url()),
-                Some(&json!({ "title": ledger_title(&next), "body": body, "labels": labels })),
-                "update objective ledger",
-            )
-            .await?;
-        Self::to_ledger(&updated)
-    }
-
+impl WorkStatePort for GitHubWorkStateRepository {
     async fn list_work_items(
         &self,
         objective_id: &ObjectiveId,
-    ) -> Result<Vec<StoredWorkItem>, WorkStateError> {
-        let issues = self
-            .list_issues(&[
-                WORK_ITEM_LABEL.to_string(),
-                objective_label(objective_id.as_str()),
-            ])
-            .await?;
-        let mut items = Vec::new();
-        for issue in &issues {
-            match Self::to_work_item(issue) {
-                Ok(item) => items.push(item),
-                Err(error) if corrupted_skip(&error) => {
-                    tracing::warn!(record = %record_key(issue.number), error = %error, "Skipping unreadable work item");
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        Ok(items)
+        closed_since: DateTime<Utc>,
+    ) -> Result<Vec<WorkItem>, WorkStateError> {
+        let labels = [objective_label(objective_id)];
+        let mut issues = self.list_issues(&labels, "open", None).await?;
+        issues.extend(
+            self.list_issues(&labels, "closed", Some(closed_since))
+                .await?
+                .into_iter()
+                .filter(|issue| issue.closed_at.is_some_and(|closed| closed >= closed_since)),
+        );
+        issues.sort_by_key(|issue| issue.number);
+        issues.dedup_by_key(|issue| issue.number);
+        Ok(issues
+            .iter()
+            .map(|issue| issue.to_work_item(objective_id))
+            .collect())
     }
 
-    async fn create_work_item(
-        &self,
-        state: &WorkItemState,
-    ) -> Result<StoredWorkItem, WorkStateError> {
-        let mut state = state.clone();
-        state.revision = 1;
-        let labels = work_item_labels(&state);
-        self.ensure_labels(&labels).await?;
-        let body = render_work_item_body(&state, "")
-            .map_err(|message| WorkStateError::Other(PortError::invalid_input(message)))?;
-        let issue: ApiIssue = self
-            .request_json(
-                reqwest::Method::POST,
-                &format!("{}/issues", self.repo_url()),
-                Some(&json!({ "title": work_item_title(&state), "body": body, "labels": labels })),
-                "create work item",
-            )
-            .await?;
-        if !state.status.is_open() {
-            let closed: ApiIssue = self
-                .request_json(
-                    reqwest::Method::PATCH,
-                    &format!("{}/issues/{}", self.repo_url(), issue.number),
-                    Some(&state_fields(state.status)),
-                    "close work item",
-                )
-                .await?;
-            return Self::to_work_item(&closed);
-        }
-        Self::to_work_item(&issue)
-    }
-
-    async fn save_work_item(
+    async fn list_comments(
         &self,
         record: &RecordRef,
-        expected_revision: u64,
-        state: &WorkItemState,
-    ) -> Result<StoredWorkItem, WorkStateError> {
+    ) -> Result<Vec<WorkItemComment>, WorkStateError> {
         let number = self.guard(record)?;
-        let current = self.get_issue(number).await?;
-        let stored = Self::to_work_item(&current)?;
-        if stored.state.revision != expected_revision {
-            return Err(WorkStateError::Conflict {
-                record: record.key.clone(),
-                expected: expected_revision,
-                found: stored.state.revision,
-            });
-        }
-        let mut next = state.clone();
-        next.revision = expected_revision + 1;
-        let managed = work_item_labels(&next);
-        self.ensure_labels(&managed).await?;
-        let body = render_work_item_body(&next, &stored.human_notes)
-            .map_err(|message| WorkStateError::Other(PortError::invalid_input(message)))?;
-        let mut patch = json!({
-            "title": work_item_title(&next),
-            "body": body,
-            "labels": Self::merged_labels(&current, managed),
-        });
-        if let (Some(target), Some(fields)) =
-            (patch.as_object_mut(), state_fields(next.status).as_object())
-        {
-            for (key, value) in fields {
-                target.insert(key.clone(), value.clone());
-            }
-        }
-        let updated: ApiIssue = self
-            .request_json(
-                reqwest::Method::PATCH,
-                &format!("{}/issues/{number}", self.repo_url()),
-                Some(&patch),
-                "update work item",
-            )
-            .await?;
-        Self::to_work_item(&updated)
-    }
-
-    async fn append_comment(
-        &self,
-        record: &RecordRef,
-        comment: WorkStateComment,
-    ) -> Result<(), WorkStateError> {
-        let number = self.guard(record)?;
-        let _: Value = self
-            .request_json(
-                reqwest::Method::POST,
-                &format!("{}/issues/{number}/comments", self.repo_url()),
-                Some(&json!({ "body": render_comment(comment.kind.as_str(), &comment.body) })),
-                "create comment",
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn list_human_comments(
-        &self,
-        record: &RecordRef,
-        after_comment_id: Option<CommentId>,
-    ) -> Result<Vec<HumanComment>, WorkStateError> {
-        let number = self.guard(record)?;
-        let after_comment_id = after_comment_id
-            .map(|cursor| {
-                cursor
-                    .as_str()
-                    .parse::<u64>()
-                    .map_err(|_| WorkStateError::Corrupted {
-                        record: record.key.clone(),
-                        message: format!("comment cursor `{cursor}` is not a GitHub comment id"),
-                    })
-            })
-            .transpose()?;
         let mut comments = Vec::new();
         for page in 1..=MAX_PAGES {
             let batch: Vec<ApiComment> = self
@@ -781,68 +496,133 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
                 .await?;
             let count = batch.len();
             for comment in batch {
-                if after_comment_id.is_some_and(|after| comment.id <= after) {
-                    continue;
-                }
                 let body = comment.body.unwrap_or_default();
                 let user = comment.user.unwrap_or(ApiUser {
                     login: "ghost".to_string(),
                     kind: String::new(),
                 });
-                let by_reili = user.kind == "Bot" && body.starts_with(COMMENT_MARKER_PREFIX);
-                if by_reili {
-                    continue;
-                }
-                comments.push((
-                    comment.id,
-                    HumanComment {
-                        id: CommentId::new(comment.id.to_string()),
-                        author_trusted: user.kind != "Bot"
-                            && TRUSTED_ASSOCIATIONS.contains(&comment.author_association.as_str()),
-                        author: user.login,
-                        body,
-                        created_at: comment.created_at,
-                        url: comment.html_url,
+                let by_reili = user.is_bot() && body.starts_with(COMMENT_MARKER);
+                comments.push(WorkItemComment {
+                    author_trusted: by_reili
+                        || (!user.is_bot()
+                            && TRUSTED_ASSOCIATIONS.contains(&comment.author_association.as_str())),
+                    by_reili,
+                    author: user.login,
+                    body: if by_reili {
+                        strip_comment_marker(&body)
+                    } else {
+                        body
                     },
-                ));
+                    created_at: comment.created_at,
+                    url: comment.html_url,
+                });
             }
             if count < PER_PAGE {
                 break;
             }
         }
-        comments.sort_by_key(|(id, _)| *id);
-        Ok(comments.into_iter().map(|(_, comment)| comment).collect())
+        Ok(comments)
     }
 
-    async fn close_duplicate(
+    async fn create_work_item(&self, item: &NewWorkItem) -> Result<WorkItem, WorkStateError> {
+        let mut labels = vec![
+            objective_label(&item.objective_id),
+            ASSIGNEE_LABEL.to_string(),
+        ];
+        if item.needs_decision {
+            labels.push(NEEDS_DECISION_LABEL.to_string());
+        }
+        self.ensure_labels(&labels).await?;
+        let issue: ApiIssue = self
+            .request_json(
+                reqwest::Method::POST,
+                &format!("{}/issues", self.repo_url()),
+                Some(&json!({
+                    "title": truncate_chars(item.title.trim(), 200),
+                    "body": render_issue_body(&item.body, &item.key),
+                    "labels": labels,
+                })),
+                "create work item",
+            )
+            .await?;
+        Ok(issue.to_work_item(&item.objective_id))
+    }
+
+    async fn add_comment(&self, record: &RecordRef, body: &str) -> Result<(), WorkStateError> {
+        let number = self.guard(record)?;
+        let _: Value = self
+            .request_json(
+                reqwest::Method::POST,
+                &format!("{}/issues/{number}/comments", self.repo_url()),
+                Some(&json!({ "body": render_comment(body) })),
+                "create comment",
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn set_needs_decision(
         &self,
-        duplicate: &RecordRef,
-        canonical: &RecordRef,
+        record: &RecordRef,
+        needs_decision: bool,
     ) -> Result<(), WorkStateError> {
-        let duplicate_number = self.guard(duplicate)?;
-        self.guard(canonical)?;
-        self.ensure_labels(&[DUPLICATE_LABEL.to_string()]).await?;
-        self.append_comment(
-            duplicate,
-            WorkStateComment {
-                kind: reili_core::work::WorkStateCommentKind::Notice,
-                body: format!(
-                    "Duplicate of {} (created concurrently); Reili continues on {}.",
-                    canonical.key, canonical.key
-                ),
-            },
-        )
-        .await?;
-        let _: ApiIssue = self
+        let number = self.guard(record)?;
+        if needs_decision {
+            self.ensure_labels(&[NEEDS_DECISION_LABEL.to_string()])
+                .await?;
+            let _: Value = self
+                .request_json(
+                    reqwest::Method::POST,
+                    &format!("{}/issues/{number}/labels", self.repo_url()),
+                    Some(&json!({ "labels": [NEEDS_DECISION_LABEL] })),
+                    "add label",
+                )
+                .await?;
+            return Ok(());
+        }
+        let label = NEEDS_DECISION_LABEL.replace(':', "%3A");
+        let (status, text) = self
+            .request(
+                reqwest::Method::DELETE,
+                &format!("{}/issues/{number}/labels/{label}", self.repo_url()),
+                None,
+                "remove label",
+            )
+            .await?;
+        // 404 means the label was not on the issue.
+        if !(200..300).contains(&status) && status != 404 {
+            return Err(map_status_error(status, &text, "remove label"));
+        }
+        Ok(())
+    }
+
+    async fn close_work_item(
+        &self,
+        record: &RecordRef,
+        reason: &CloseReason,
+    ) -> Result<(), WorkStateError> {
+        let number = self.guard(record)?;
+        let state_reason = match reason {
+            CloseReason::Done => "completed",
+            CloseReason::DuplicateOf(canonical) => {
+                self.guard(canonical)?;
+                self.add_comment(
+                    record,
+                    &format!(
+                        "Duplicate of {} (opened at the same time); Reili continues there.",
+                        canonical.key
+                    ),
+                )
+                .await?;
+                "not_planned"
+            }
+        };
+        let _: Value = self
             .request_json(
                 reqwest::Method::PATCH,
-                &format!("{}/issues/{duplicate_number}", self.repo_url()),
-                Some(&json!({
-                    "state": "closed",
-                    "state_reason": "not_planned",
-                    "labels": [DUPLICATE_LABEL],
-                })),
-                "close duplicate",
+                &format!("{}/issues/{number}", self.repo_url()),
+                Some(&json!({ "state": "closed", "state_reason": state_reason })),
+                "close work item",
             )
             .await?;
         Ok(())

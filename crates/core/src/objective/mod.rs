@@ -6,7 +6,7 @@ pub mod schedule;
 
 pub use definition::{
     ObjectiveBudget, ObjectiveDefinition, ObjectiveDefinitionError, ObjectiveId,
-    ObjectivePermissions, ObjectiveReportPolicy, ObjectiveScope,
+    ObjectivePermissions, ObjectiveScope,
 };
 pub use fingerprint::stable_fingerprint;
 pub use schedule::{ObjectiveSchedule, ScheduleError, truncate_to_minute};

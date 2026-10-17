@@ -1,203 +1,201 @@
-//! Decide: apply the report (after the report policy) to Work State — update or create work
-//! items, record feedback as used, audit policy changes, and checkpoint the ledger for Report.
+//! Decide: write the screened report to the tracker as a teammate would — a progress comment on
+//! each of Reili's items it worked on, the needs-decision label when it waits for the team, closing
+//! its own items when done, and new items (labelled and assigned to Reili) for new work.
 
+use chrono::Duration;
 use reili_core::objective::ObjectiveDefinition;
 use reili_core::work::{
-    ActiveCycle, CyclePhase, CycleReport, KnowledgeDraft, RecordKey, StoredLedger, StoredWorkItem,
-    WorkItemProposal, WorkStateComment, WorkStateCommentKind, WorkStateError,
-    sanitize::truncate_chars,
+    CloseReason, CycleReport, NewWorkItem, RecordRef, WorkItem, WorkItemKey, WorkItemState,
+    WorkItemStatus, WorkStateError, sanitize::sanitize_for_storage,
 };
 
-use super::super::decide::{
-    ApplyContext, PlanChangesInput, PlannedChange, apply_proposal, new_work_item_state,
-    plan_changes,
+use super::super::decide::{PlanChangesInput, PlannedChange, plan_changes};
+use super::super::policy::ScreenedProposal;
+use super::super::render::{
+    ProgressClosing, RenderNewItemInput, render_new_item_body, render_progress_comment,
 };
-use super::super::policy::apply_report_policy;
-use super::observe::ObserveOutput;
-use super::{ObjectiveCycleError, ObjectiveCycleRunner};
+use super::super::report::{Activity, ItemLine};
+use super::ObjectiveCycleRunner;
+use super::observe::Observed;
+
+const MAX_TITLE_CHARS: usize = 200;
+const DUPLICATE_LOOKBACK_DAYS: i64 = 1;
 
 impl ObjectiveCycleRunner {
-    pub(super) async fn decide(
+    pub(super) async fn apply(
         &self,
         objective: &ObjectiveDefinition,
-        ledger: &StoredLedger,
-        active: &ActiveCycle,
-        observed: &ObserveOutput,
+        run_id: &str,
+        observed: &Observed,
         report: &CycleReport,
-        tokens: u64,
-    ) -> Result<StoredLedger, ObjectiveCycleError> {
-        let now = self.deps.clock.now();
-        let policy = apply_report_policy(report);
+        proposals: &[ScreenedProposal],
+    ) -> Result<Activity, WorkStateError> {
+        let mut activity = Activity::default();
         let changes = plan_changes(&PlanChangesInput {
             objective,
-            existing: &observed.items,
-            proposals: &policy.proposals,
+            items: &observed.items,
+            proposals,
         });
-        let context = ApplyContext {
-            run_id: &active.run_id,
-            now,
-            report,
-        };
-        let mut touched: Vec<RecordKey> = Vec::new();
-        let mut skipped = Vec::new();
-        for change in &changes {
+        for change in changes {
             match change {
-                PlannedChange::Update {
-                    record_key,
+                PlannedChange::Update { item, proposal } => {
+                    self.continue_item(&item, &proposal, report, run_id, &mut activity)
+                        .await?;
+                }
+                PlannedChange::Create {
+                    key,
                     proposal,
+                    follows_up,
                 } => {
-                    let Some(item) = observed
-                        .items
-                        .iter()
-                        .find(|item| item.record.key == *record_key)
-                    else {
-                        continue;
-                    };
-                    let saved = self
-                        .deps
-                        .store
-                        .mutate_work_item(item, |state| apply_proposal(state, proposal, &context))
-                        .await?;
-                    self.append_cycle_log(&saved, active, proposal_log(proposal))
-                        .await?;
-                    touched.push(saved.record.key.clone());
+                    let body = render_new_item_body(&RenderNewItemInput {
+                        objective,
+                        screened: &proposal,
+                        report,
+                        follows_up: follows_up.as_ref(),
+                        run_id,
+                    });
+                    self.open_item(
+                        objective,
+                        key,
+                        &proposal,
+                        body,
+                        report,
+                        run_id,
+                        &mut activity,
+                    )
+                    .await?;
                 }
-                PlannedChange::Create { proposal } => {
-                    let Some(state) = new_work_item_state(objective, proposal, &context) else {
-                        continue;
-                    };
-                    let saved = self.deps.store.create_work_item_once(&state).await?;
-                    self.append_cycle_log(&saved, active, proposal_log(proposal))
-                        .await?;
-                    touched.push(saved.record.key.clone());
-                }
-                PlannedChange::Skipped { key, reason } => {
-                    skipped.push(format!("`{key}`: {reason}"));
+                PlannedChange::Skipped { title, reason } => {
+                    activity.skipped.push(format!("{title}: {reason}"));
                 }
             }
         }
-        for item in observed.items.iter().filter(|item| {
-            !item.state.pending_feedback().is_empty() && !touched.contains(&item.record.key)
-        }) {
-            let run_id = active.run_id.clone();
-            let saved = self
-                .deps
-                .store
-                .mutate_work_item(item, |state| {
-                    for note in &mut state.feedback {
-                        if note.applied_in_run.is_none() {
-                            note.applied_in_run = Some(run_id.clone());
-                        }
-                    }
-                })
-                .await?;
-            self.append_cycle_log(
-                &saved,
-                active,
-                "Human feedback was included in this run; no update to this item was proposed."
-                    .to_string(),
-            )
-            .await?;
-        }
-        touched.sort_unstable();
-        touched.dedup();
-
-        let mut summary = truncate_chars(report.summary.trim(), 1_000);
-        if !policy.notes.is_empty() {
-            summary.push_str(&format!(
-                " [report policy adjusted {} item(s)]",
-                policy.notes.len()
-            ));
-        }
-        if !skipped.is_empty() {
-            summary.push_str(&format!(" [skipped: {}]", skipped.join("; ")));
-        }
-        let audit = policy
-            .notes
-            .iter()
-            .chain(policy.rejected_knowledge.iter().map(|note| note as &String))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !audit.is_empty() {
-            self.deps
-                .store
-                .repository()
-                .append_comment(
-                    &ledger.record,
-                    WorkStateComment {
-                        kind: WorkStateCommentKind::CycleLog,
-                        body: format!(
-                            "Run `{}` report policy and knowledge audit:\n{}",
-                            active.run_id,
-                            audit
-                                .iter()
-                                .map(|note| format!("- {}", truncate_chars(note, 300)))
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        ),
-                    },
-                )
-                .await?;
-        }
-
-        let knowledge: Vec<KnowledgeDraft> = if objective.permissions.save_knowledge {
-            policy.knowledge.clone()
-        } else {
-            Vec::new()
-        };
-        let no_new_findings = touched.is_empty();
-        let (saved, ()) = self
-            .deps
-            .store
-            .mutate_ledger(ledger, |state| {
-                let usage = state.usage_for(now.date_naive());
-                usage.llm_tokens += tokens;
-                usage.cycles += 1;
-                if let Some(cycle) = state.active_cycle.as_mut() {
-                    cycle.phase = CyclePhase::Reporting;
-                    cycle.pending_notifications.clone_from(&touched);
-                    cycle.pending_knowledge.clone_from(&knowledge);
-                    cycle.summary.clone_from(&summary);
-                    cycle.no_new_findings = no_new_findings;
-                    cycle.llm_tokens += tokens;
-                }
-                state.updated_at = now;
-            })
-            .await?;
-        Ok(saved)
+        Ok(activity)
     }
 
-    async fn append_cycle_log(
+    async fn continue_item(
         &self,
-        item: &StoredWorkItem,
-        active: &ActiveCycle,
-        body: String,
+        item: &WorkItem,
+        screened: &ScreenedProposal,
+        report: &CycleReport,
+        run_id: &str,
+        activity: &mut Activity,
     ) -> Result<(), WorkStateError> {
-        self.deps
-            .store
-            .repository()
-            .append_comment(
+        let status = screened.proposal.status;
+        let closing = match (status, item.created_by_reili) {
+            (WorkItemStatus::Resolved, true) => ProgressClosing::Closing,
+            (WorkItemStatus::Resolved, false) => ProgressClosing::SuggestClosing,
+            _ => ProgressClosing::Continue,
+        };
+        let work_state = &self.deps.work_state;
+        work_state
+            .add_comment(
                 &item.record,
-                WorkStateComment {
-                    kind: WorkStateCommentKind::CycleLog,
-                    body: format!("Run `{}`: {body}", active.run_id),
-                },
+                &render_progress_comment(screened, report, run_id, closing),
             )
-            .await
+            .await?;
+        let needs_decision = status == WorkItemStatus::NeedsDecision;
+        if needs_decision != item.needs_decision {
+            work_state
+                .set_needs_decision(&item.record, needs_decision)
+                .await?;
+        }
+        if closing == ProgressClosing::Closing {
+            work_state
+                .close_work_item(&item.record, &CloseReason::Done)
+                .await?;
+        }
+
+        let line = line(&item.record, &item.title, screened);
+        if needs_decision && !item.needs_decision {
+            activity.needs_decision.push(line.clone());
+        }
+        if status == WorkItemStatus::Resolved {
+            activity.resolved.push(line.clone());
+        }
+        activity.updated.push(line);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn open_item(
+        &self,
+        objective: &ObjectiveDefinition,
+        key: WorkItemKey,
+        screened: &ScreenedProposal,
+        body: String,
+        report: &CycleReport,
+        run_id: &str,
+        activity: &mut Activity,
+    ) -> Result<(), WorkStateError> {
+        let needs_decision = screened.proposal.status == WorkItemStatus::NeedsDecision;
+        let created = self
+            .deps
+            .work_state
+            .create_work_item(&NewWorkItem {
+                objective_id: objective.id.clone(),
+                key: key.clone(),
+                title: sanitize_for_storage(&screened.proposal.title, MAX_TITLE_CHARS),
+                body,
+                needs_decision,
+            })
+            .await?;
+
+        // Another instance may have opened the same item at the same time; the oldest one wins.
+        if let Some(canonical) = self
+            .older_open_item_with_key(objective, &key, &created)
+            .await?
+        {
+            self.deps
+                .work_state
+                .close_work_item(
+                    &created.record,
+                    &CloseReason::DuplicateOf(canonical.record.clone()),
+                )
+                .await?;
+            if canonical.is_reili_work() {
+                return self
+                    .continue_item(&canonical, screened, report, run_id, activity)
+                    .await;
+            }
+            return Ok(());
+        }
+
+        let line = line(&created.record, &created.title, screened);
+        if needs_decision {
+            activity.needs_decision.push(line.clone());
+        }
+        activity.created.push(line);
+        Ok(())
+    }
+
+    async fn older_open_item_with_key(
+        &self,
+        objective: &ObjectiveDefinition,
+        key: &WorkItemKey,
+        created: &WorkItem,
+    ) -> Result<Option<WorkItem>, WorkStateError> {
+        let since = self.deps.clock.now() - Duration::days(DUPLICATE_LOOKBACK_DAYS);
+        // Listing is in creation order, so the first open item with the key is the oldest.
+        let oldest = self
+            .deps
+            .work_state
+            .list_work_items(&objective.id, since)
+            .await?
+            .into_iter()
+            .find(|item| item.state == WorkItemState::Open && item.key.as_ref() == Some(key));
+        Ok(oldest.filter(|item| item.record != created.record))
     }
 }
 
-fn proposal_log(proposal: &WorkItemProposal) -> String {
-    let hypotheses = proposal
-        .hypotheses
-        .iter()
-        .map(|hypothesis| format!("{}={}", hypothesis.id, hypothesis.status.as_str()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "status proposal `{}`; hypotheses [{}]; {} finding(s).",
-        proposal.proposed_status.as_str(),
-        hypotheses,
-        proposal.findings.len()
-    )
+fn line(record: &RecordRef, title: &str, screened: &ScreenedProposal) -> ItemLine {
+    let proposal = &screened.proposal;
+    ItemLine {
+        record: record.clone(),
+        title: title.to_string(),
+        severity: proposal.severity,
+        question: (proposal.status == WorkItemStatus::NeedsDecision)
+            .then(|| proposal.decision_needed.clone())
+            .flatten(),
+    }
 }

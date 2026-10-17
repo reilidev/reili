@@ -1,6 +1,6 @@
 //! Integration test: the production scheduler, cycle runner, and GitHub Issues adapter talking
-//! HTTP to a stateful fake GitHub REST API. Covers durable work state, human collaboration on the
-//! issue, process restarts, and that writes never leave the management repository.
+//! HTTP to a stateful fake GitHub REST API. Covers work on ordinary issues, collaboration with a
+//! teammate on the issue, process restarts, and that writes never leave the configured repository.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -11,7 +11,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, patch, post};
 use chrono::{DateTime, Duration, Utc};
 use reili_adapters::outbound::github::{GitHubWorkStateConfig, GitHubWorkStateRepository};
 use reili_application::objective::{Clock, ObjectiveScheduler};
@@ -25,13 +25,13 @@ use reili_core::messaging::slack::{
     ObjectiveReportPort, PostedObjectiveReport,
 };
 use reili_core::objective::{
-    ObjectiveBudget, ObjectiveDefinition, ObjectiveId, ObjectivePermissions, ObjectiveReportPolicy,
-    ObjectiveSchedule, ObjectiveScope,
+    ObjectiveBudget, ObjectiveDefinition, ObjectiveId, ObjectivePermissions, ObjectiveSchedule,
+    ObjectiveScope,
 };
 use reili_core::secret::SecretString;
 use reili_core::task::{LlmExecutionMetadata, LlmUsageSnapshot, TaskResources};
 use reili_core::work::{
-    CycleReport, EvidenceRef, EvidenceSource, Hypothesis, HypothesisStatus, Severity, WorkItemKind,
+    CycleReport, EvidenceRef, EvidenceSource, Hypothesis, HypothesisStatus, Severity,
     WorkItemProposal, WorkItemStatus,
 };
 use serde_json::{Value, json};
@@ -100,20 +100,14 @@ async fn list_or_create_issues(
         let wanted: Vec<String> = query_value(&uri, "labels")
             .map(|labels| labels.split(',').map(ToString::to_string).collect())
             .unwrap_or_default();
+        let wanted_state = query_value(&uri, "state").unwrap_or_else(|| "open".to_string());
         let issues: Vec<Value> = guard
             .issues
             .values()
+            .filter(|issue| wanted_state == "all" || issue["state"] == wanted_state.as_str())
             .filter(|issue| {
-                let names: Vec<&str> = issue["labels"]
-                    .as_array()
-                    .map(|labels| {
-                        labels
-                            .iter()
-                            .filter_map(|label| label["name"].as_str())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                wanted.iter().all(|label| names.contains(&label.as_str()))
+                let names = labels_of(issue);
+                wanted.iter().all(|label| names.contains(label))
             })
             .cloned()
             .collect();
@@ -129,21 +123,24 @@ async fn list_or_create_issues(
         "html_url": format!("https://github.com/{OWNER}/{REPO}/issues/{number}"),
         "title": body["title"],
         "body": body["body"],
+        "user": { "login": "reili[bot]", "type": "Bot" },
         "state": "open",
         "state_reason": null,
         "labels": body["labels"].as_array().cloned().unwrap_or_default().iter().map(|name| json!({ "name": name })).collect::<Vec<_>>(),
+        "created_at": now(),
         "updated_at": now(),
+        "closed_at": null,
     });
     guard.issues.insert(number, issue.clone());
     (StatusCode::CREATED, Json(issue)).into_response()
 }
 
-async fn get_or_update_issue(
+async fn update_issue(
     State(state): State<Shared>,
     method: Method,
     uri: Uri,
     Path((owner, repo, number)): Path<(String, String, u64)>,
-    body: Option<Json<Value>>,
+    Json(patch): Json<Value>,
 ) -> Response {
     if !check_repo(&state, &method, &owner, &repo, &uri) {
         return StatusCode::NOT_FOUND.into_response();
@@ -152,19 +149,14 @@ async fn get_or_update_issue(
     let Some(issue) = guard.issues.get_mut(&number) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if method == Method::PATCH
-        && let Some(Json(patch)) = body
-    {
-        for key in ["title", "body", "state", "state_reason"] {
-            if let Some(value) = patch.get(key) {
-                issue[key] = value.clone();
-            }
+    for key in ["title", "body", "state", "state_reason"] {
+        if let Some(value) = patch.get(key) {
+            issue[key] = value.clone();
         }
-        if let Some(labels) = patch.get("labels").and_then(Value::as_array) {
-            issue["labels"] =
-                Value::Array(labels.iter().map(|name| json!({ "name": name })).collect());
-        }
-        issue["updated_at"] = json!(now());
+    }
+    issue["updated_at"] = json!(now());
+    if issue["state"] == "closed" {
+        issue["closed_at"] = json!(now());
     }
     Json(issue.clone()).into_response()
 }
@@ -209,6 +201,52 @@ async fn comments(
     (StatusCode::CREATED, Json(comment)).into_response()
 }
 
+async fn add_issue_labels(
+    State(state): State<Shared>,
+    method: Method,
+    uri: Uri,
+    Path((owner, repo, number)): Path<(String, String, u64)>,
+    Json(body): Json<Value>,
+) -> Response {
+    if !check_repo(&state, &method, &owner, &repo, &uri) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let mut guard = state.lock().expect("lock");
+    let Some(issue) = guard.issues.get_mut(&number) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mut labels = issue["labels"].as_array().cloned().unwrap_or_default();
+    for name in body["labels"].as_array().into_iter().flatten() {
+        labels.push(json!({ "name": name }));
+    }
+    issue["labels"] = Value::Array(labels);
+    Json(json!([])).into_response()
+}
+
+async fn remove_issue_label(
+    State(state): State<Shared>,
+    method: Method,
+    uri: Uri,
+    Path((owner, repo, number, name)): Path<(String, String, u64, String)>,
+) -> Response {
+    if !check_repo(&state, &method, &owner, &repo, &uri) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let mut guard = state.lock().expect("lock");
+    let Some(issue) = guard.issues.get_mut(&number) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let labels: Vec<Value> = issue["labels"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|label| label["name"] != name.as_str())
+        .collect();
+    issue["labels"] = Value::Array(labels);
+    Json(json!([])).into_response()
+}
+
 async fn labels(
     State(state): State<Shared>,
     method: Method,
@@ -237,13 +275,18 @@ async fn start_fake_github() -> (String, Shared) {
             "/repos/{owner}/{repo}/issues",
             get(list_or_create_issues).post(list_or_create_issues),
         )
-        .route(
-            "/repos/{owner}/{repo}/issues/{number}",
-            get(get_or_update_issue).patch(get_or_update_issue),
-        )
+        .route("/repos/{owner}/{repo}/issues/{number}", patch(update_issue))
         .route(
             "/repos/{owner}/{repo}/issues/{number}/comments",
             get(comments).post(comments),
+        )
+        .route(
+            "/repos/{owner}/{repo}/issues/{number}/labels",
+            post(add_issue_labels),
+        )
+        .route(
+            "/repos/{owner}/{repo}/issues/{number}/labels/{name}",
+            delete(remove_issue_label),
         )
         .route("/repos/{owner}/{repo}/labels", post(labels))
         .fallback(fallback)
@@ -355,11 +398,7 @@ fn objective() -> ObjectiveDefinition {
             environments: Vec::new(),
         },
         schedule: ObjectiveSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("schedule"),
-        report: ObjectiveReportPolicy {
-            channel_id: "C0123456789".to_string(),
-            min_interval_minutes: 60,
-            max_reports_per_day: 6,
-        },
+        report_channel_id: "C0123456789".to_string(),
         budget: ObjectiveBudget::default(),
         permissions: ObjectivePermissions {
             save_knowledge: false,
@@ -369,7 +408,7 @@ fn objective() -> ObjectiveDefinition {
     }
 }
 
-fn report() -> CycleReport {
+fn report(work_item: WorkItemProposal) -> CycleReport {
     CycleReport {
         summary: "checkout-api errors rose after deploy 42.".to_string(),
         evidence: vec![EvidenceRef {
@@ -381,31 +420,37 @@ fn report() -> CycleReport {
             time_range: None,
             query: None,
         }],
-        work_items: vec![WorkItemProposal {
-            key: "checkout-api:errors-after-deploy-42".to_string(),
-            existing_record: None,
-            title: "Errors after deploy 42".to_string(),
-            kind: WorkItemKind::Incident,
-            severity: Severity::High,
-            proposed_status: WorkItemStatus::NeedsHuman,
-            problem_statement: "5xx doubled".to_string(),
-            plan: Vec::new(),
-            hypotheses: vec![Hypothesis {
-                id: "H1".to_string(),
-                statement: "deploy 42 caused the regression".to_string(),
-                status: HypothesisStatus::Supported,
-                evidence_ids: vec!["E1".to_string()],
-                rationale: String::new(),
-            }],
-            findings: Vec::new(),
-            recommendation: None,
-            open_questions: Vec::new(),
-            human_decision_needed: Some("Roll back deploy 42?".to_string()),
-            next_actions: Vec::new(),
-            evidence_ids: vec!["E1".to_string()],
-        }],
+        work_items: vec![work_item],
         knowledge_candidates: Vec::new(),
         no_new_findings: false,
+    }
+}
+
+fn proposal(
+    existing_record: Option<&str>,
+    status: WorkItemStatus,
+    work_log: &str,
+) -> WorkItemProposal {
+    WorkItemProposal {
+        key: "checkout-api:errors-after-deploy-42".to_string(),
+        existing_record: existing_record.map(ToString::to_string),
+        title: "Errors after deploy 42".to_string(),
+        severity: Severity::High,
+        status,
+        problem_statement: "5xx doubled".to_string(),
+        work_log: work_log.to_string(),
+        hypotheses: vec![Hypothesis {
+            id: "H1".to_string(),
+            statement: "deploy 42 caused the regression".to_string(),
+            status: HypothesisStatus::Supported,
+            evidence_ids: vec!["E1".to_string()],
+            rationale: String::new(),
+        }],
+        findings: Vec::new(),
+        recommendation: None,
+        decision_needed: Some("Roll back deploy 42?".to_string()),
+        next_actions: Vec::new(),
+        evidence_ids: vec!["E1".to_string()],
     }
 }
 
@@ -429,7 +474,6 @@ fn process(
     runner: &Arc<ScriptedRunner>,
     slack: &Arc<RecordingSlack>,
     clock: &Arc<SteppedClock>,
-    instance_id: &str,
 ) -> Arc<ObjectiveScheduler> {
     let repository = GitHubWorkStateRepository::with_static_token(
         &GitHubWorkStateConfig {
@@ -448,9 +492,8 @@ fn process(
         autonomy: &AutonomyConfig {
             tick_interval_seconds: 60,
             max_concurrent_cycles: 1,
-            lease_minutes: 15,
         },
-        repository: Arc::new(repository),
+        work_state: Arc::new(repository),
         cycle_agent: Arc::clone(runner) as Arc<dyn CycleAgentPort>,
         task_resources: TaskResources {
             slack_message_search_port: Arc::new(MockSlackMessageSearchPort::new()),
@@ -461,7 +504,6 @@ fn process(
         report_port: Arc::clone(slack) as Arc<dyn ObjectiveReportPort>,
         clock: Arc::clone(clock) as Arc<dyn Clock>,
         logger: Arc::new(QuietLogger),
-        instance_id: instance_id.to_string(),
     })
 }
 
@@ -487,76 +529,70 @@ fn labels_of(issue: &Value) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn objective_cycles_persist_to_github_issues_and_resume_across_processes() {
+async fn objective_work_lives_on_ordinary_issues_across_processes() {
     let (api_base_url, github) = start_fake_github().await;
     let runner = Arc::new(ScriptedRunner {
-        reports: Mutex::new(vec![report()]),
+        reports: Mutex::new(vec![
+            report(proposal(None, WorkItemStatus::NeedsDecision, "")),
+            report(proposal(
+                Some("#1"),
+                WorkItemStatus::InProgress,
+                "Checked the pool limit with the team's answer; drafting a safe size.",
+            )),
+        ]),
         briefs: Mutex::new(Vec::new()),
     });
     let slack = Arc::new(RecordingSlack::default());
+    let clock = Arc::new(SteppedClock(Mutex::new(
+        DateTime::parse_from_rfc3339("2026-10-15T00:00:00Z")
+            .expect("time")
+            .with_timezone(&Utc),
+    )));
 
-    // Process 1: baseline cycle creates the ledger and a work item over HTTP.
-    let clock = Arc::new(SteppedClock(Mutex::new(Utc::now())));
-    let first = process(&api_base_url, &runner, &slack, &clock, "process-1");
+    // Process 1: the first scheduled time opens an ordinary issue for the work.
+    let first = process(&api_base_url, &runner, &slack, &clock);
+    assert_eq!(
+        run_tick(&first).await,
+        0,
+        "nothing before the first scheduled time"
+    );
+    clock.advance(Duration::hours(6));
     assert_eq!(run_tick(&first).await, 1);
-
-    let (ledger_number, item_number) = {
+    {
         let state = github.lock().expect("lock");
-        let ledger = state
-            .issues
-            .values()
-            .find(|issue| labels_of(issue).contains(&"reili:objective".to_string()))
-            .expect("ledger issue");
-        let item = state
-            .issues
-            .values()
-            .find(|issue| labels_of(issue).contains(&"reili:work-item".to_string()))
-            .expect("work item issue");
-        assert!(labels_of(item).contains(&"reili-status:needs-human".to_string()));
-        assert!(labels_of(item).contains(&"reili-objective:checkout-reliability".to_string()));
-        let body = item["body"].as_str().expect("body");
-        assert!(body.contains("### Decision needed\nRoll back deploy 42?"));
-        assert!(body.contains("| supported |"));
-        (
-            ledger["number"].as_u64().expect("number"),
-            item["number"].as_u64().expect("number"),
-        )
-    };
+        let issue = &state.issues[&1];
+        let labels = labels_of(issue);
+        assert!(labels.contains(&"reili-objective:checkout-reliability".to_string()));
+        assert!(labels.contains(&"reili:assignee".to_string()));
+        assert!(labels.contains(&"reili:needs-decision".to_string()));
+        let body = issue["body"].as_str().expect("body");
+        assert!(body.starts_with("5xx doubled"));
+        assert!(body.contains("<!-- reili:work-item key=checkout-api:errors-after-deploy-42 -->"));
+    }
     assert_eq!(slack.posted.lock().expect("lock").len(), 1);
 
-    // A human comments, moves the item to `proposed` by label, and adds a label of their own.
+    // A teammate answers on the issue and adds a label of their own.
     {
         let mut state = github.lock().expect("lock");
         state.next_comment_id += 1;
         let id = state.next_comment_id;
-        state.comments.entry(item_number).or_default().push(json!({
+        state.comments.entry(1).or_default().push(json!({
             "id": id,
-            "body": "Confirmed, the pool size is too small.",
+            "body": "Approved, but the pool is capped at 20.",
             "user": { "login": "alice", "type": "User" },
             "author_association": "MEMBER",
             "created_at": now(),
-            "html_url": "https://github.com/acme/reili-work/issues/comment",
+            "html_url": "https://github.com/acme/reili-work/issues/1#comment",
         }));
-        let issue = state.issues.get_mut(&item_number).expect("issue");
-        let mut labels: Vec<Value> = issue["labels"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|label| {
-                !label["name"]
-                    .as_str()
-                    .is_some_and(|name| name.starts_with("reili-status:"))
-            })
-            .collect();
-        labels.push(json!({ "name": "reili-status:proposed" }));
+        let issue = state.issues.get_mut(&1).expect("issue");
+        let mut labels = issue["labels"].as_array().cloned().unwrap_or_default();
         labels.push(json!({ "name": "customer-facing" }));
         issue["labels"] = Value::Array(labels);
     }
 
-    // Process 2 (restart) at the next scheduled slot: durable state comes from GitHub only.
-    let second = process(&api_base_url, &runner, &slack, &clock, "process-2");
-    clock.advance(Duration::hours(7));
+    // Process 2 (restart): everything it needs is on the issue.
+    let second = process(&api_base_url, &runner, &slack, &clock);
+    clock.advance(Duration::hours(6));
     assert_eq!(run_tick(&second).await, 1);
 
     let brief = runner
@@ -567,38 +603,25 @@ async fn objective_cycles_persist_to_github_issues_and_resume_across_processes()
         .cloned()
         .unwrap_or_default();
     assert!(
-        brief.contains("Confirmed, the pool size is too small."),
-        "feedback reaches the agent"
+        brief.contains("NEW @alice"),
+        "the teammate's answer reaches the agent"
     );
     let state = github.lock().expect("lock");
-    let item = &state.issues[&item_number];
-    let labels = labels_of(item);
-    assert!(labels.contains(&"reili-status:proposed".to_string()));
+    let labels = labels_of(&state.issues[&1]);
+    assert!(!labels.contains(&"reili:needs-decision".to_string()));
     assert!(
         labels.contains(&"customer-facing".to_string()),
-        "human labels preserved"
+        "team labels survive"
     );
-    assert!(state.comments[&item_number].iter().any(|comment| {
+    assert!(state.comments[&1].iter().any(|comment| {
         comment["body"]
             .as_str()
-            .is_some_and(|body| body.contains("Recorded human status change → `proposed`"))
+            .is_some_and(|body| body.contains("Checked the pool limit"))
     }));
-    let ledger_body = state.issues[&ledger_number]["body"]
-        .as_str()
-        .expect("ledger body");
     assert_eq!(
-        ledger_body.matches("\"run_id\"").count(),
-        2,
-        "both cycles are recorded in the ledger"
-    );
-    assert_eq!(
-        state
-            .issues
-            .values()
-            .filter(|issue| labels_of(issue).contains(&"reili:work-item".to_string()))
-            .count(),
+        state.issues.len(),
         1,
-        "no duplicate work items across processes"
+        "no duplicate issues across processes"
     );
     assert!(
         state.foreign_requests.is_empty(),
@@ -610,6 +633,6 @@ async fn objective_cycles_persist_to_github_issues_and_resume_across_processes()
             .writes
             .iter()
             .all(|write| write.contains(&format!("/repos/{OWNER}/{REPO}/"))),
-        "all writes target the management repository"
+        "all writes target the configured repository"
     );
 }

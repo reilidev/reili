@@ -1,33 +1,26 @@
-//! The objective scheduler: on each tick it evaluates configured objectives against their durable ledgers
-//! and starts (or resumes) cycles that are due. All scheduling state lives in the ledgers, so a
-//! restarted process continues where the previous one stopped; in-memory state is only a guard
-//! against starting the same objective twice in one process.
+//! The objective scheduler: runs each enabled objective's cycle at its scheduled times, like cron.
+//! Nothing is persisted: a slot that passes while Reili is stopped (or while the objective's previous
+//! cycle is still running) is skipped, and the next scheduled time picks the work up from the
+//! tracker.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use chrono::{DateTime, Duration, Utc};
-use reili_core::objective::{ObjectiveDefinition, ObjectiveId, truncate_to_minute};
+use chrono::{DateTime, Utc};
+use reili_core::objective::{ObjectiveDefinition, ObjectiveId};
 use reili_core::task::TaskCancellation;
-use reili_core::work::{
-    ObjectiveLedgerState, ObjectiveLifecycle, StoredLedger, WorkStateComment, WorkStateCommentKind,
-    WorkStateError,
-};
+use reili_core::work::WorkStateError;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinHandle;
 
 use super::clock::Clock;
-use super::cycle::{CycleRunOutcome, CycleStart, ObjectiveCycleError, ObjectiveCycleRunner};
-use super::store::WorkStateStore;
+use super::cycle::{CycleOutcome, ObjectiveCycleRunner};
 use crate::{TaskLogger, string_log_meta};
-
-const LEDGER_SYNC_INTERVAL_MINUTES: i64 = 60;
 
 pub struct ObjectiveSchedulerDeps {
     pub objectives: Vec<ObjectiveDefinition>,
     pub cycle_runner: Arc<ObjectiveCycleRunner>,
-    pub store: WorkStateStore,
     pub clock: Arc<dyn Clock>,
     pub logger: Arc<dyn TaskLogger>,
     pub tick_interval: std::time::Duration,
@@ -40,19 +33,20 @@ pub struct ObjectiveScheduler {
     semaphore: Arc<Semaphore>,
     shutdown: TaskCancellation,
     started: AtomicBool,
-    last_sync: Mutex<Option<DateTime<Utc>>>,
+    last_checked: Mutex<DateTime<Utc>>,
 }
 
 impl ObjectiveScheduler {
     pub fn new(deps: ObjectiveSchedulerDeps) -> Arc<Self> {
         let permits = deps.max_concurrent_cycles.max(1);
+        let now = deps.clock.now();
         Arc::new(Self {
             deps,
             running: Mutex::new(BTreeSet::new()),
             semaphore: Arc::new(Semaphore::new(permits)),
             shutdown: TaskCancellation::new(),
             started: AtomicBool::new(false),
-            last_sync: Mutex::new(None),
+            last_checked: Mutex::new(now),
         })
     }
 
@@ -80,53 +74,37 @@ impl ObjectiveScheduler {
         });
     }
 
-    /// Stops scheduling and asks running cycles to stop; interrupted cycles resume after restart.
+    /// Stops scheduling and asks running cycles to stop.
     pub fn stop(&self) {
         self.shutdown.cancel();
     }
 
-    /// Evaluates every objective once and starts due cycles. Returns handles for the started cycles.
+    /// Starts the cycles whose scheduled time passed since the previous tick. Returns handles for
+    /// the started cycles.
     pub async fn tick(self: &Arc<Self>) -> Vec<JoinHandle<()>> {
         let now = self.deps.clock.now();
-        if let Err(error) = self.sync_if_due(now).await {
-            self.warn("objective_ledger_sync_failed", None, &error.to_string());
-            // Without readable ledgers nothing can be scheduled safely; try again next tick.
-            return Vec::new();
-        }
+        let since = std::mem::replace(&mut *self.last_checked.lock().await, now);
 
         let mut handles = Vec::new();
-        for objective in self
-            .deps
-            .objectives
-            .iter()
-            .filter(|objective| objective.enabled)
-        {
+        for objective in &self.deps.objectives {
+            let Some(slot) = due_slot(objective, since, now) else {
+                continue;
+            };
             if self.running.lock().await.contains(&objective.id) {
+                self.log(
+                    "objective_cycle_skipped",
+                    &objective.id,
+                    "the previous cycle is still running",
+                );
                 continue;
             }
-            let ledger = match self
-                .deps
-                .store
-                .repository()
-                .find_objective_ledger(&objective.id)
-                .await
-            {
-                Ok(Some(ledger)) => ledger,
-                Ok(None) => continue,
-                Err(error) => {
-                    self.warn(
-                        "objective_ledger_read_failed",
-                        Some(&objective.id),
-                        &error.to_string(),
-                    );
-                    continue;
-                }
-            };
-            let Some(start) = decide_due(objective, &ledger.state, now) else {
-                continue;
-            };
             let Ok(permit) = Arc::clone(&self.semaphore).try_acquire_owned() else {
-                break;
+                self.log(
+                    "objective_cycle_skipped",
+                    &objective.id,
+                    "max_concurrent_cycles reached",
+                );
+                continue;
             };
             self.running.lock().await.insert(objective.id.clone());
             let scheduler = Arc::clone(self);
@@ -135,7 +113,7 @@ impl ObjectiveScheduler {
                 let outcome = scheduler
                     .deps
                     .cycle_runner
-                    .run(&objective, start, scheduler.shutdown.clone())
+                    .run(&objective, slot, scheduler.shutdown.clone())
                     .await;
                 scheduler.log_outcome(&objective.id, &outcome);
                 scheduler.running.lock().await.remove(&objective.id);
@@ -145,244 +123,101 @@ impl ObjectiveScheduler {
         handles
     }
 
-    async fn sync_if_due(&self, now: DateTime<Utc>) -> Result<(), WorkStateError> {
-        let mut last_sync = self.last_sync.lock().await;
-        if last_sync
-            .is_some_and(|last| now < last + Duration::minutes(LEDGER_SYNC_INTERVAL_MINUTES))
-        {
-            return Ok(());
-        }
-        self.sync_ledgers(now).await?;
-        *last_sync = Some(now);
-        Ok(())
-    }
-
-    /// Aligns ledgers with config: creates missing ledgers, records definition changes, marks
-    /// disabled objectives, and retires ledgers whose objective was removed (their work items stay open for
-    /// humans; Reili simply stops working on them).
-    pub async fn sync_ledgers(&self, now: DateTime<Utc>) -> Result<(), WorkStateError> {
-        for objective in &self.deps.objectives {
-            let ledger = self.deps.store.ensure_ledger(objective, now).await?;
-            let fingerprint = objective.fingerprint();
-            let lifecycle = if objective.enabled {
-                ObjectiveLifecycle::Active
-            } else {
-                ObjectiveLifecycle::Disabled
-            };
-            if ledger.state.definition_fingerprint == fingerprint
-                && ledger.state.lifecycle == lifecycle
-            {
-                continue;
-            }
-            let changed = ledger.state.definition_fingerprint != fingerprint;
-            let previous_lifecycle = ledger.state.lifecycle;
-            let description = objective.description.clone();
-            let (saved, ()) = self
-                .deps
-                .store
-                .mutate_ledger(&ledger, |state| {
-                    if changed {
-                        state.definition_fingerprint.clone_from(&fingerprint);
-                        state.description.clone_from(&description);
-                        state.definition_changes.push(now);
-                        if state.definition_changes.len() > 20 {
-                            state.definition_changes.remove(0);
-                        }
-                    }
-                    state.lifecycle = lifecycle;
-                    state.updated_at = now;
-                })
-                .await?;
-            let mut notices = Vec::new();
-            if changed {
-                notices.push("Objective definition changed in config. Existing work items are kept; the next cycle re-checks whether each is still in scope.".to_string());
-            }
-            if previous_lifecycle != lifecycle {
-                notices.push(format!(
-                    "Objective lifecycle `{}` → `{}`.{}",
-                    previous_lifecycle.as_str(),
-                    lifecycle.as_str(),
-                    if lifecycle == ObjectiveLifecycle::Disabled {
-                        " No cycles will run; open work items are left untouched."
-                    } else {
-                        ""
-                    }
-                ));
-            }
-            self.notice(&saved, notices).await?;
-        }
-
-        let configured: BTreeSet<&ObjectiveId> = self
-            .deps
-            .objectives
-            .iter()
-            .map(|objective| &objective.id)
-            .collect();
-        for ledger in self
-            .deps
-            .store
-            .repository()
-            .list_objective_ledgers()
-            .await?
-        {
-            if configured.contains(&ledger.state.objective_id)
-                || ledger.state.lifecycle == ObjectiveLifecycle::Retired
-            {
-                continue;
-            }
-            let (saved, ()) = self
-                .deps
-                .store
-                .mutate_ledger(&ledger, |state| {
-                    state.lifecycle = ObjectiveLifecycle::Retired;
-                    state.updated_at = now;
-                })
-                .await?;
-            self.notice(
-                &saved,
-                vec!["Objective removed from config: retired. Reili will not run cycles for it; its work items remain for humans to close or keep.".to_string()],
-            )
-            .await?;
-        }
-        Ok(())
-    }
-
-    async fn notice(
-        &self,
-        ledger: &StoredLedger,
-        notices: Vec<String>,
-    ) -> Result<(), WorkStateError> {
-        if notices.is_empty() {
-            return Ok(());
-        }
-        self.deps
-            .store
-            .repository()
-            .append_comment(
-                &ledger.record,
-                WorkStateComment {
-                    kind: WorkStateCommentKind::Notice,
-                    body: notices.join("\n"),
-                },
-            )
-            .await
-    }
-
     fn log_outcome(
         &self,
         objective_id: &ObjectiveId,
-        outcome: &Result<CycleRunOutcome, ObjectiveCycleError>,
+        outcome: &Result<CycleOutcome, WorkStateError>,
     ) {
         let (event, detail) = match outcome {
-            Ok(CycleRunOutcome::Finished { run_id, result }) => (
-                "objective_cycle_completed",
-                format!("{run_id}: {}", result.label()),
+            Ok(CycleOutcome::Completed {
+                run_id,
+                created,
+                updated,
+                reported,
+            }) => (
+                "objective_cycle_finished",
+                format!("{run_id}: {created} created, {updated} updated, reported={reported}"),
             ),
-            Ok(CycleRunOutcome::Skipped { reason }) => ("objective_cycle_skipped", reason.clone()),
-            Ok(CycleRunOutcome::Interrupted { run_id, reason }) => {
-                ("objective_cycle_interrupted", format!("{run_id}: {reason}"))
+            Ok(CycleOutcome::NothingNew { run_id }) => {
+                ("objective_cycle_finished", format!("{run_id}: nothing new"))
             }
-            Err(error) => ("objective_cycle_aborted", error.to_string()),
+            Ok(CycleOutcome::Ended { run_id, reason }) => {
+                ("objective_cycle_ended", format!("{run_id}: {reason}"))
+            }
+            Ok(CycleOutcome::Cancelled { run_id }) => ("objective_cycle_cancelled", run_id.clone()),
+            Err(error) => ("objective_cycle_failed", error.to_string()),
         };
+        self.log(event, objective_id, &detail);
+    }
+
+    fn log(&self, event: &'static str, objective_id: &ObjectiveId, detail: &str) {
         self.deps.logger.info(
             event,
             string_log_meta([
                 ("objectiveId", objective_id.to_string()),
-                ("detail", detail),
-            ]),
-        );
-    }
-
-    fn warn(&self, event: &'static str, objective_id: Option<&ObjectiveId>, error: &str) {
-        self.deps.logger.warn(
-            event,
-            string_log_meta([
-                (
-                    "objectiveId",
-                    objective_id.map_or_else(String::new, ToString::to_string),
-                ),
-                ("error", error.to_string()),
+                ("detail", detail.to_string()),
             ]),
         );
     }
 }
 
-/// Decides whether an objective has work to start now, from durable ledger state only.
+/// The latest scheduled time in `(since, now]`, if any; several missed times collapse into one.
 #[must_use]
-pub fn decide_due(
+pub fn due_slot(
     objective: &ObjectiveDefinition,
-    ledger: &ObjectiveLedgerState,
+    since: DateTime<Utc>,
     now: DateTime<Utc>,
-) -> Option<CycleStart> {
-    if !objective.enabled || ledger.lifecycle == ObjectiveLifecycle::Retired {
+) -> Option<DateTime<Utc>> {
+    if !objective.enabled {
         return None;
     }
-    if let Some(active) = &ledger.active_cycle {
-        return (!active.lease_is_live(now)).then_some(CycleStart::Resume);
-    }
-    if ledger
-        .failure_backoff_until()
-        .is_some_and(|until| now < until)
-    {
+    let next = objective.schedule.next_after(since)?;
+    if next > now {
         return None;
     }
-    let slot = match ledger.last_scheduled_for {
-        // Baseline cycle for a new objective. Anchored to the ledger's creation so retries of a
-        // failed baseline count against the same slot.
-        None => Some(truncate_to_minute(ledger.created_at)),
-        Some(last) => objective
-            .schedule
-            .next_after(last)
-            .filter(|next| *next <= now)
-            .and_then(|next| objective.schedule.latest_at_or_before(now, next)),
-    }?;
-    Some(CycleStart::New {
-        scheduled_for: Some(slot),
-    })
+    objective.schedule.latest_at_or_before(now, next)
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::Duration;
-    use reili_core::work::{
-        ActiveCycle, CyclePhase, CycleRecord, CycleResult, ObjectiveLedgerState,
-    };
-
-    use super::decide_due;
-    use crate::objective::cycle::CycleStart;
+    use super::due_slot;
     use crate::objective::testing::at;
     use crate::objective::tests_support::sample_objective;
 
     #[test]
-    fn first_cycle_runs_immediately_as_baseline() {
+    fn runs_at_scheduled_times_only() {
+        // every 6h in JST: 03:00Z, 09:00Z, 15:00Z, 21:00Z
         let objective = sample_objective("checkout");
-        let ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T01:00:00Z"));
 
         assert_eq!(
-            decide_due(&objective, &ledger, at("2026-10-15T01:00:30Z")),
-            Some(CycleStart::New {
-                scheduled_for: Some(at("2026-10-15T01:00:00Z")),
-            })
+            due_slot(
+                &objective,
+                at("2026-10-15T02:59:00Z"),
+                at("2026-10-15T03:00:30Z")
+            ),
+            Some(at("2026-10-15T03:00:00Z"))
+        );
+        assert_eq!(
+            due_slot(
+                &objective,
+                at("2026-10-15T03:00:30Z"),
+                at("2026-10-15T03:01:30Z")
+            ),
+            None
         );
     }
 
     #[test]
-    fn coalesces_missed_slots_into_latest() {
+    fn collapses_times_missed_between_ticks() {
         let objective = sample_objective("checkout");
-        let mut ledger = ObjectiveLedgerState::new(&objective, at("2026-10-14T00:00:00Z"));
-        // every 6h in JST: 03:00Z, 09:00Z, 15:00Z, 21:00Z
-        ledger.last_scheduled_for = Some(at("2026-10-14T03:00:00Z"));
 
         assert_eq!(
-            decide_due(&objective, &ledger, at("2026-10-15T01:00:00Z")),
-            Some(CycleStart::New {
-                scheduled_for: Some(at("2026-10-14T21:00:00Z")),
-            })
-        );
-        ledger.last_scheduled_for = Some(at("2026-10-14T21:00:00Z"));
-        assert_eq!(
-            decide_due(&objective, &ledger, at("2026-10-15T01:00:00Z")),
-            None
+            due_slot(
+                &objective,
+                at("2026-10-14T02:00:00Z"),
+                at("2026-10-15T01:00:00Z")
+            ),
+            Some(at("2026-10-14T21:00:00Z"))
         );
     }
 
@@ -390,77 +225,14 @@ mod tests {
     fn disabled_objectives_never_run() {
         let mut objective = sample_objective("checkout");
         objective.enabled = false;
-        let ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
 
         assert_eq!(
-            decide_due(&objective, &ledger, at("2026-10-15T01:00:00Z")),
-            None
-        );
-    }
-
-    #[test]
-    fn resumes_only_after_lease_expiry() {
-        let objective = sample_objective("checkout");
-        let mut ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
-        ledger.active_cycle = Some(ActiveCycle {
-            run_id: "r1".to_string(),
-            scheduled_for: None,
-            started_at: at("2026-10-15T00:00:00Z"),
-            attempt: 1,
-            phase: CyclePhase::Working,
-            lease_holder: "old".to_string(),
-            lease_expires_at: at("2026-10-15T00:15:00Z"),
-            pending_notifications: Vec::new(),
-            pending_knowledge: Vec::new(),
-            summary: String::new(),
-            no_new_findings: false,
-            llm_tokens: 0,
-        });
-
-        assert_eq!(
-            decide_due(&objective, &ledger, at("2026-10-15T00:10:00Z")),
-            None
-        );
-        assert_eq!(
-            decide_due(&objective, &ledger, at("2026-10-15T00:16:00Z")),
-            Some(CycleStart::Resume)
-        );
-    }
-
-    #[test]
-    fn backoff_delays_retries() {
-        let objective = sample_objective("checkout");
-        let mut ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
-        assert!(decide_due(&objective, &ledger, at("2026-10-15T04:00:00Z")).is_some());
-
-        ledger.record_cycle(CycleRecord {
-            run_id: "r".to_string(),
-            scheduled_for: None,
-            started_at: at("2026-10-15T04:00:00Z"),
-            finished_at: at("2026-10-15T04:00:00Z"),
-            attempts: 1,
-            result: CycleResult::Failed {
-                reason: "x".to_string(),
-            },
-            llm_tokens: 0,
-            summary: String::new(),
-            touched_items: Vec::new(),
-        });
-        assert_eq!(
-            decide_due(
+            due_slot(
                 &objective,
-                &ledger,
-                at("2026-10-15T04:00:00Z") + Duration::minutes(2)
+                at("2026-10-15T02:59:00Z"),
+                at("2026-10-15T03:00:30Z")
             ),
             None
-        );
-        assert!(
-            decide_due(
-                &objective,
-                &ledger,
-                at("2026-10-15T04:00:00Z") + Duration::minutes(6)
-            )
-            .is_some()
         );
     }
 }

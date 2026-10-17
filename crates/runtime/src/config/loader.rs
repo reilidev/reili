@@ -2699,7 +2699,7 @@ enabled = true
 
 [objectives.budget]
 max_cycle_minutes = 20
-max_llm_tokens_per_day = 4000000
+max_llm_tokens_per_cycle = 400000
 "#;
 
     #[test]
@@ -2714,7 +2714,7 @@ max_llm_tokens_per_day = 4000000
         assert_eq!(objective.id.as_str(), "checkout-reliability");
         assert_eq!(objective.schedule.timezone_name(), "Asia/Tokyo");
         assert_eq!(objective.budget.max_cycle_duration_secs, 1_200);
-        assert_eq!(objective.budget.max_llm_tokens_per_day, 4_000_000);
+        assert_eq!(objective.budget.max_llm_tokens_per_cycle, 400_000);
         let Some(WorkStateConfig::GitHub(work_state)) = config.work_state else {
             panic!("expected the GitHub work state backend");
         };

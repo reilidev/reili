@@ -1,10 +1,11 @@
-//! Learn: save screened knowledge drafts to the Canvas memory, never the same fact twice.
+//! Learn: save screened knowledge drafts to the Canvas memory, never a fact it already holds.
 
 use reili_core::messaging::slack::{AppendSlackCanvasMemoryInput, SlackCanvasMemoryVisibility};
-use reili_core::objective::{ObjectiveDefinition, stable_fingerprint};
-use reili_core::work::{ActiveCycle, StoredLedger};
+use reili_core::objective::ObjectiveDefinition;
+use reili_core::work::KnowledgeDraft;
 
-use super::{ObjectiveCycleError, ObjectiveCycleRunner};
+use super::ObjectiveCycleRunner;
+use super::observe::Observed;
 
 const MAX_FACTS_PER_CYCLE: usize = 5;
 
@@ -12,22 +13,21 @@ impl ObjectiveCycleRunner {
     pub(super) async fn learn(
         &self,
         objective: &ObjectiveDefinition,
-        ledger: &StoredLedger,
-        active: &ActiveCycle,
-    ) -> Result<StoredLedger, ObjectiveCycleError> {
-        let Some(canvas) = self
-            .deps
-            .task_resources
-            .canvas_memory_port
-            .as_ref()
-            .filter(|_| objective.permissions.save_knowledge)
-        else {
-            return Ok(ledger.clone());
+        run_id: &str,
+        observed: &Observed,
+        drafts: &[KnowledgeDraft],
+    ) {
+        let Some(canvas) = self.deps.task_resources.canvas_memory_port.as_ref() else {
+            return;
         };
-        let mut learned = Vec::new();
-        for draft in active.pending_knowledge.iter().take(MAX_FACTS_PER_CYCLE) {
-            let fingerprint = stable_fingerprint(&draft.fact.to_lowercase());
-            if ledger.state.has_learned(&fingerprint) {
+        let mut known: Vec<String> = observed
+            .memories
+            .iter()
+            .map(|memory| normalize(&memory.fact))
+            .collect();
+        for draft in drafts.iter().take(MAX_FACTS_PER_CYCLE) {
+            let fact = normalize(&draft.fact);
+            if known.contains(&fact) {
                 continue;
             }
             let result = canvas
@@ -37,39 +37,31 @@ impl ObjectiveCycleRunner {
                     } else {
                         SlackCanvasMemoryVisibility::Channel
                     },
-                    channel_id: objective.report.channel_id.clone(),
+                    channel_id: objective.report_channel_id.clone(),
                     channel_name: None,
                     source_message_ts: String::new(),
-                    source_url: Some(ledger.record.url.clone()),
+                    source_url: None,
                     fact: draft.fact.clone(),
                     evidence: draft.evidence.clone(),
                     scope: draft.scope.clone(),
                 })
                 .await;
             match result {
-                Ok(()) => learned.push(fingerprint),
+                Ok(()) => known.push(fact),
                 Err(error) => self.log(
                     "objective_cycle_learn_failed",
                     objective,
-                    active,
+                    run_id,
                     Some(&error.message),
                 ),
             }
         }
-        if learned.is_empty() {
-            return Ok(ledger.clone());
-        }
-        let (saved, ()) = self
-            .deps
-            .store
-            .mutate_ledger(ledger, |state| {
-                for fingerprint in &learned {
-                    if !state.has_learned(fingerprint) {
-                        state.remember_learned(fingerprint.clone());
-                    }
-                }
-            })
-            .await?;
-        Ok(saved)
     }
+}
+
+fn normalize(fact: &str) -> String {
+    fact.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }

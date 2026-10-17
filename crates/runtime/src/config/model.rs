@@ -224,7 +224,7 @@ pub enum WorkStateConfig {
     GitHub(GitHubWorkStateBackendConfig),
 }
 
-/// Dedicated GitHub repository for objective Work State, written with a down-scoped App token.
+/// The GitHub repository the team tracks its work in, written with a down-scoped App token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitHubWorkStateBackendConfig {
     pub repository: String,
@@ -239,7 +239,6 @@ pub struct GitHubWorkStateBackendConfig {
 pub struct AutonomyConfig {
     pub tick_interval_seconds: u64,
     pub max_concurrent_cycles: u32,
-    pub lease_minutes: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -365,7 +364,6 @@ mod tests {
             autonomy: super::AutonomyConfig {
                 tick_interval_seconds: 60,
                 max_concurrent_cycles: 1,
-                lease_minutes: 15,
             },
         };
 
@@ -446,7 +444,6 @@ mod tests {
             autonomy: super::AutonomyConfig {
                 tick_interval_seconds: 60,
                 max_concurrent_cycles: 1,
-                lease_minutes: 15,
             },
         }
     }
