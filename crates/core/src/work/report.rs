@@ -10,8 +10,9 @@ use super::item::{Severity, WorkItemKind, WorkItemStatus};
 pub struct WorkItemProposal {
     /// Stable de-duplication key; reuse the key of an existing work item for the same problem.
     pub key: String,
+    /// Record key of the existing work item for the same problem, as shown in the brief.
     #[serde(default)]
-    pub existing_issue_number: Option<u64>,
+    pub existing_record: Option<String>,
     pub title: String,
     pub kind: WorkItemKind,
     pub severity: Severity,

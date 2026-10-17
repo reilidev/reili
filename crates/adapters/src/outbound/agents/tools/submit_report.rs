@@ -91,7 +91,7 @@ impl Tool for SubmitInvestigationReportTool {
     type Output = String;
 
     fn description(&self) -> String {
-        "Submit the final structured report for this objective cycle. Call exactly once, at the end. Reili screens it with its report policy and persists it to GitHub Issues: cited evidence ids must exist in `evidence`, and `dismissed` is set only by humans.".to_string()
+        "Submit the final structured report for this objective cycle. Call exactly once, at the end. Reili screens it with its report policy and persists it to the Work State backend: cited evidence ids must exist in `evidence`, and `dismissed` is set only by humans.".to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -193,7 +193,7 @@ fn work_item_schema() -> Value {
         "type": "object",
         "properties": {
             "key": { "type": "string", "description": "Stable dedupe key such as `checkout-api:db-pool-timeouts`; reuse the key of an existing work item for the same problem." },
-            "existing_issue_number": { "type": "integer" },
+            "existing_record": { "type": "string", "description": "Record key of the existing work item for this problem, exactly as shown in the brief (e.g. `#12`)." },
             "title": { "type": "string" },
             "kind": { "type": "string", "enum": ["risk", "incident", "improvement", "toil", "security", "cost"] },
             "severity": { "type": "string", "enum": ["critical", "high", "medium", "low"] },

@@ -28,6 +28,6 @@ pub use report::{InvestigationReport, KnowledgeCandidate, WorkItemProposal};
 #[cfg(any(test, feature = "test-support"))]
 pub use repository::MockWorkStateRepositoryPort;
 pub use repository::{
-    IssueRef, StoredLedger, StoredWorkItem, WorkStateComment, WorkStateCommentKind, WorkStateError,
-    WorkStateRepositoryPort,
+    RecordRef, StoredLedger, StoredWorkItem, WorkStateComment, WorkStateCommentKind,
+    WorkStateError, WorkStateRepositoryPort,
 };

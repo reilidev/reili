@@ -1,10 +1,10 @@
 //! One objective cycle: Observe → Plan/Investigate (agent) → Decide → Report → Learn.
 //!
-//! Durability: every phase boundary is checkpointed in the objective ledger (a GitHub Issue). A cycle
+//! Durability: every phase boundary is checkpointed in the objective ledger record. A cycle
 //! holds a time-limited lease that is renewed while the agent runs; if the process dies, the lease
 //! expires and the next scheduler tick resumes the cycle. Phases after Decide never re-run the
-//! agent, so a crash during reporting does not repeat (or pay for) the investigation. GitHub
-//! offers no transactions, so these are best-effort, at-least-once semantics: a crash between a
+//! agent, so a crash during reporting does not repeat (or pay for) the investigation. Work State
+//! backends offer no transactions, so these are best-effort, at-least-once semantics: a crash between a
 //! work item write and the ledger checkpoint re-runs the investigation, whose results merge into
 //! the same work items by stable key instead of creating duplicates.
 
@@ -533,18 +533,18 @@ impl ObjectiveCycleRunner {
             now,
             report,
         };
-        let mut touched: Vec<u64> = Vec::new();
+        let mut touched: Vec<String> = Vec::new();
         let mut skipped = Vec::new();
         for change in &changes {
             match change {
                 PlannedChange::Update {
-                    issue_number,
+                    record_key,
                     proposal,
                 } => {
                     let Some(item) = observed
                         .items
                         .iter()
-                        .find(|item| item.issue.number == *issue_number)
+                        .find(|item| item.record.key == *record_key)
                     else {
                         continue;
                     };
@@ -555,7 +555,7 @@ impl ObjectiveCycleRunner {
                         .await?;
                     self.append_cycle_log(&saved, active, proposal_log(proposal))
                         .await?;
-                    touched.push(saved.issue.number);
+                    touched.push(saved.record.key.clone());
                 }
                 PlannedChange::Create { proposal } => {
                     let Some(state) = new_work_item_state(objective, proposal, &context) else {
@@ -564,7 +564,7 @@ impl ObjectiveCycleRunner {
                     let saved = self.deps.store.create_work_item_once(&state).await?;
                     self.append_cycle_log(&saved, active, proposal_log(proposal))
                         .await?;
-                    touched.push(saved.issue.number);
+                    touched.push(saved.record.key.clone());
                 }
                 PlannedChange::Skipped { key, reason } => {
                     skipped.push(format!("`{key}`: {reason}"));
@@ -572,7 +572,7 @@ impl ObjectiveCycleRunner {
             }
         }
         for item in observed.items.iter().filter(|item| {
-            !item.state.pending_feedback().is_empty() && !touched.contains(&item.issue.number)
+            !item.state.pending_feedback().is_empty() && !touched.contains(&item.record.key)
         }) {
             let run_id = active.run_id.clone();
             let saved = self
@@ -618,7 +618,7 @@ impl ObjectiveCycleRunner {
                 .store
                 .repository()
                 .append_comment(
-                    &ledger.issue,
+                    &ledger.record,
                     WorkStateComment {
                         kind: WorkStateCommentKind::CycleLog,
                         body: format!(
@@ -672,7 +672,7 @@ impl ObjectiveCycleRunner {
             .store
             .repository()
             .append_comment(
-                &item.issue,
+                &item.record,
                 WorkStateComment {
                     kind: WorkStateCommentKind::CycleLog,
                     body: format!("Run `{}`: {body}", active.run_id),
@@ -703,14 +703,14 @@ impl ObjectiveCycleRunner {
                     item.state.notification.last_digest.as_deref()
                         != Some(notification_digest(item).as_str())
                 })
-                .map(|item| item.issue.number),
+                .map(|item| item.record.key.clone()),
         );
         let decision = compose_report(&ComposeReportInput {
             objective,
             ledger: &ledger.state,
-            ledger_url: &ledger.issue.url,
+            ledger_url: &ledger.record.url,
             items: &items,
-            candidate_numbers: &candidates,
+            candidate_keys: &candidates,
             summary: &active.summary,
             run_id: &active.run_id,
             now,
@@ -718,7 +718,7 @@ impl ObjectiveCycleRunner {
 
         let mut posted_key = None;
         match decision {
-            ReportDecision::Post { text, item_numbers } if objective.permissions.post_reports => {
+            ReportDecision::Post { text, item_keys } if objective.permissions.post_reports => {
                 let key = report_key(objective.id.as_str(), &active.run_id);
                 let already = self
                     .deps
@@ -740,7 +740,7 @@ impl ObjectiveCycleRunner {
                 }
                 for item in items
                     .iter()
-                    .filter(|item| item_numbers.contains(&item.issue.number))
+                    .filter(|item| item_keys.contains(&item.record.key))
                 {
                     let digest = notification_digest(item);
                     self.deps
@@ -814,7 +814,7 @@ impl ObjectiveCycleRunner {
                     channel_id: objective.report.channel_id.clone(),
                     channel_name: None,
                     source_message_ts: String::new(),
-                    source_url: Some(ledger.issue.url.clone()),
+                    source_url: Some(ledger.record.url.clone()),
                     fact: draft.fact.clone(),
                     evidence: draft.evidence.clone(),
                     scope: draft.scope.clone(),
@@ -930,15 +930,15 @@ impl ObjectiveCycleRunner {
         let message = match result {
             CycleResult::Abandoned { reason } => format!(
                 "*Objective `{}`*: a cycle was abandoned — {reason}. Reili will try again at the next scheduled time. <{}|objective ledger>",
-                objective.id, ledger.issue.url
+                objective.id, ledger.record.url
             ),
             CycleResult::BudgetExhausted { reason } => format!(
                 "*Objective `{}`*: a cycle stopped on its budget — {reason}. Partial results were not recorded as findings. <{}|objective ledger>",
-                objective.id, ledger.issue.url
+                objective.id, ledger.record.url
             ),
             CycleResult::Skipped { reason } if reason.contains("budget") => format!(
                 "*Objective `{}`*: skipped a cycle — {reason}. <{}|objective ledger>",
-                objective.id, ledger.issue.url
+                objective.id, ledger.record.url
             ),
             _ => return,
         };

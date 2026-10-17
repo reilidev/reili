@@ -272,7 +272,11 @@ GitHub restrictions:
 Everything in this section applies only when `[[objectives]]` are configured (see
 [autonomy.md](./autonomy.md)).
 
-GitHub Work State (the one write exception):
+Work State writes are the one write exception. Exactly one backend is configured
+(`[work_state.<backend>]`); GitHub Issues is the only backend today. Any future backend is held
+to the same rule: writes confined to one dedicated project, nothing else.
+
+GitHub Work State (`[work_state.github]`):
 
 - Reili writes issues, comments, and labels only in the repository named by
   `[work_state.github].repository`

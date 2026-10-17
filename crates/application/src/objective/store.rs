@@ -1,4 +1,4 @@
-//! Conflict-tolerant access to Work State. GitHub Issues offer no transactions, so every write is
+//! Conflict-tolerant access to Work State. Backends offer no transactions, so every write is
 //! a read-modify-write guarded by a revision number; on conflict the mutation is re-applied to the
 //! freshly read state. Creates are followed by a re-listing to collapse racing duplicates.
 
@@ -28,7 +28,7 @@ impl WorkStateStore {
     }
 
     /// Returns the objective's ledger, creating it when missing. If two instances created a ledger
-    /// concurrently, the lowest issue number wins and the other is closed as a duplicate.
+    /// concurrently, the oldest record wins and the other is closed as a duplicate.
     pub async fn ensure_ledger(
         &self,
         objective: &ObjectiveDefinition,
@@ -46,9 +46,9 @@ impl WorkStateStore {
             .find_objective_ledger(&objective.id)
             .await?
             .unwrap_or_else(|| created.clone());
-        if canonical.issue.number != created.issue.number {
+        if canonical.record.key != created.record.key {
             self.repository
-                .close_duplicate(&created.issue, &canonical.issue)
+                .close_duplicate(&created.record, &canonical.record)
                 .await?;
         }
         Ok(canonical)
@@ -71,7 +71,7 @@ impl WorkStateStore {
             let result = mutate(&mut next);
             match self
                 .repository
-                .save_objective_ledger(&current.issue, current.state.revision, &next)
+                .save_objective_ledger(&current.record, current.state.revision, &next)
                 .await
             {
                 Ok(saved) => return Ok((saved, result)),
@@ -118,7 +118,7 @@ impl WorkStateStore {
             next.enforce_limits();
             match self
                 .repository
-                .save_work_item(&current.issue, current.state.revision, &next)
+                .save_work_item(&current.record, current.state.revision, &next)
                 .await
             {
                 Ok(saved) => return Ok(saved),
@@ -129,11 +129,11 @@ impl WorkStateStore {
                         .list_work_items(&current.state.objective_id)
                         .await?
                         .into_iter()
-                        .find(|candidate| candidate.issue.number == current.issue.number)
+                        .find(|candidate| candidate.record.key == current.record.key)
                         .ok_or_else(|| {
                             WorkStateError::Other(reili_core::error::PortError::new(format!(
-                                "work item #{} disappeared",
-                                current.issue.number
+                                "work item {} disappeared",
+                                current.record.key
                             )))
                         })?;
                 }
@@ -147,7 +147,7 @@ impl WorkStateStore {
 
     /// Creates a work item unless one with the same key already exists. After creating, the
     /// objective's items are listed again (the listing API is strongly consistent, unlike search) and
-    /// racing duplicates are closed in favour of the lowest issue number.
+    /// racing duplicates are closed in favour of the oldest record.
     pub async fn create_work_item_once(
         &self,
         state: &WorkItemState,
@@ -162,20 +162,20 @@ impl WorkStateStore {
         let mut state = state.clone();
         state.enforce_limits();
         let created = self.repository.create_work_item(&state).await?;
-        let mut same_key: Vec<StoredWorkItem> = self
+        let same_key: Vec<StoredWorkItem> = self
             .repository
             .list_work_items(&state.objective_id)
             .await?
             .into_iter()
             .filter(|item| item.state.key == state.key)
             .collect();
-        same_key.sort_by_key(|item| item.issue.number);
+        // Listing is in creation order, so the oldest record wins.
         let Some(canonical) = same_key.first().cloned() else {
             return Ok(created);
         };
         for duplicate in same_key.iter().skip(1) {
             self.repository
-                .close_duplicate(&duplicate.issue, &canonical.issue)
+                .close_duplicate(&duplicate.record, &canonical.record)
                 .await?;
         }
         Ok(canonical)

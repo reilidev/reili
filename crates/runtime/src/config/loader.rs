@@ -786,6 +786,7 @@ mod tests {
     use crate::config::file::parse_file_config;
     use crate::config::model::{
         JudgeProviderConfig, LlmProviderConfig, SlackConnectionMode, WebSearchProviderConfig,
+        WorkStateConfig,
     };
 
     const TEST_PATH: &str = "/test/reili.toml";
@@ -2714,7 +2715,9 @@ max_llm_tokens_per_day = 4000000
         assert_eq!(objective.schedule.timezone_name(), "Asia/Tokyo");
         assert_eq!(objective.budget.max_cycle_duration_secs, 1_200);
         assert_eq!(objective.budget.max_llm_tokens_per_day, 4_000_000);
-        let work_state = config.work_state.expect("work state");
+        let Some(WorkStateConfig::GitHub(work_state)) = config.work_state else {
+            panic!("expected the GitHub work state backend");
+        };
         assert_eq!(work_state.repository, "example-org/reili-work");
         assert_eq!(work_state.app_id, "12345", "defaults to the connector App");
         assert!(work_state.private_key.expose().contains('\n'));

@@ -17,7 +17,7 @@ use reili_core::task::TaskResources;
 use reili_core::work::WorkStateRepositoryPort;
 
 use super::RuntimeBootstrapError;
-use crate::config::{AppConfig, AutonomyConfig};
+use crate::config::{AppConfig, AutonomyConfig, WorkStateConfig};
 use reili_core::objective::ObjectiveDefinition;
 
 pub(crate) struct BuildObjectiveSchedulerInput<'a> {
@@ -44,15 +44,7 @@ pub(crate) fn build_objective_scheduler(
     let Some(work_state) = input.config.work_state.as_ref() else {
         return Ok(None);
     };
-    let repository: Arc<dyn WorkStateRepositoryPort> =
-        Arc::new(GitHubWorkStateRepository::new(&GitHubWorkStateConfig {
-            repository: work_state.repository.clone(),
-            app_id: work_state.app_id.clone(),
-            private_key: work_state.private_key.clone(),
-            installation_id: work_state.installation_id,
-            api_base_url: work_state.api_base_url.clone(),
-            web_base_url: work_state.web_base_url.clone(),
-        })?);
+    let repository = build_work_state_repository(work_state)?;
     Ok(Some(assemble_objective_scheduler(
         AssembleObjectiveSchedulerInput {
             objectives: input.config.objectives.clone(),
@@ -66,6 +58,23 @@ pub(crate) fn build_objective_scheduler(
             instance_id: instance_id(),
         },
     )))
+}
+
+fn build_work_state_repository(
+    config: &WorkStateConfig,
+) -> Result<Arc<dyn WorkStateRepositoryPort>, RuntimeBootstrapError> {
+    match config {
+        WorkStateConfig::GitHub(github) => Ok(Arc::new(GitHubWorkStateRepository::new(
+            &GitHubWorkStateConfig {
+                repository: github.repository.clone(),
+                app_id: github.app_id.clone(),
+                private_key: github.private_key.clone(),
+                installation_id: github.installation_id,
+                api_base_url: github.api_base_url.clone(),
+                web_base_url: github.web_base_url.clone(),
+            },
+        )?)),
+    }
 }
 
 pub(crate) struct AssembleObjectiveSchedulerInput<'a> {

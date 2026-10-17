@@ -218,9 +218,15 @@ pub struct OtlpTracingConfig {
     pub service_name: String,
 }
 
+/// Backend that stores objective Work State. Exactly one is configured, as `[work_state.<backend>]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkStateConfig {
+    GitHub(GitHubWorkStateBackendConfig),
+}
+
 /// Dedicated GitHub repository for objective Work State, written with a down-scoped App token.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkStateConfig {
+pub struct GitHubWorkStateBackendConfig {
     pub repository: String,
     pub app_id: String,
     pub installation_id: u32,

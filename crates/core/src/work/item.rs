@@ -1,5 +1,5 @@
 //! A Work Item is one durable unit of continuing work (a risk, incident pattern, or improvement
-//! opportunity) persisted as a GitHub Issue in the management repository.
+//! opportunity) persisted as one record in the Work State backend.
 
 use std::fmt;
 
@@ -220,7 +220,7 @@ pub struct StatusChange {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeedbackNote {
-    pub comment_id: u64,
+    pub comment_id: String,
     pub author: String,
     pub at: DateTime<Utc>,
     pub text: String,
@@ -278,7 +278,8 @@ pub struct WorkItemState {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
-    pub last_processed_comment_id: Option<u64>,
+    /// Backend comment id of the last human comment already folded into this state.
+    pub last_processed_comment_id: Option<String>,
     #[serde(default)]
     pub notification: NotificationState,
     #[serde(default)]
@@ -308,8 +309,8 @@ impl WorkItemState {
         self.updated_at = at;
     }
 
-    /// Keeps persisted state bounded so it always fits in a GitHub issue body. The newest
-    /// entries win; old evidence remains reachable through issue comments.
+    /// Keeps persisted state bounded so it always fits in a backend record (e.g. a GitHub issue
+    /// body). The newest entries win; old evidence remains reachable through record comments.
     pub fn enforce_limits(&mut self) {
         keep_last(&mut self.hypotheses, MAX_HYPOTHESES);
         keep_last(&mut self.findings, MAX_FINDINGS);

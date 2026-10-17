@@ -38,7 +38,7 @@ pub enum ReportDecision {
     },
     Post {
         text: String,
-        item_numbers: Vec<u64>,
+        item_keys: Vec<String>,
     },
 }
 
@@ -47,7 +47,7 @@ pub struct ComposeReportInput<'a> {
     pub ledger: &'a ObjectiveLedgerState,
     pub ledger_url: &'a str,
     pub items: &'a [StoredWorkItem],
-    pub candidate_numbers: &'a [u64],
+    pub candidate_keys: &'a [String],
     pub summary: &'a str,
     pub run_id: &'a str,
     pub now: DateTime<Utc>,
@@ -58,7 +58,7 @@ pub fn compose_report(input: &ComposeReportInput<'_>) -> ReportDecision {
     let changed: Vec<&StoredWorkItem> = input
         .items
         .iter()
-        .filter(|item| input.candidate_numbers.contains(&item.issue.number))
+        .filter(|item| input.candidate_keys.contains(&item.record.key))
         .filter(|item| {
             item.state.notification.last_digest.as_deref()
                 != Some(notification_digest(item).as_str())
@@ -95,7 +95,7 @@ pub fn compose_report(input: &ComposeReportInput<'_>) -> ReportDecision {
 
     ReportDecision::Post {
         text: render_report(input, &changed),
-        item_numbers: changed.iter().map(|item| item.issue.number).collect(),
+        item_keys: changed.iter().map(|item| item.record.key.clone()).collect(),
     }
 }
 
@@ -114,19 +114,17 @@ fn render_report(input: &ComposeReportInput<'_>, changed: &[&StoredWorkItem]) ->
         for item in decisions {
             let _ = writeln!(
                 text,
-                "• <{}|#{}> {} — {}",
-                item.issue.url,
-                item.issue.number,
+                "• <{}|{}> {} — {}",
+                item.record.url,
+                item.record.key,
                 item.state.title,
                 item.state
                     .human_decision
                     .as_ref()
-                    .map_or("see issue", |decision| decision.question.as_str())
+                    .map_or("see the work item", |decision| decision.question.as_str())
             );
         }
-        text.push_str(
-            "_Answer on the issue: comment, change its `reili-status:*` label, or close it._\n",
-        );
+        text.push_str("_Answer on the work item: comment there, or change its status._\n");
     }
     let updates: Vec<&&StoredWorkItem> = changed
         .iter()
@@ -137,9 +135,9 @@ fn render_report(input: &ComposeReportInput<'_>, changed: &[&StoredWorkItem]) ->
         for item in updates {
             let _ = writeln!(
                 text,
-                "• <{}|#{}> [{} · {}] {} — {} finding(s)",
-                item.issue.url,
-                item.issue.number,
+                "• <{}|{}> [{} · {}] {} — {} finding(s)",
+                item.record.url,
+                item.record.key,
                 item.state.status.as_str(),
                 item.state.severity.as_str(),
                 item.state.title,
@@ -167,7 +165,7 @@ pub fn report_key(objective_id: &str, run_id: &str) -> String {
 mod tests {
     use chrono::Duration;
     use reili_core::work::{
-        HumanDecisionRequest, IssueRef, ObjectiveLedgerState, StoredWorkItem, WorkItemStatus,
+        HumanDecisionRequest, ObjectiveLedgerState, RecordRef, StoredWorkItem, WorkItemStatus,
         test_support::sample_work_item,
     };
 
@@ -185,8 +183,8 @@ mod tests {
             });
         }
         StoredWorkItem {
-            issue: IssueRef {
-                number,
+            record: RecordRef {
+                key: format!("#{number}"),
                 url: format!("https://github.com/acme/work/issues/{number}"),
             },
             state,
@@ -209,16 +207,16 @@ mod tests {
             ledger: &ledger,
             ledger_url: "https://github.com/acme/work/issues/9",
             items: &items,
-            candidate_numbers: &[1, 2],
+            candidate_keys: &["#1".to_string(), "#2".to_string()],
             summary: "Found a regression.",
             run_id: "run-1",
             now: at("2026-10-15T01:00:00Z"),
         });
 
-        let ReportDecision::Post { text, item_numbers } = decision else {
+        let ReportDecision::Post { text, item_keys } = decision else {
             panic!("expected post");
         };
-        assert_eq!(item_numbers, vec![1]);
+        assert_eq!(item_keys, vec!["#1".to_string()]);
         assert!(text.contains("Needs your decision"));
         assert!(
             !text.contains("<!channel>"),
@@ -237,7 +235,7 @@ mod tests {
             ledger: &ledger,
             ledger_url: "",
             items: &[],
-            candidate_numbers: &[],
+            candidate_keys: &[],
             summary: "No new findings.",
             run_id: "run-1",
             now: at("2026-10-15T01:00:00Z"),
@@ -258,7 +256,7 @@ mod tests {
             ledger: &ledger,
             ledger_url: "",
             items: &items,
-            candidate_numbers: &[1],
+            candidate_keys: &["#1".to_string()],
             summary: "s",
             run_id: "run-1",
             now: at("2026-10-15T00:30:00Z") + Duration::minutes(10),

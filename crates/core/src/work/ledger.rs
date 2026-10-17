@@ -1,5 +1,5 @@
-//! The Objective Ledger is the per-objective durable state (one GitHub Issue per objective): cycle checkpoints and
-//! lease, budget usage, and report de-duplication state.
+//! The Objective Ledger is the per-objective durable state (one Work State record per objective):
+//! cycle checkpoints and lease, budget usage, and report de-duplication state.
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
@@ -69,9 +69,9 @@ pub struct ActiveCycle {
     pub phase: CyclePhase,
     pub lease_holder: String,
     pub lease_expires_at: DateTime<Utc>,
-    /// Work item issue numbers touched by this cycle and awaiting report.
+    /// Keys of work item records touched by this cycle and awaiting report.
     #[serde(default)]
-    pub pending_notifications: Vec<u64>,
+    pub pending_notifications: Vec<String>,
     /// Gated knowledge awaiting persistence in the Learn phase.
     #[serde(default)]
     pub pending_knowledge: Vec<KnowledgeDraft>,
@@ -129,7 +129,7 @@ pub struct CycleRecord {
     #[serde(default)]
     pub summary: String,
     #[serde(default)]
-    pub touched_items: Vec<u64>,
+    pub touched_items: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

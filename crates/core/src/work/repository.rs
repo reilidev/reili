@@ -1,5 +1,13 @@
-//! Port for durable Work State. The production adapter stores it in GitHub Issues of a single,
-//! explicitly configured management repository.
+//! Port for durable Work State, independent of where records are stored. Each backend (GitHub
+//! Issues today; ticket systems such as JIRA can be added) keeps one record per objective ledger
+//! and per work item in a single, explicitly configured project, and must provide:
+//!
+//! - a stable, human-readable record key (e.g. `#12`, `OPS-123`) and a URL;
+//! - strongly consistent listing by objective, returned in creation order (oldest first);
+//! - a revision stored with the state, checked before every write;
+//! - a status humans can change (label, workflow status, open/closed) mapped to
+//!   [`WorkItemStatus`];
+//! - comments with trusted-author detection and an id usable as a "newer than" cursor.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -12,15 +20,18 @@ use super::ledger::ObjectiveLedgerState;
 use crate::error::PortError;
 use crate::objective::ObjectiveId;
 
+/// Reference to a record in the Work State backend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IssueRef {
-    pub number: u64,
+pub struct RecordRef {
+    /// Stable, human-readable key assigned by the backend (e.g. `#12` for GitHub, `OPS-123` for
+    /// JIRA). Shown to the agent and humans, and used to refer to existing work items.
+    pub key: String,
     pub url: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredLedger {
-    pub issue: IssueRef,
+    pub record: RecordRef,
     pub state: ObjectiveLedgerState,
     /// Free-form human notes preserved verbatim across Reili re-renders.
     pub human_notes: String,
@@ -28,32 +39,32 @@ pub struct StoredLedger {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredWorkItem {
-    pub issue: IssueRef,
+    pub record: RecordRef,
     pub state: WorkItemState,
     pub human_notes: String,
-    /// Status implied by the issue's current labels and open/closed state. Differs from
-    /// `state.status` when a human changed the label or closed/reopened the issue.
+    /// Status implied by the record's human-editable status in the backend. Differs from
+    /// `state.status` when a human changed it (e.g. a label, workflow status, or closing).
     pub observed_status: WorkItemStatus,
-    /// Last time anything on the issue changed (edits, labels, comments).
+    /// Last time anything on the record changed (edits, status, comments).
     pub remote_updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum WorkStateError {
     /// Someone else wrote the record since it was read (optimistic concurrency check failed).
-    #[error("work state conflict on #{issue_number}: expected revision {expected}, found {found}")]
+    #[error("work state conflict on {record}: expected revision {expected}, found {found}")]
     Conflict {
-        issue_number: u64,
+        record: String,
         expected: u64,
         found: u64,
     },
     /// The machine-readable state block is missing or unparseable (e.g. edited by hand).
-    #[error("work state on #{issue_number} is unreadable: {message}")]
-    Corrupted { issue_number: u64, message: String },
+    #[error("work state on {record} is unreadable: {message}")]
+    Corrupted { record: String, message: String },
     /// The backend could not be reached or returned a server error; safe to retry later.
     #[error("work state backend unavailable: {0}")]
     Unavailable(PortError),
-    /// The write was refused by policy (e.g. a repository outside the allowlist).
+    /// The write was refused by policy (e.g. a record outside the configured project).
     #[error("work state write forbidden: {0}")]
     Forbidden(String),
     #[error("work state error: {0}")]
@@ -103,14 +114,15 @@ pub trait WorkStateRepositoryPort: Send + Sync {
 
     /// Re-reads the record and writes `state` with `revision = expected_revision + 1` only if the
     /// stored revision still equals `expected_revision`. This narrows, but cannot eliminate, the
-    /// race window: GitHub offers no conditional writes.
+    /// race window on backends without conditional writes (such as GitHub).
     async fn save_objective_ledger(
         &self,
-        issue: &IssueRef,
+        record: &RecordRef,
         expected_revision: u64,
         state: &ObjectiveLedgerState,
     ) -> Result<StoredLedger, WorkStateError>;
 
+    /// Work items of an objective in creation order (oldest first).
     async fn list_work_items(
         &self,
         objective_id: &ObjectiveId,
@@ -123,28 +135,29 @@ pub trait WorkStateRepositoryPort: Send + Sync {
 
     async fn save_work_item(
         &self,
-        issue: &IssueRef,
+        record: &RecordRef,
         expected_revision: u64,
         state: &WorkItemState,
     ) -> Result<StoredWorkItem, WorkStateError>;
 
     async fn append_comment(
         &self,
-        issue: &IssueRef,
+        record: &RecordRef,
         comment: WorkStateComment,
     ) -> Result<(), WorkStateError>;
 
-    /// Comments not written by Reili, oldest first, with ids greater than `after_comment_id`.
+    /// Comments not written by Reili, oldest first, posted after the comment `after_comment_id`
+    /// (all comments when `None`).
     async fn list_human_comments(
         &self,
-        issue: &IssueRef,
-        after_comment_id: Option<u64>,
+        record: &RecordRef,
+        after_comment_id: Option<String>,
     ) -> Result<Vec<HumanComment>, WorkStateError>;
 
     /// Closes `duplicate` as a duplicate of `canonical` (used after a create race).
     async fn close_duplicate(
         &self,
-        duplicate: &IssueRef,
-        canonical: &IssueRef,
+        duplicate: &RecordRef,
+        canonical: &RecordRef,
     ) -> Result<(), WorkStateError>;
 }

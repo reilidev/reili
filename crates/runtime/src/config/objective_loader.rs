@@ -10,8 +10,8 @@ use reili_core::objective::{
 use super::ConfigError;
 use super::env::{EnvironmentReader, read_required_secret};
 use super::file::FileConfig;
-use super::model::{AutonomyConfig, WorkStateConfig};
-use super::objective_file::ObjectiveFileConfig;
+use super::model::{AutonomyConfig, GitHubWorkStateBackendConfig, WorkStateConfig};
+use super::objective_file::{ObjectiveFileConfig, WorkStateFileConfig, WorkStateGitHubFileConfig};
 use crate::config::SecretString;
 
 const DEFAULT_GITHUB_API_BASE_URL: &str = "https://api.github.com";
@@ -50,15 +50,26 @@ pub(super) fn resolve_work_state(
     env: &dyn EnvironmentReader,
     objectives: &[ObjectiveDefinition],
 ) -> Result<Option<WorkStateConfig>, ConfigError> {
-    let Some(github) = file_config.work_state.github.as_ref() else {
-        if objectives.is_empty() {
-            return Ok(None);
-        }
-        return Err(invalid(
-            "work_state.github",
-            "is required when [[objectives]] are configured: objectives persist their work state as GitHub Issues",
-        ));
-    };
+    let WorkStateFileConfig { github } = &file_config.work_state;
+    match github {
+        Some(github) => Ok(Some(WorkStateConfig::GitHub(resolve_github_work_state(
+            file_config,
+            env,
+            github,
+        )?))),
+        None if objectives.is_empty() => Ok(None),
+        None => Err(invalid(
+            "work_state",
+            "needs exactly one backend section when [[objectives]] are configured (supported: [work_state.github])",
+        )),
+    }
+}
+
+fn resolve_github_work_state(
+    file_config: &FileConfig,
+    env: &dyn EnvironmentReader,
+    github: &WorkStateGitHubFileConfig,
+) -> Result<GitHubWorkStateBackendConfig, ConfigError> {
     let repository = github.repository.trim().to_string();
     let valid_part = |part: &str| {
         !part.is_empty()
@@ -110,7 +121,7 @@ pub(super) fn resolve_work_state(
         ),
     };
     let private_key = read_required_secret(env, &private_key_env, field)?;
-    Ok(Some(WorkStateConfig {
+    Ok(GitHubWorkStateBackendConfig {
         repository,
         app_id,
         installation_id,
@@ -123,7 +134,7 @@ pub(super) fn resolve_work_state(
             .web_base_url
             .clone()
             .unwrap_or_else(|| DEFAULT_GITHUB_WEB_BASE_URL.to_string()),
-    }))
+    })
 }
 
 pub(super) fn resolve_objectives(

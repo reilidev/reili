@@ -14,10 +14,11 @@ use thiserror::Error;
 pub use loader::{ConfigLoadOptions, load_app_config};
 pub use model::{
     AppConfig, AutonomyConfig, BedrockAwsConfig, BedrockLlmConfig, BedrockMantleAuthConfig,
-    BedrockMantleLlmConfig, EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig, LlmConfig,
-    LlmProviderConfig, OpenAiLlmConfig, OtlpTracingConfig, SlackAuthorizationActors,
-    SlackAuthorizationConfig, SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode,
-    VertexAiLlmConfig, WebSearchProviderConfig, WorkStateConfig,
+    BedrockMantleLlmConfig, EsaConfig, GitHubConfig, GitHubWorkStateBackendConfig, JiraConfig,
+    JudgeProviderConfig, LlmConfig, LlmProviderConfig, OpenAiLlmConfig, OtlpTracingConfig,
+    SlackAuthorizationActors, SlackAuthorizationConfig, SlackCanvasMemoryConfig,
+    SlackChannelConfig, SlackConnectionMode, VertexAiLlmConfig, WebSearchProviderConfig,
+    WorkStateConfig,
 };
 
 #[derive(Debug, Error)]

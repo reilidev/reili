@@ -1,4 +1,5 @@
-//! TOML schema for objective-driven autonomy: `[work_state.github]`, `[autonomy]`, and `[[objectives]]`.
+//! TOML schema for objective-driven autonomy: `[work_state.<backend>]`, `[autonomy]`, and
+//! `[[objectives]]`.
 
 use serde::Deserialize;
 
@@ -12,6 +13,7 @@ fn default_timezone() -> String {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+/// One optional section per supported Work State backend; exactly one may be set.
 pub(crate) struct WorkStateFileConfig {
     pub github: Option<WorkStateGitHubFileConfig>,
 }

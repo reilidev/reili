@@ -27,7 +27,7 @@ flowchart TB
         AGENTS["Agents<br/>lead agent · spawned sub-agents ·<br/>connectors · LLM providers"]
         OUTBOUND["Outbound Slack<br/>replies · reactions ·<br/>progress messages"]
         QUEUE["In-memory job queue"]
-        WORK["GitHub Issues Work State"]
+        WORK["Work State backends<br/>(GitHub Issues)"]
     end
 
     subgraph core["crates/core — domain"]
@@ -49,10 +49,10 @@ flowchart TB
 - `crates/application`: use cases and task orchestration — Slack ingress (routing,
   authorization, auto-response gating, enqueue), task execution (worker loop, cancellation),
   progress projection, and objective autonomy (`objective`: scheduler, durable cycle, report policy,
-  decide/dedupe, human-signal reconciliation, Slack reports and commands).
+  decide/dedupe, human-signal reconciliation, Slack reports).
 - `crates/adapters`: inbound Slack parsing and signature verification, outbound Slack Web API
   adapters, the agent stack (lead agent, dynamically spawned sub-agents, connectors, LLM
-  providers), the in-memory job queue, and the GitHub Issues Work State repository.
+  providers), the in-memory job queue, and the Work State backends (GitHub Issues today).
 - `crates/runtime`: config loading (`reili.toml` plus env secrets), dependency wiring in
   `bootstrap`, and the two Slack transports (Socket Mode client and axum HTTP server).
 
@@ -72,8 +72,11 @@ flowchart TB
 - **Cancellation**: the Slack `Cancel` button flows through the interaction handler to an
   in-flight job registry that cancels queued or running tasks.
 - **Objective autonomy**: one provider runner implements both `TaskRunnerPort` (Slack tasks) and
-  `InvestigationRunnerPort` (objective cycles). Durable state lives only in GitHub Issues and the
-  Slack Canvas; see [autonomy.md](./autonomy.md).
+  `InvestigationRunnerPort` (objective cycles). Durable state lives only in the Work State backend
+  (GitHub Issues today) and the Slack Canvas; see [autonomy.md](./autonomy.md).
+- **Pluggable Work State**: `WorkStateRepositoryPort` hides the tracker behind backend-neutral
+  record keys (`#12`, `OPS-123`) and opaque comment cursors. The runtime selects the backend from
+  `[work_state.<backend>]`; see [Work State backends](./autonomy.md#work-state-backends).
 
 For the runtime investigation flow, see the [Architecture section in README.md](../README.md#architecture).
 For contributor workflows and architecture rules, see [DEVELOPERS.md](../DEVELOPERS.md).

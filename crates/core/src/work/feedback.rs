@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HumanComment {
-    pub id: u64,
+    /// Backend comment id; opaque to Reili and only passed back as a cursor.
+    pub id: String,
     pub author: String,
-    /// True when the author is an owner, member, or collaborator of the management repository.
+    /// True when the author is a trusted member of the Work State project (for GitHub: an owner,
+    /// member, or collaborator of the management repository).
     pub author_trusted: bool,
     pub body: String,
     pub created_at: DateTime<Utc>,

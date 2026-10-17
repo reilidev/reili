@@ -7,8 +7,9 @@ and learns reusable facts into the Slack Canvas memory.
 The existing Slack-triggered, single-shot investigations keep working unchanged.
 
 - Objectives live in `reili.toml` (the source of truth for *what* to pursue).
-- Work State lives in GitHub Issues of one dedicated management repository (the source of truth
-  for *what has been done, decided, and is pending*).
+- Work State lives in one configured backend (the source of truth for *what has been done,
+  decided, and is pending*). Today that is GitHub Issues of one dedicated management repository;
+  see [Work State backends](#work-state-backends).
 - Knowledge lives in the Slack Canvas memory (reusable facts).
 - Nothing else is persisted. There is no database; process memory is only a cache.
 
@@ -16,6 +17,7 @@ The existing Slack-triggered, single-shot investigations keep working unchanged.
 
 - [Configuring objectives](#configuring-objectives)
 - [The cycle](#the-cycle)
+- [Work State backends](#work-state-backends)
 - [Work State on GitHub Issues](#work-state-on-github-issues)
 - [Durability and what is not guaranteed](#durability-and-what-is-not-guaranteed)
 - [Report policy](#report-policy)
@@ -28,7 +30,8 @@ The existing Slack-triggered, single-shot investigations keep working unchanged.
 ## Configuring objectives
 
 ```toml
-# Required when [[objectives]] are configured. A dedicated repository for Reili's Work State.
+# Required when [[objectives]] are configured: exactly one [work_state.<backend>] section.
+# Supported backends: github. A dedicated repository for Reili's Work State.
 [work_state.github]
 repository = "acme/reili-work"
 # Optional: App credentials default to [connector.github.app]. Tokens are always down-scoped to
@@ -82,8 +85,8 @@ post_reports = true                   # post reports to report_channel
 ```
 
 Startup fails with a clear message for invalid cron expressions, unknown time zones, channel
-names instead of IDs, duplicate objective IDs, inconsistent budgets, or objectives without
-`[work_state.github]`.
+names instead of IDs, duplicate objective IDs, inconsistent budgets, or objectives without a
+`[work_state.<backend>]` section.
 
 ### Changing, disabling, and removing objectives
 
@@ -132,6 +135,32 @@ flowchart LR
 
 "No new findings" is a normal, quiet outcome: no issue, no Slack post.
 
+## Work State backends
+
+The objective cycle talks to Work State only through the `WorkStateRepositoryPort` trait
+(`crates/core/src/work/repository.rs`), so the tracker that holds ledgers and work items is a
+configuration choice. Records are identified by a backend-specific key that humans recognize
+(`#12` on GitHub; a JIRA backend would use keys such as `OPS-123`) plus a URL, and comment cursors
+are opaque strings.
+
+| Backend | Section | Status |
+|---|---|---|
+| GitHub Issues | `[work_state.github]` | Supported |
+
+A backend must provide:
+
+- listing an objective's ledger and work items **in creation order** from a strongly consistent
+  API (the oldest record wins when racing creates are collapsed);
+- the machine state block with its `revision` number, plus a human-notes area it preserves;
+- a status humans can change (labels, workflow states) that maps onto the work item statuses;
+- comments, with detection of Reili's own comments and of trusted authors;
+- writes confined to one dedicated project, refusing records outside it.
+
+Adding a backend means implementing the port in `crates/adapters`, adding its
+`[work_state.<backend>]` section and a `WorkStateConfig` variant in `crates/runtime/src/config`,
+and one arm in `build_work_state_repository` (`crates/runtime/src/bootstrap/objectives.rs`).
+The application layer does not change.
+
 ## Work State on GitHub Issues
 
 One **objective ledger** issue per objective (`reili:objective`, `reili-objective:<id>`) and one **work item** issue
@@ -169,7 +198,7 @@ GitHub's limit.
   capped at 6 h) and are abandoned after `max_cycle_attempts`.
 - **No duplicates.** Reads use the issue *listing* API filtered by labels (strongly consistent),
   never search, whose index lags. Creates re-list afterwards and close racing duplicates in favour
-  of the lowest issue number.
+  of the oldest record (on GitHub, the lowest issue number).
 - **Conflicts.** Every write re-reads the issue and checks `revision`; on conflict the change is
   re-applied to the fresh state (up to three times).
 - **GitHub unavailable.** Nothing runs without readable Work State; transient errors stop the

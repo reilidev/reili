@@ -79,7 +79,7 @@ fn screen_proposal(
         }
         WorkItemStatus::Dismissed => {
             notes.push(format!(
-                "{label}: `dismissed` is set only by humans (closing the issue as not planned); recorded as `investigating`"
+                "{label}: `dismissed` is set only by humans (in the Work State backend); recorded as `investigating`"
             ));
             WorkItemStatus::Investigating
         }
@@ -144,7 +144,7 @@ pub(crate) mod tests {
     pub(crate) fn proposal(status: HypothesisStatus) -> WorkItemProposal {
         WorkItemProposal {
             key: "checkout:5xx-after-deploy".to_string(),
-            existing_issue_number: None,
+            existing_record: None,
             title: "5xx after deploy".to_string(),
             kind: WorkItemKind::Incident,
             severity: Severity::High,

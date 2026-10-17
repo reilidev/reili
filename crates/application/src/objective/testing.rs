@@ -1,5 +1,5 @@
 //! In-memory test doubles that mimic the semantics the production adapters rely on: GitHub-style
-//! revision checks, label-derived status, human comments, and durability across "restarts"
+//! records (`#<number>` keys), revision checks, label-derived status, human comments, and durability across "restarts"
 //! (a new runner instance sharing the same fake).
 
 use std::collections::BTreeMap;
@@ -20,7 +20,7 @@ use reili_core::messaging::slack::{
 use reili_core::objective::ObjectiveId;
 use reili_core::task::{LlmExecutionMetadata, LlmUsageSnapshot};
 use reili_core::work::{
-    HumanComment, InvestigationReport, IssueRef, ObjectiveLedgerState, StoredLedger,
+    HumanComment, InvestigationReport, ObjectiveLedgerState, RecordRef, StoredLedger,
     StoredWorkItem, WorkItemState, WorkItemStatus, WorkStateComment, WorkStateError,
     WorkStateRepositoryPort,
 };
@@ -241,9 +241,17 @@ impl FakeWorkStateRepository {
         Ok(())
     }
 
-    fn issue_ref(number: u64) -> IssueRef {
-        IssueRef {
-            number,
+    pub(crate) fn number_of(record: &RecordRef) -> u64 {
+        record
+            .key
+            .trim_start_matches('#')
+            .parse()
+            .expect("fake records use `#<number>` keys")
+    }
+
+    fn issue_ref(number: u64) -> RecordRef {
+        RecordRef {
+            key: format!("#{number}"),
             url: format!("https://github.com/acme/reili-work/issues/{number}"),
         }
     }
@@ -251,14 +259,14 @@ impl FakeWorkStateRepository {
     fn to_ledger(issue: &FakeIssue) -> Result<StoredLedger, WorkStateError> {
         let FakeIssueBody::Ledger(json) = &issue.body else {
             return Err(WorkStateError::Corrupted {
-                issue_number: issue.number,
+                record: Self::issue_ref(issue.number).key,
                 message: "not a ledger".to_string(),
             });
         };
         Ok(StoredLedger {
-            issue: Self::issue_ref(issue.number),
+            record: Self::issue_ref(issue.number),
             state: serde_json::from_str(json).map_err(|error| WorkStateError::Corrupted {
-                issue_number: issue.number,
+                record: Self::issue_ref(issue.number).key,
                 message: error.to_string(),
             })?,
             human_notes: issue.human_notes.clone(),
@@ -268,13 +276,13 @@ impl FakeWorkStateRepository {
     fn to_work_item(issue: &FakeIssue) -> Result<StoredWorkItem, WorkStateError> {
         let FakeIssueBody::WorkItem(json) = &issue.body else {
             return Err(WorkStateError::Corrupted {
-                issue_number: issue.number,
+                record: Self::issue_ref(issue.number).key,
                 message: "not a work item".to_string(),
             });
         };
         let state: WorkItemState =
             serde_json::from_str(json).map_err(|error| WorkStateError::Corrupted {
-                issue_number: issue.number,
+                record: Self::issue_ref(issue.number).key,
                 message: error.to_string(),
             })?;
         let observed_status = match issue.observed_status {
@@ -289,7 +297,7 @@ impl FakeWorkStateRepository {
             observed_status
         };
         Ok(StoredWorkItem {
-            issue: Self::issue_ref(issue.number),
+            record: Self::issue_ref(issue.number),
             state,
             human_notes: issue.human_notes.clone(),
             observed_status,
@@ -362,7 +370,7 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
 
     async fn save_objective_ledger(
         &self,
-        issue: &IssueRef,
+        record: &RecordRef,
         expected_revision: u64,
         ledger: &ObjectiveLedgerState,
     ) -> Result<StoredLedger, WorkStateError> {
@@ -371,7 +379,10 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
         Self::check_available(&state)?;
         if state.injected_conflicts > 0 {
             state.injected_conflicts -= 1;
-            let stored = state.issues.get_mut(&issue.number).expect("issue");
+            let stored = state
+                .issues
+                .get_mut(&Self::number_of(record))
+                .expect("issue");
             let FakeIssueBody::Ledger(json) = &stored.body else {
                 panic!("not a ledger");
             };
@@ -379,16 +390,19 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
             current.revision += 1;
             stored.body = FakeIssueBody::Ledger(serde_json::to_string(&current).expect("json"));
             return Err(WorkStateError::Conflict {
-                issue_number: issue.number,
+                record: record.key.clone(),
                 expected: expected_revision,
                 found: current.revision,
             });
         }
-        let stored = state.issues.get_mut(&issue.number).expect("issue");
+        let stored = state
+            .issues
+            .get_mut(&Self::number_of(record))
+            .expect("issue");
         let current = Self::to_ledger(stored)?;
         if current.state.revision != expected_revision {
             return Err(WorkStateError::Conflict {
-                issue_number: issue.number,
+                record: record.key.clone(),
                 expected: expected_revision,
                 found: current.state.revision,
             });
@@ -457,18 +471,21 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
 
     async fn save_work_item(
         &self,
-        issue: &IssueRef,
+        record: &RecordRef,
         expected_revision: u64,
         item: &WorkItemState,
     ) -> Result<StoredWorkItem, WorkStateError> {
         let now = self.now();
         let mut state = self.state.lock().expect("lock");
         Self::check_available(&state)?;
-        let stored = state.issues.get_mut(&issue.number).expect("issue");
+        let stored = state
+            .issues
+            .get_mut(&Self::number_of(record))
+            .expect("issue");
         let current = Self::to_work_item(stored)?;
         if current.state.revision != expected_revision {
             return Err(WorkStateError::Conflict {
-                issue_number: issue.number,
+                record: record.key.clone(),
                 expected: expected_revision,
                 found: current.state.revision,
             });
@@ -486,7 +503,7 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
 
     async fn append_comment(
         &self,
-        issue: &IssueRef,
+        record: &RecordRef,
         comment: WorkStateComment,
     ) -> Result<(), WorkStateError> {
         let now = self.now();
@@ -495,7 +512,10 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
         let id = state.next_comment_id;
         state.next_comment_id += 1;
         state.writes += 1;
-        let stored = state.issues.get_mut(&issue.number).expect("issue");
+        let stored = state
+            .issues
+            .get_mut(&Self::number_of(record))
+            .expect("issue");
         stored.comments.push(FakeComment {
             id,
             author: "reili[bot]".to_string(),
@@ -509,26 +529,31 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
 
     async fn list_human_comments(
         &self,
-        issue: &IssueRef,
-        after_comment_id: Option<u64>,
+        record: &RecordRef,
+        after_comment_id: Option<String>,
     ) -> Result<Vec<HumanComment>, WorkStateError> {
         let state = self.state.lock().expect("lock");
         Self::check_available(&state)?;
-        let stored = state.issues.get(&issue.number).expect("issue");
+        let stored = state.issues.get(&Self::number_of(record)).expect("issue");
         Ok(stored
             .comments
             .iter()
             .filter(|comment| !comment.by_reili)
-            .filter(|comment| after_comment_id.is_none_or(|after| comment.id > after))
+            .filter(|comment| {
+                after_comment_id
+                    .as_deref()
+                    .and_then(|after| after.parse::<u64>().ok())
+                    .is_none_or(|after| comment.id > after)
+            })
             .map(|comment| HumanComment {
-                id: comment.id,
+                id: comment.id.to_string(),
                 author: comment.author.clone(),
                 author_trusted: comment.trusted,
                 body: comment.body.clone(),
                 created_at: stored.updated_at,
                 url: format!(
                     "{}#issuecomment-{}",
-                    Self::issue_ref(issue.number).url,
+                    Self::issue_ref(Self::number_of(record)).url,
                     comment.id
                 ),
             })
@@ -537,14 +562,17 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
 
     async fn close_duplicate(
         &self,
-        duplicate: &IssueRef,
-        canonical: &IssueRef,
+        duplicate: &RecordRef,
+        canonical: &RecordRef,
     ) -> Result<(), WorkStateError> {
         let mut state = self.state.lock().expect("lock");
         Self::check_available(&state)?;
-        let stored = state.issues.get_mut(&duplicate.number).expect("issue");
+        let stored = state
+            .issues
+            .get_mut(&Self::number_of(duplicate))
+            .expect("issue");
         stored.closed = true;
-        stored.duplicate_of = Some(canonical.number);
+        stored.duplicate_of = Some(Self::number_of(canonical));
         Ok(())
     }
 }

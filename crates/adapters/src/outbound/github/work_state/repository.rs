@@ -16,7 +16,7 @@ use reili_core::error::PortError;
 use reili_core::objective::ObjectiveId;
 use reili_core::secret::SecretString;
 use reili_core::work::{
-    HumanComment, IssueRef, ObjectiveLedgerState, StoredLedger, StoredWorkItem, WorkItemState,
+    HumanComment, ObjectiveLedgerState, RecordRef, StoredLedger, StoredWorkItem, WorkItemState,
     WorkItemStatus, WorkStateComment, WorkStateError, WorkStateRepositoryPort,
     sanitize::truncate_chars,
 };
@@ -145,9 +145,9 @@ impl ApiIssue {
             .collect()
     }
 
-    fn issue_ref(&self) -> IssueRef {
-        IssueRef {
-            number: self.number,
+    fn record_ref(&self) -> RecordRef {
+        RecordRef {
+            key: record_key(self.number),
             url: self.html_url.clone(),
         }
     }
@@ -175,6 +175,15 @@ struct ApiComment {
     author_association: String,
     created_at: DateTime<Utc>,
     html_url: String,
+}
+
+/// GitHub records are keyed by issue number in the familiar `#<number>` form.
+fn record_key(number: u64) -> String {
+    format!("#{number}")
+}
+
+fn parse_record_key(key: &str) -> Option<u64> {
+    key.strip_prefix('#')?.parse().ok()
 }
 
 fn objective_label(objective_id: &str) -> String {
@@ -324,29 +333,31 @@ impl GitHubWorkStateRepository {
         )
     }
 
-    /// Refuses issue references outside the management repository (defense in depth: request
-    /// URLs are always built from config, but a foreign reference indicates a bug or tampering).
-    fn guard(&self, issue: &IssueRef) -> Result<(), WorkStateError> {
+    /// Resolves a record to its issue number, refusing references outside the management
+    /// repository (defense in depth: request URLs are always built from config, but a foreign
+    /// reference indicates a bug or tampering).
+    fn guard(&self, record: &RecordRef) -> Result<u64, WorkStateError> {
         let expected_prefix = format!(
             "{}/{}/{}/issues/",
             self.web_base_url, self.repository.owner, self.repository.name
         )
         .to_lowercase();
-        let url = issue.url.to_lowercase();
-        let matches = url.starts_with(&expected_prefix)
-            && url[expected_prefix.len()..]
-                .split(['#', '?'])
-                .next()
-                .is_some_and(|number| number == issue.number.to_string());
-        if matches {
-            Ok(())
-        } else {
-            Err(WorkStateError::Forbidden(format!(
-                "refusing to touch {} — only issues in {} are writable",
-                issue.url,
+        let url = record.url.to_lowercase();
+        let number = parse_record_key(&record.key).filter(|number| {
+            url.starts_with(&expected_prefix)
+                && url[expected_prefix.len()..]
+                    .split(['#', '?'])
+                    .next()
+                    .is_some_and(|in_url| in_url == number.to_string())
+        });
+        number.ok_or_else(|| {
+            WorkStateError::Forbidden(format!(
+                "refusing to touch {} ({}) — only issues in {} are writable",
+                record.key,
+                record.url,
                 self.repository_name()
-            )))
-        }
+            ))
+        })
     }
 
     async fn request(
@@ -440,6 +451,7 @@ impl GitHubWorkStateRepository {
                 break;
             }
         }
+        issues.sort_by_key(|issue| issue.number);
         Ok(issues)
     }
 
@@ -487,9 +499,9 @@ impl GitHubWorkStateRepository {
     fn to_ledger(issue: &ApiIssue) -> Result<StoredLedger, WorkStateError> {
         let body = issue.body.as_deref().unwrap_or_default();
         Ok(StoredLedger {
-            issue: issue.issue_ref(),
+            record: issue.record_ref(),
             state: decode_state(body).map_err(|message| WorkStateError::Corrupted {
-                issue_number: issue.number,
+                record: record_key(issue.number),
                 message,
             })?,
             human_notes: extract_human_notes(body),
@@ -500,11 +512,11 @@ impl GitHubWorkStateRepository {
         let body = issue.body.as_deref().unwrap_or_default();
         let state: WorkItemState =
             decode_state(body).map_err(|message| WorkStateError::Corrupted {
-                issue_number: issue.number,
+                record: record_key(issue.number),
                 message,
             })?;
         Ok(StoredWorkItem {
-            issue: issue.issue_ref(),
+            record: issue.record_ref(),
             observed_status: observed_status(issue, state.status),
             state,
             human_notes: extract_human_notes(body),
@@ -564,7 +576,7 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
             match Self::to_ledger(issue) {
                 Ok(ledger) => ledgers.push(ledger),
                 Err(error) if corrupted_skip(&error) => {
-                    tracing::warn!(issue = issue.number, error = %error, "Skipping unreadable objective ledger");
+                    tracing::warn!(record = %record_key(issue.number), error = %error, "Skipping unreadable objective ledger");
                 }
                 Err(error) => return Err(error),
             }
@@ -595,16 +607,16 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
 
     async fn save_objective_ledger(
         &self,
-        issue: &IssueRef,
+        record: &RecordRef,
         expected_revision: u64,
         state: &ObjectiveLedgerState,
     ) -> Result<StoredLedger, WorkStateError> {
-        self.guard(issue)?;
-        let current = self.get_issue(issue.number).await?;
+        let number = self.guard(record)?;
+        let current = self.get_issue(number).await?;
         let stored = Self::to_ledger(&current)?;
         if stored.state.revision != expected_revision {
             return Err(WorkStateError::Conflict {
-                issue_number: issue.number,
+                record: record.key.clone(),
                 expected: expected_revision,
                 found: stored.state.revision,
             });
@@ -617,7 +629,7 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
         let updated: ApiIssue = self
             .request_json(
                 reqwest::Method::PATCH,
-                &format!("{}/issues/{}", self.repo_url(), issue.number),
+                &format!("{}/issues/{number}", self.repo_url()),
                 Some(&json!({ "title": ledger_title(&next), "body": body, "labels": labels })),
                 "update objective ledger",
             )
@@ -640,7 +652,7 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
             match Self::to_work_item(issue) {
                 Ok(item) => items.push(item),
                 Err(error) if corrupted_skip(&error) => {
-                    tracing::warn!(issue = issue.number, error = %error, "Skipping unreadable work item");
+                    tracing::warn!(record = %record_key(issue.number), error = %error, "Skipping unreadable work item");
                 }
                 Err(error) => return Err(error),
             }
@@ -682,16 +694,16 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
 
     async fn save_work_item(
         &self,
-        issue: &IssueRef,
+        record: &RecordRef,
         expected_revision: u64,
         state: &WorkItemState,
     ) -> Result<StoredWorkItem, WorkStateError> {
-        self.guard(issue)?;
-        let current = self.get_issue(issue.number).await?;
+        let number = self.guard(record)?;
+        let current = self.get_issue(number).await?;
         let stored = Self::to_work_item(&current)?;
         if stored.state.revision != expected_revision {
             return Err(WorkStateError::Conflict {
-                issue_number: issue.number,
+                record: record.key.clone(),
                 expected: expected_revision,
                 found: stored.state.revision,
             });
@@ -717,7 +729,7 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
         let updated: ApiIssue = self
             .request_json(
                 reqwest::Method::PATCH,
-                &format!("{}/issues/{}", self.repo_url(), issue.number),
+                &format!("{}/issues/{number}", self.repo_url()),
                 Some(&patch),
                 "update work item",
             )
@@ -727,14 +739,14 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
 
     async fn append_comment(
         &self,
-        issue: &IssueRef,
+        record: &RecordRef,
         comment: WorkStateComment,
     ) -> Result<(), WorkStateError> {
-        self.guard(issue)?;
+        let number = self.guard(record)?;
         let _: Value = self
             .request_json(
                 reqwest::Method::POST,
-                &format!("{}/issues/{}/comments", self.repo_url(), issue.number),
+                &format!("{}/issues/{number}/comments", self.repo_url()),
                 Some(&json!({ "body": render_comment(comment.kind.as_str(), &comment.body) })),
                 "create comment",
             )
@@ -744,19 +756,28 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
 
     async fn list_human_comments(
         &self,
-        issue: &IssueRef,
-        after_comment_id: Option<u64>,
+        record: &RecordRef,
+        after_comment_id: Option<String>,
     ) -> Result<Vec<HumanComment>, WorkStateError> {
-        self.guard(issue)?;
+        let number = self.guard(record)?;
+        let after_comment_id = after_comment_id
+            .map(|cursor| {
+                cursor
+                    .parse::<u64>()
+                    .map_err(|_| WorkStateError::Corrupted {
+                        record: record.key.clone(),
+                        message: format!("comment cursor `{cursor}` is not a GitHub comment id"),
+                    })
+            })
+            .transpose()?;
         let mut comments = Vec::new();
         for page in 1..=MAX_PAGES {
             let batch: Vec<ApiComment> = self
                 .request_json(
                     reqwest::Method::GET,
                     &format!(
-                        "{}/issues/{}/comments?per_page={PER_PAGE}&page={page}",
+                        "{}/issues/{number}/comments?per_page={PER_PAGE}&page={page}",
                         self.repo_url(),
-                        issue.number
                     ),
                     None,
                     "list comments",
@@ -776,30 +797,33 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
                 if by_reili {
                     continue;
                 }
-                comments.push(HumanComment {
-                    id: comment.id,
-                    author_trusted: user.kind != "Bot"
-                        && TRUSTED_ASSOCIATIONS.contains(&comment.author_association.as_str()),
-                    author: user.login,
-                    body,
-                    created_at: comment.created_at,
-                    url: comment.html_url,
-                });
+                comments.push((
+                    comment.id,
+                    HumanComment {
+                        id: comment.id.to_string(),
+                        author_trusted: user.kind != "Bot"
+                            && TRUSTED_ASSOCIATIONS.contains(&comment.author_association.as_str()),
+                        author: user.login,
+                        body,
+                        created_at: comment.created_at,
+                        url: comment.html_url,
+                    },
+                ));
             }
             if count < PER_PAGE {
                 break;
             }
         }
-        comments.sort_by_key(|comment| comment.id);
-        Ok(comments)
+        comments.sort_by_key(|(id, _)| *id);
+        Ok(comments.into_iter().map(|(_, comment)| comment).collect())
     }
 
     async fn close_duplicate(
         &self,
-        duplicate: &IssueRef,
-        canonical: &IssueRef,
+        duplicate: &RecordRef,
+        canonical: &RecordRef,
     ) -> Result<(), WorkStateError> {
-        self.guard(duplicate)?;
+        let duplicate_number = self.guard(duplicate)?;
         self.guard(canonical)?;
         self.ensure_labels(&[DUPLICATE_LABEL.to_string()]).await?;
         self.append_comment(
@@ -807,8 +831,8 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
             WorkStateComment {
                 kind: reili_core::work::WorkStateCommentKind::Notice,
                 body: format!(
-                    "Duplicate of #{} (created concurrently); Reili continues on #{}.",
-                    canonical.number, canonical.number
+                    "Duplicate of {} (created concurrently); Reili continues on {}.",
+                    canonical.key, canonical.key
                 ),
             },
         )
@@ -816,7 +840,7 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
         let _: ApiIssue = self
             .request_json(
                 reqwest::Method::PATCH,
-                &format!("{}/issues/{}", self.repo_url(), duplicate.number),
+                &format!("{}/issues/{duplicate_number}", self.repo_url()),
                 Some(&json!({
                     "state": "closed",
                     "state_reason": "not_planned",

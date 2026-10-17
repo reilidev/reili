@@ -5,7 +5,7 @@ use reili_core::error::PortError;
 use reili_core::objective::ObjectiveId;
 use reili_core::secret::SecretString;
 use reili_core::work::{
-    IssueRef, WorkItemStatus, WorkStateComment, WorkStateCommentKind, WorkStateError,
+    RecordRef, WorkItemStatus, WorkStateComment, WorkStateCommentKind, WorkStateError,
     WorkStateRepositoryPort, test_support::sample_work_item,
 };
 use serde_json::{Value, json};
@@ -60,9 +60,9 @@ fn issue_json(
     })
 }
 
-fn issue_ref(number: u64) -> IssueRef {
-    IssueRef {
-        number,
+fn issue_ref(number: u64) -> RecordRef {
+    RecordRef {
+        key: format!("#{number}"),
         url: format!("https://github.com/acme/reili-work/issues/{number}"),
     }
 }
@@ -81,8 +81,8 @@ async fn refuses_issues_outside_the_management_repository() {
         .mount(&server)
         .await;
     let repository = repository(&server);
-    let foreign = IssueRef {
-        number: 5,
+    let foreign = RecordRef {
+        key: "#5".to_string(),
         url: "https://github.com/acme/production-service/issues/5".to_string(),
     };
 
@@ -100,8 +100,21 @@ async fn refuses_issues_outside_the_management_repository() {
         .await;
     let mismatched_number = repository
         .append_comment(
-            &IssueRef {
-                number: 6,
+            &RecordRef {
+                key: "#6".to_string(),
+                url: "https://github.com/acme/reili-work/issues/5".to_string(),
+            },
+            WorkStateComment {
+                kind: WorkStateCommentKind::Notice,
+                body: "hi".to_string(),
+            },
+        )
+        .await;
+
+    let foreign_key = repository
+        .append_comment(
+            &RecordRef {
+                key: "OPS-5".to_string(),
                 url: "https://github.com/acme/reili-work/issues/5".to_string(),
             },
             WorkStateComment {
@@ -112,6 +125,7 @@ async fn refuses_issues_outside_the_management_repository() {
         .await;
 
     assert!(matches!(comment, Err(WorkStateError::Forbidden(_))));
+    assert!(matches!(foreign_key, Err(WorkStateError::Forbidden(_))));
     assert!(matches!(save, Err(WorkStateError::Forbidden(_))));
     assert!(matches!(
         mismatched_number,
@@ -248,16 +262,16 @@ async fn separates_human_comments_from_reili_comments() {
         .await;
 
     let comments = repository(&server)
-        .list_human_comments(&issue_ref(7), Some(10))
+        .list_human_comments(&issue_ref(7), Some("10".to_string()))
         .await
         .expect("comments");
 
     assert_eq!(
         comments
             .iter()
-            .map(|comment| comment.id)
+            .map(|comment| comment.id.as_str())
             .collect::<Vec<_>>(),
-        vec![11, 12, 13]
+        vec!["11", "12", "13"]
     );
     assert!(comments[0].author_trusted);
     assert!(

@@ -20,7 +20,7 @@ const MAX_SHORT_TEXT_CHARS: usize = 500;
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlannedChange {
     Update {
-        issue_number: u64,
+        record_key: String,
         proposal: WorkItemProposal,
     },
     Create {
@@ -42,7 +42,7 @@ pub struct PlanChangesInput<'a> {
 pub fn plan_changes(input: &PlanChangesInput<'_>) -> Vec<PlannedChange> {
     let mut changes = Vec::new();
     let mut creates = Vec::new();
-    let mut claimed_issues = std::collections::BTreeSet::new();
+    let mut claimed_records = std::collections::BTreeSet::new();
 
     for proposal in input.proposals {
         let Some(key) = WorkItemKey::normalize(&proposal.key) else {
@@ -53,12 +53,12 @@ pub fn plan_changes(input: &PlanChangesInput<'_>) -> Vec<PlannedChange> {
             continue;
         };
         match find_match(input.existing, proposal, &key) {
-            Some(existing) if claimed_issues.contains(&existing.issue.number) => {
+            Some(existing) if claimed_records.contains(&existing.record.key) => {
                 changes.push(PlannedChange::Skipped {
                     key: key.to_string(),
                     reason: format!(
-                        "duplicates another proposal for #{} in the same cycle",
-                        existing.issue.number
+                        "duplicates another proposal for {} in the same cycle",
+                        existing.record.key
                     ),
                 });
             }
@@ -66,15 +66,15 @@ pub fn plan_changes(input: &PlanChangesInput<'_>) -> Vec<PlannedChange> {
                 changes.push(PlannedChange::Skipped {
                     key: key.to_string(),
                     reason: format!(
-                        "matches #{} which a human dismissed; not reopening without a human request",
-                        existing.issue.number
+                        "matches {} which a human dismissed; not reopening without a human request",
+                        existing.record.key
                     ),
                 });
             }
             Some(existing) => {
-                claimed_issues.insert(existing.issue.number);
+                claimed_records.insert(existing.record.key.clone());
                 changes.push(PlannedChange::Update {
-                    issue_number: existing.issue.number,
+                    record_key: existing.record.key.clone(),
                     proposal: proposal.clone(),
                 });
             }
@@ -130,8 +130,8 @@ fn find_match<'a>(
     proposal: &WorkItemProposal,
     key: &WorkItemKey,
 ) -> Option<&'a StoredWorkItem> {
-    if let Some(number) = proposal.existing_issue_number
-        && let Some(found) = existing.iter().find(|item| item.issue.number == number)
+    if let Some(record_key) = proposal.existing_record.as_deref().map(str::trim)
+        && let Some(found) = existing.iter().find(|item| item.record.key == record_key)
     {
         return Some(found);
     }
@@ -418,7 +418,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use reili_core::objective::ObjectiveDefinition;
     use reili_core::work::{
-        HypothesisStatus, IssueRef, Severity, StoredWorkItem, WorkItemKey, WorkItemStatus,
+        HypothesisStatus, RecordRef, Severity, StoredWorkItem, WorkItemKey, WorkItemStatus,
         test_support::sample_work_item,
     };
 
@@ -433,8 +433,8 @@ mod tests {
         let mut state = sample_work_item(key);
         state.status = status;
         StoredWorkItem {
-            issue: IssueRef {
-                number,
+            record: RecordRef {
+                key: format!("#{number}"),
                 url: format!("https://github.com/acme/work/issues/{number}"),
             },
             state,
@@ -466,10 +466,7 @@ mod tests {
 
         assert!(matches!(
             changes.as_slice(),
-            [PlannedChange::Update {
-                issue_number: 7,
-                ..
-            }]
+            [PlannedChange::Update { record_key, .. }] if record_key == "#7"
         ));
     }
 

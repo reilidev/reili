@@ -22,7 +22,7 @@ pub struct ReconcileOutcome {
 enum HumanOperation {
     StatusDrift(WorkItemStatus),
     Feedback(FeedbackNote),
-    ProcessedUpTo(u64),
+    ProcessedUpTo(String),
 }
 
 pub async fn reconcile_human_signals(
@@ -40,7 +40,7 @@ pub async fn reconcile_human_signals(
         if item.observed_status.is_open() || drift {
             let comments = store
                 .repository()
-                .list_human_comments(&item.issue, item.state.last_processed_comment_id)
+                .list_human_comments(&item.record, item.state.last_processed_comment_id.clone())
                 .await?;
             collect_comment_operations(&item, comments, &mut operations, &mut outcome);
         }
@@ -57,7 +57,7 @@ pub async fn reconcile_human_signals(
             store
                 .repository()
                 .append_comment(
-                    &saved.issue,
+                    &saved.record,
                     WorkStateComment {
                         kind: WorkStateCommentKind::Decision,
                         body: acknowledgements.join("\n"),
@@ -78,18 +78,18 @@ fn collect_comment_operations(
 ) {
     let mut last_id = None;
     for comment in comments {
-        last_id = Some(comment.id);
+        last_id = Some(comment.id.clone());
         if !comment.author_trusted {
             outcome.notes.push(format!(
-                "#{}: ignored comment {} from @{} (not a member/collaborator of the management repository)",
-                item.issue.number, comment.id, comment.author
+                "{}: ignored comment {} from @{} (not a trusted member of the Work State project)",
+                item.record.key, comment.id, comment.author
             ));
             continue;
         }
         let feedback = comment.body.trim();
         if !feedback.is_empty() {
             operations.push(HumanOperation::Feedback(FeedbackNote {
-                comment_id: comment.id,
+                comment_id: comment.id.clone(),
                 author: comment.author.clone(),
                 at: comment.created_at,
                 text: sanitize_for_storage(feedback, MAX_FEEDBACK_CHARS),
@@ -128,11 +128,7 @@ fn apply_operations(state: &mut WorkItemState, operations: &[HumanOperation], no
                 }
             }
             HumanOperation::ProcessedUpTo(id) => {
-                state.last_processed_comment_id = Some(
-                    state
-                        .last_processed_comment_id
-                        .map_or(*id, |current| current.max(*id)),
-                );
+                state.last_processed_comment_id = Some(id.clone());
             }
         }
     }
@@ -179,7 +175,12 @@ mod tests {
             risk: String::new(),
         });
         let created = store.create_work_item_once(&state).await.expect("create");
-        (repository, store, created.issue.number, clock)
+        (
+            repository,
+            store,
+            FakeWorkStateRepository::number_of(&created.record),
+            clock,
+        )
     }
 
     #[tokio::test]
@@ -206,7 +207,7 @@ mod tests {
         assert_eq!(item.status, WorkItemStatus::Investigating);
         assert_eq!(item.feedback.len(), 1);
         assert_eq!(item.feedback[0].author, "alice");
-        assert_eq!(item.last_processed_comment_id, Some(1));
+        assert_eq!(item.last_processed_comment_id.as_deref(), Some("1"));
         assert!(
             repository
                 .comments(number)

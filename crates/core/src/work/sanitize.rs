@@ -1,4 +1,4 @@
-//! Guards for everything Reili writes to GitHub Issues, Slack, or Canvas, and for external text
+//! Guards for everything Reili writes to the Work State backend, Slack, or Canvas, and for external text
 //! it feeds back to the model: secret redaction, size limits, broadcast-mention neutralization,
 //! and explicit untrusted-data framing against prompt injection.
 
@@ -253,7 +253,7 @@ pub fn truncate_chars(text: &str, max_chars: usize) -> String {
     truncated
 }
 
-/// Redacts and bounds text before it is persisted to GitHub Issues or Canvas.
+/// Redacts and bounds text before it is persisted to the Work State backend or Canvas.
 #[must_use]
 pub fn sanitize_for_storage(text: &str, max_chars: usize) -> String {
     truncate_chars(&redact_sensitive(text.trim()), max_chars)

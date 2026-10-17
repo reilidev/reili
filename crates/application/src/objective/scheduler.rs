@@ -259,7 +259,7 @@ impl ObjectiveScheduler {
             .store
             .repository()
             .append_comment(
-                &ledger.issue,
+                &ledger.record,
                 WorkStateComment {
                     kind: WorkStateCommentKind::Notice,
                     body: notices.join("\n"),

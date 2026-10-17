@@ -108,7 +108,7 @@ fn evidence(id: &str, url: &str) -> EvidenceRef {
 fn proposal(key: &str, status: WorkItemStatus) -> WorkItemProposal {
     WorkItemProposal {
         key: key.to_string(),
-        existing_issue_number: None,
+        existing_record: None,
         title: "checkout-api 5xx regression after deploys".to_string(),
         kind: WorkItemKind::Incident,
         severity: Severity::High,
@@ -224,7 +224,7 @@ async fn scenario_a_continuous_objective_persists_reports_and_continues_from_wor
     // Next scheduled slot: the cycle builds on stored work state and reuses the same item.
     harness.clock.advance(Duration::hours(6));
     let mut follow_up = proposal("checkout:5xx-after-deploy", WorkItemStatus::NeedsHuman);
-    follow_up.existing_issue_number = Some(*number);
+    follow_up.existing_record = Some(format!("#{number}"));
     push_report(&harness, report(vec![follow_up]));
     assert_eq!(tick(&scheduler).await, 1);
 

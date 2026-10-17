@@ -410,7 +410,7 @@ message in the same Slack thread.
 Besides answering mentions, Reili can pursue long-term objectives defined in `reili.toml`:
 
 ```toml
-[work_state.github]
+[work_state.github]                 # Work State backend (GitHub Issues is supported today)
 repository = "acme/reili-work"      # dedicated repository for Reili's Work State
 
 [[objectives]]
@@ -431,6 +431,9 @@ Issues, not in the process.
 No extra secret is needed by default: Work State reuses the `[connector.github.app]` credentials
 (install the App on the Work State repository with Issues read & write), unless
 `[work_state.github]` names a separate App.
+Work State sits behind a backend-neutral port, so other trackers (for example JIRA) can be added
+as backends without changing the objective cycle; see
+[Work State backends](./docs/autonomy.md#work-state-backends).
 
 See [docs/autonomy.md](./docs/autonomy.md) for configuration, the Work State format, durability
 guarantees and their limits, safety, and the operations runbook.
@@ -474,7 +477,7 @@ not part of the release flow.
 ## Non-Goals
 
 - Executing operational actions like auto-remediation or auto-deploy
-- Running its own database or durable job queue (Work State lives in GitHub Issues, knowledge in
+- Running its own database or durable job queue (Work State lives in the configured tracker, today GitHub Issues; knowledge in
   the Slack Canvas, objectives in `reili.toml`)
 
 This project is intentionally focused on read-only task execution and decision support.

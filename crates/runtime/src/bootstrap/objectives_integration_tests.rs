@@ -385,7 +385,7 @@ fn report() -> InvestigationReport {
         }],
         work_items: vec![WorkItemProposal {
             key: "checkout-api:errors-after-deploy-42".to_string(),
-            existing_issue_number: None,
+            existing_record: None,
             title: "Errors after deploy 42".to_string(),
             kind: WorkItemKind::Incident,
             severity: Severity::High,
