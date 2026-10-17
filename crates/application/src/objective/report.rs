@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use chrono::{DateTime, Duration, Utc};
 use reili_core::objective::{ObjectiveDefinition, stable_fingerprint};
 use reili_core::work::{
-    ObjectiveLedgerState, Severity, StoredWorkItem, WorkItemStatus,
+    ObjectiveLedgerState, RecordKey, Severity, StoredWorkItem, WorkItemStatus,
     sanitize::{neutralize_slack_broadcasts, redact_sensitive, truncate_chars},
 };
 
@@ -38,7 +38,7 @@ pub enum ReportDecision {
     },
     Post {
         text: String,
-        item_keys: Vec<String>,
+        item_keys: Vec<RecordKey>,
     },
 }
 
@@ -47,7 +47,7 @@ pub struct ComposeReportInput<'a> {
     pub ledger: &'a ObjectiveLedgerState,
     pub ledger_url: &'a str,
     pub items: &'a [StoredWorkItem],
-    pub candidate_keys: &'a [String],
+    pub candidate_keys: &'a [RecordKey],
     pub summary: &'a str,
     pub run_id: &'a str,
     pub now: DateTime<Utc>,
@@ -165,8 +165,8 @@ pub fn report_key(objective_id: &str, run_id: &str) -> String {
 mod tests {
     use chrono::Duration;
     use reili_core::work::{
-        HumanDecisionRequest, ObjectiveLedgerState, RecordRef, StoredWorkItem, WorkItemStatus,
-        test_support::sample_work_item,
+        HumanDecisionRequest, ObjectiveLedgerState, RecordKey, RecordRef, StoredWorkItem,
+        WorkItemStatus, test_support::sample_work_item,
     };
 
     use super::{ComposeReportInput, ReportDecision, compose_report, notification_digest};
@@ -184,7 +184,7 @@ mod tests {
         }
         StoredWorkItem {
             record: RecordRef {
-                key: format!("#{number}"),
+                key: RecordKey::new(format!("#{number}")),
                 url: format!("https://github.com/acme/work/issues/{number}"),
             },
             state,
@@ -207,7 +207,7 @@ mod tests {
             ledger: &ledger,
             ledger_url: "https://github.com/acme/work/issues/9",
             items: &items,
-            candidate_keys: &["#1".to_string(), "#2".to_string()],
+            candidate_keys: &[RecordKey::new("#1"), RecordKey::new("#2")],
             summary: "Found a regression.",
             run_id: "run-1",
             now: at("2026-10-15T01:00:00Z"),
@@ -216,7 +216,7 @@ mod tests {
         let ReportDecision::Post { text, item_keys } = decision else {
             panic!("expected post");
         };
-        assert_eq!(item_keys, vec!["#1".to_string()]);
+        assert_eq!(item_keys, vec![RecordKey::new("#1")]);
         assert!(text.contains("Needs your decision"));
         assert!(
             !text.contains("<!channel>"),
@@ -256,7 +256,7 @@ mod tests {
             ledger: &ledger,
             ledger_url: "",
             items: &items,
-            candidate_keys: &["#1".to_string()],
+            candidate_keys: &[RecordKey::new("#1")],
             summary: "s",
             run_id: "run-1",
             now: at("2026-10-15T00:30:00Z") + Duration::minutes(10),

@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::item::keep_last;
+use super::record::RecordKey;
 use crate::objective::{ObjectiveDefinition, ObjectiveId};
 
 pub const OBJECTIVE_LEDGER_SCHEMA_VERSION: u32 = 1;
@@ -71,7 +72,7 @@ pub struct ActiveCycle {
     pub lease_expires_at: DateTime<Utc>,
     /// Keys of work item records touched by this cycle and awaiting report.
     #[serde(default)]
-    pub pending_notifications: Vec<String>,
+    pub pending_notifications: Vec<RecordKey>,
     /// Gated knowledge awaiting persistence in the Learn phase.
     #[serde(default)]
     pub pending_knowledge: Vec<KnowledgeDraft>,
@@ -129,7 +130,7 @@ pub struct CycleRecord {
     #[serde(default)]
     pub summary: String,
     #[serde(default)]
-    pub touched_items: Vec<String>,
+    pub touched_items: Vec<RecordKey>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

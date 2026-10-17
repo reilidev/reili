@@ -7,7 +7,16 @@
 //! - a revision stored with the state, checked before every write;
 //! - a status humans can change (label, workflow status, open/closed) mapped to
 //!   [`WorkItemStatus`];
-//! - comments with trusted-author detection and an id usable as a "newer than" cursor.
+//! - comments with trusted-author detection and an id usable as a "newer than" cursor;
+//! - state decoded with [`decode_state_json`](super::schema::decode_state_json), so state from a
+//!   newer schema is refused rather than overwritten.
+//!
+//! `conformance::assert_work_state_contract` (`test-support` feature) checks these guarantees;
+//! every backend runs it in its tests.
+//!
+//! Ledgers and work items share one port on purpose: both are records in the same project and
+//! use the same record operations (comments, duplicate closing). Split the port only when a
+//! backend needs to keep them in different places.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -17,17 +26,10 @@ use thiserror::Error;
 use super::feedback::HumanComment;
 use super::item::{WorkItemState, WorkItemStatus};
 use super::ledger::ObjectiveLedgerState;
+use super::record::{CommentId, RecordKey, RecordRef};
+use super::schema::StateDecodeError;
 use crate::error::PortError;
 use crate::objective::ObjectiveId;
-
-/// Reference to a record in the Work State backend.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RecordRef {
-    /// Stable, human-readable key assigned by the backend (e.g. `#12` for GitHub, `OPS-123` for
-    /// JIRA). Shown to the agent and humans, and used to refer to existing work items.
-    pub key: String,
-    pub url: String,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredLedger {
@@ -54,13 +56,22 @@ pub enum WorkStateError {
     /// Someone else wrote the record since it was read (optimistic concurrency check failed).
     #[error("work state conflict on {record}: expected revision {expected}, found {found}")]
     Conflict {
-        record: String,
+        record: RecordKey,
         expected: u64,
         found: u64,
     },
     /// The machine-readable state block is missing or unparseable (e.g. edited by hand).
     #[error("work state on {record} is unreadable: {message}")]
-    Corrupted { record: String, message: String },
+    Corrupted { record: RecordKey, message: String },
+    /// The state was written by a newer Reili. Never skipped or overwritten: upgrade Reili.
+    #[error(
+        "work state on {record} has schema version {found}, newer than the supported {supported}; upgrade Reili"
+    )]
+    UnsupportedSchema {
+        record: RecordKey,
+        found: u32,
+        supported: u32,
+    },
     /// The backend could not be reached or returned a server error; safe to retry later.
     #[error("work state backend unavailable: {0}")]
     Unavailable(PortError),
@@ -69,6 +80,20 @@ pub enum WorkStateError {
     Forbidden(String),
     #[error("work state error: {0}")]
     Other(PortError),
+}
+
+impl WorkStateError {
+    #[must_use]
+    pub fn undecodable(record: RecordKey, error: StateDecodeError) -> Self {
+        match error {
+            StateDecodeError::Invalid(message) => Self::Corrupted { record, message },
+            StateDecodeError::Unsupported { found, supported } => Self::UnsupportedSchema {
+                record,
+                found,
+                supported,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,7 +176,7 @@ pub trait WorkStateRepositoryPort: Send + Sync {
     async fn list_human_comments(
         &self,
         record: &RecordRef,
-        after_comment_id: Option<String>,
+        after_comment_id: Option<CommentId>,
     ) -> Result<Vec<HumanComment>, WorkStateError>;
 
     /// Closes `duplicate` as a duplicate of `canonical` (used after a create race).

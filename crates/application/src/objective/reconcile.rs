@@ -1,11 +1,12 @@
-//! Observe (human side): fold human edits on GitHub back into Work State before investigating.
-//! Label/open-state changes win over Reili's own view; comments from trusted repository members
-//! become feedback for the next investigation.
+//! Observe (human side): fold human edits in the Work State backend back into Work State before
+//! investigating. Status changes win over Reili's own view; comments from trusted members of the
+//! Work State project become feedback for the next investigation.
 
 use chrono::{DateTime, Utc};
 use reili_core::work::{
-    FeedbackNote, HumanComment, StatusActor, StoredWorkItem, WorkItemState, WorkItemStatus,
-    WorkStateComment, WorkStateCommentKind, WorkStateError, sanitize::sanitize_for_storage,
+    CommentId, FeedbackNote, HumanComment, StatusActor, StoredWorkItem, WorkItemState,
+    WorkItemStatus, WorkStateComment, WorkStateCommentKind, WorkStateError,
+    sanitize::sanitize_for_storage,
 };
 
 use super::store::WorkStateStore;
@@ -22,7 +23,7 @@ pub struct ReconcileOutcome {
 enum HumanOperation {
     StatusDrift(WorkItemStatus),
     Feedback(FeedbackNote),
-    ProcessedUpTo(String),
+    ProcessedUpTo(CommentId),
 }
 
 pub async fn reconcile_human_signals(
@@ -108,10 +109,8 @@ fn apply_operations(state: &mut WorkItemState, operations: &[HumanOperation], no
             HumanOperation::StatusDrift(status) => {
                 state.transition(
                     *status,
-                    StatusActor::Human {
-                        login: "github".to_string(),
-                    },
-                    "status label or open/closed state changed on GitHub",
+                    StatusActor::Human,
+                    "status changed by a human in the Work State backend",
                     now,
                 );
                 if !status.is_open() || *status != WorkItemStatus::NeedsHuman {
@@ -207,7 +206,10 @@ mod tests {
         assert_eq!(item.status, WorkItemStatus::Investigating);
         assert_eq!(item.feedback.len(), 1);
         assert_eq!(item.feedback[0].author, "alice");
-        assert_eq!(item.last_processed_comment_id.as_deref(), Some("1"));
+        assert_eq!(
+            item.last_processed_comment_id,
+            Some(reili_core::work::CommentId::new("1"))
+        );
         assert!(
             repository
                 .comments(number)

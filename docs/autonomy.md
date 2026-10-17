@@ -159,7 +159,13 @@ A backend must provide:
 Adding a backend means implementing the port in `crates/adapters`, adding its
 `[work_state.<backend>]` section and a `WorkStateConfig` variant in `crates/runtime/src/config`,
 and one arm in `build_work_state_repository` (`crates/runtime/src/bootstrap/objectives.rs`).
-The application layer does not change.
+The application layer does not change. The contract above is executable:
+`assert_work_state_contract` (`crates/core/src/work/conformance.rs`) runs against the in-memory
+fake and, over HTTP, against the GitHub backend; a new backend passes it with a small harness that
+can act as a human (comment, change a status).
+
+Machine state carries a `schema_version`. State written by a newer Reili is refused, never skipped
+or overwritten: the cycle stops with an "upgrade Reili" error until the running version can read it.
 
 ## Work State on GitHub Issues
 
@@ -298,6 +304,7 @@ objective ledger stops that objective until it is restored from the issue's edit
 | No cycles run | `enabled`, lifecycle in the ledger, `objective_ledger_sync_failed` logs, failure back-off in recent cycles, daily token budget |
 | "already running" for a long time | The lease holder crashed; it resumes after `lease_minutes`. |
 | Item ignored by Reili | Unreadable machine block (warning log): restore it from the issue history. |
+| Cycles fail with "upgrade Reili" | A newer Reili wrote the state (`schema_version`); run that version or newer. |
 | Reports missing | `post_reports`, `max_reports_per_day`, `min_interval_minutes` (`objective_cycle_report_deferred` logs), bot not in channel |
 | Repeated budget notices | Raise `max_llm_tokens_per_day` or reduce schedule frequency |
 | Write refused (`Forbidden`) | Installation not on the management repository or missing Issues: write |

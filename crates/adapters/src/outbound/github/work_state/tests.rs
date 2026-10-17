@@ -5,8 +5,8 @@ use reili_core::error::PortError;
 use reili_core::objective::ObjectiveId;
 use reili_core::secret::SecretString;
 use reili_core::work::{
-    RecordRef, WorkItemStatus, WorkStateComment, WorkStateCommentKind, WorkStateError,
-    WorkStateRepositoryPort, test_support::sample_work_item,
+    CommentId, RecordKey, RecordRef, WorkItemStatus, WorkStateComment, WorkStateCommentKind,
+    WorkStateError, WorkStateRepositoryPort, test_support::sample_work_item,
 };
 use serde_json::{Value, json};
 use wiremock::matchers::{body_partial_json, header, method, path, query_param};
@@ -62,7 +62,7 @@ fn issue_json(
 
 fn issue_ref(number: u64) -> RecordRef {
     RecordRef {
-        key: format!("#{number}"),
+        key: RecordKey::new(format!("#{number}")),
         url: format!("https://github.com/acme/reili-work/issues/{number}"),
     }
 }
@@ -82,7 +82,7 @@ async fn refuses_issues_outside_the_management_repository() {
         .await;
     let repository = repository(&server);
     let foreign = RecordRef {
-        key: "#5".to_string(),
+        key: RecordKey::new("#5"),
         url: "https://github.com/acme/production-service/issues/5".to_string(),
     };
 
@@ -101,7 +101,7 @@ async fn refuses_issues_outside_the_management_repository() {
     let mismatched_number = repository
         .append_comment(
             &RecordRef {
-                key: "#6".to_string(),
+                key: RecordKey::new("#6"),
                 url: "https://github.com/acme/reili-work/issues/5".to_string(),
             },
             WorkStateComment {
@@ -114,7 +114,7 @@ async fn refuses_issues_outside_the_management_repository() {
     let foreign_key = repository
         .append_comment(
             &RecordRef {
-                key: "OPS-5".to_string(),
+                key: RecordKey::new("OPS-5"),
                 url: "https://github.com/acme/reili-work/issues/5".to_string(),
             },
             WorkStateComment {
@@ -262,7 +262,7 @@ async fn separates_human_comments_from_reili_comments() {
         .await;
 
     let comments = repository(&server)
-        .list_human_comments(&issue_ref(7), Some("10".to_string()))
+        .list_human_comments(&issue_ref(7), Some(CommentId::new("10")))
         .await
         .expect("comments");
 
@@ -295,4 +295,41 @@ async fn maps_server_errors_to_retryable_unavailability() {
         .expect_err("unavailable");
 
     assert!(matches!(error, WorkStateError::Unavailable(_)));
+}
+
+#[tokio::test]
+async fn stops_on_work_items_written_by_a_newer_schema() {
+    let server = MockServer::start().await;
+    let mut newer = sample_work_item("checkout:5xx");
+    newer.schema_version = 99;
+    let mut issue = issue_json(1, "open", None, &["reili:work-item"], 1);
+    issue["body"] = json!(render_work_item_body(&newer, "").expect("render"));
+    Mock::given(method("GET"))
+        .and(path("/repos/acme/reili-work/issues"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([issue])))
+        .mount(&server)
+        .await;
+
+    let error = repository(&server)
+        .list_work_items(&ObjectiveId::new("checkout").expect("id"))
+        .await
+        .expect_err("newer schema is not skipped");
+
+    assert!(matches!(
+        error,
+        WorkStateError::UnsupportedSchema { found: 99, .. }
+    ));
+}
+
+#[tokio::test]
+async fn github_backend_satisfies_the_work_state_contract() {
+    let server = MockServer::start().await;
+    let fake = super::fake_github::FakeGitHub::default();
+    fake.mount(&server).await;
+    let harness = super::fake_github::GitHubContractHarness {
+        fake,
+        repository: Arc::new(repository(&server)),
+    };
+
+    reili_core::work::conformance::assert_work_state_contract(&harness).await;
 }

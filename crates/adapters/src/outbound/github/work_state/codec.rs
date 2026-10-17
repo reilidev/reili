@@ -4,10 +4,10 @@
 use std::fmt::Write as _;
 
 use reili_core::work::{
-    ObjectiveLedgerState, WorkItemState, WorkItemStatus, sanitize::truncate_chars,
+    ObjectiveLedgerState, StateDecodeError, VersionedState, WorkItemState, WorkItemStatus,
+    decode_state_json, sanitize::truncate_chars,
 };
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 pub(super) const MAX_BODY_CHARS: usize = 65_000;
 const STATE_BEGIN: &str = "<!-- reili:state:begin -->";
@@ -26,24 +26,23 @@ pub(super) fn encode_state<T: Serialize>(state: &T) -> Result<String, String> {
         .map_err(|error| error.to_string())
 }
 
-pub(super) fn decode_state<T: DeserializeOwned>(body: &str) -> Result<T, String> {
+pub(super) fn decode_state<T: VersionedState>(body: &str) -> Result<T, StateDecodeError> {
     // The state block is always last, so text earlier in the body that happens to contain the
     // marker (model output, human edits) cannot shadow it.
     let start = body
         .rfind(STATE_BEGIN)
-        .ok_or_else(|| "machine state block is missing".to_string())?
+        .ok_or_else(|| StateDecodeError::Invalid("machine state block is missing".to_string()))?
         + STATE_BEGIN.len();
-    let end = body[start..]
-        .find(STATE_END)
-        .ok_or_else(|| "machine state block is not terminated".to_string())?
-        + start;
+    let end = body[start..].find(STATE_END).ok_or_else(|| {
+        StateDecodeError::Invalid("machine state block is not terminated".to_string())
+    })? + start;
     let block = body[start..end].trim();
     let json = block
         .strip_prefix("```json")
         .and_then(|rest| rest.strip_suffix("```"))
         .unwrap_or(block)
         .trim();
-    serde_json::from_str(json).map_err(|error| format!("machine state is not valid JSON: {error}"))
+    decode_state_json(json)
 }
 
 pub(super) fn extract_human_notes(body: &str) -> String {
@@ -210,9 +209,9 @@ fn render_work_item_sections(state: &WorkItemState, detailed: bool) -> String {
                 change.at.to_rfc3339(),
                 change.from.map_or("new", WorkItemStatus::as_str),
                 change.to.as_str(),
-                match &change.actor {
-                    reili_core::work::StatusActor::Reili => "Reili".to_string(),
-                    reili_core::work::StatusActor::Human { login } => format!("@{login}"),
+                match change.actor {
+                    reili_core::work::StatusActor::Reili => "Reili",
+                    reili_core::work::StatusActor::Human => "a human",
                 },
                 cell(&change.reason)
             );
@@ -339,7 +338,10 @@ mod tests {
         body = body.replace("\"schema_version\"", "\"schema_version\" oops");
 
         let error = decode_state::<WorkItemState>(&body).expect_err("corrupted");
-        assert!(error.contains("not valid JSON"));
+        assert!(matches!(
+            error,
+            reili_core::work::StateDecodeError::Invalid(_)
+        ));
         assert!(decode_state::<WorkItemState>("plain text").is_err());
     }
 
@@ -352,7 +354,7 @@ mod tests {
 
     #[test]
     fn renders_ledger() {
-        let objective = crate::outbound::github::work_state::tests_support::objective();
+        let objective = reili_core::work::test_support::sample_objective("checkout");
         let ledger = ObjectiveLedgerState::new(
             &objective,
             Utc.timestamp_opt(1_760_000_000, 0).single().expect("time"),

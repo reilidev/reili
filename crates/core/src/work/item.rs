@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::investigation::{EvidenceRef, Finding, Hypothesis, Recommendation};
+use super::record::CommentId;
 use crate::objective::ObjectiveId;
 
 pub const WORK_ITEM_SCHEMA_VERSION: u32 = 1;
@@ -206,7 +207,8 @@ impl Severity {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StatusActor {
     Reili,
-    Human { login: String },
+    /// A person changed the status directly in the Work State backend (label, workflow, close).
+    Human,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -220,7 +222,7 @@ pub struct StatusChange {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeedbackNote {
-    pub comment_id: String,
+    pub comment_id: CommentId,
     pub author: String,
     pub at: DateTime<Utc>,
     pub text: String,
@@ -279,7 +281,7 @@ pub struct WorkItemState {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     /// Backend comment id of the last human comment already folded into this state.
-    pub last_processed_comment_id: Option<String>,
+    pub last_processed_comment_id: Option<CommentId>,
     #[serde(default)]
     pub notification: NotificationState,
     #[serde(default)]
@@ -398,6 +400,14 @@ mod tests {
 
         assert_eq!(item.history.len(), 1);
         assert_eq!(item.status, WorkItemStatus::NeedsHuman);
+    }
+
+    #[test]
+    fn reads_human_actors_recorded_with_a_login() {
+        let actor: StatusActor =
+            serde_json::from_str(r#"{"type":"human","login":"github"}"#).expect("actor");
+
+        assert_eq!(actor, StatusActor::Human);
     }
 
     #[test]

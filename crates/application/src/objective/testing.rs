@@ -20,9 +20,9 @@ use reili_core::messaging::slack::{
 use reili_core::objective::ObjectiveId;
 use reili_core::task::{LlmExecutionMetadata, LlmUsageSnapshot};
 use reili_core::work::{
-    HumanComment, InvestigationReport, ObjectiveLedgerState, RecordRef, StoredLedger,
-    StoredWorkItem, WorkItemState, WorkItemStatus, WorkStateComment, WorkStateError,
-    WorkStateRepositoryPort,
+    CommentId, HumanComment, InvestigationReport, ObjectiveLedgerState, RecordKey, RecordRef,
+    StoredLedger, StoredWorkItem, WorkItemState, WorkItemStatus, WorkStateComment, WorkStateError,
+    WorkStateRepositoryPort, decode_state_json,
 };
 
 use super::clock::Clock;
@@ -244,6 +244,7 @@ impl FakeWorkStateRepository {
     pub(crate) fn number_of(record: &RecordRef) -> u64 {
         record
             .key
+            .as_str()
             .trim_start_matches('#')
             .parse()
             .expect("fake records use `#<number>` keys")
@@ -251,7 +252,7 @@ impl FakeWorkStateRepository {
 
     fn issue_ref(number: u64) -> RecordRef {
         RecordRef {
-            key: format!("#{number}"),
+            key: RecordKey::new(format!("#{number}")),
             url: format!("https://github.com/acme/reili-work/issues/{number}"),
         }
     }
@@ -265,9 +266,8 @@ impl FakeWorkStateRepository {
         };
         Ok(StoredLedger {
             record: Self::issue_ref(issue.number),
-            state: serde_json::from_str(json).map_err(|error| WorkStateError::Corrupted {
-                record: Self::issue_ref(issue.number).key,
-                message: error.to_string(),
+            state: decode_state_json(json).map_err(|error| {
+                WorkStateError::undecodable(Self::issue_ref(issue.number).key, error)
             })?,
             human_notes: issue.human_notes.clone(),
         })
@@ -280,11 +280,9 @@ impl FakeWorkStateRepository {
                 message: "not a work item".to_string(),
             });
         };
-        let state: WorkItemState =
-            serde_json::from_str(json).map_err(|error| WorkStateError::Corrupted {
-                record: Self::issue_ref(issue.number).key,
-                message: error.to_string(),
-            })?;
+        let state: WorkItemState = decode_state_json(json).map_err(|error| {
+            WorkStateError::undecodable(Self::issue_ref(issue.number).key, error)
+        })?;
         let observed_status = match issue.observed_status {
             Some(status) => status,
             None => state.status,
@@ -530,7 +528,7 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
     async fn list_human_comments(
         &self,
         record: &RecordRef,
-        after_comment_id: Option<String>,
+        after_comment_id: Option<CommentId>,
     ) -> Result<Vec<HumanComment>, WorkStateError> {
         let state = self.state.lock().expect("lock");
         Self::check_available(&state)?;
@@ -541,12 +539,13 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
             .filter(|comment| !comment.by_reili)
             .filter(|comment| {
                 after_comment_id
-                    .as_deref()
+                    .as_ref()
+                    .map(CommentId::as_str)
                     .and_then(|after| after.parse::<u64>().ok())
                     .is_none_or(|after| comment.id > after)
             })
             .map(|comment| HumanComment {
-                id: comment.id.to_string(),
+                id: CommentId::new(comment.id.to_string()),
                 author: comment.author.clone(),
                 author_trusted: comment.trusted,
                 body: comment.body.clone(),
@@ -785,4 +784,36 @@ impl SlackCanvasMemoryPort for RecordingCanvasMemory {
         self.appended.lock().expect("lock").push(input);
         Ok(())
     }
+}
+
+struct FakeWorkStateHarness(FakeWorkStateRepository);
+
+#[async_trait]
+impl reili_core::work::conformance::WorkStateBackendHarness for FakeWorkStateHarness {
+    fn repository(&self) -> Arc<dyn WorkStateRepositoryPort> {
+        Arc::new(self.0.clone())
+    }
+
+    async fn comment_as_human(&self, record: &RecordRef, author: &str, trusted: bool, body: &str) {
+        self.0.human_comment(
+            FakeWorkStateRepository::number_of(record),
+            author,
+            trusted,
+            body,
+        );
+    }
+
+    async fn set_status_as_human(&self, record: &RecordRef, status: WorkItemStatus) {
+        self.0
+            .human_set_status(FakeWorkStateRepository::number_of(record), status);
+    }
+}
+
+#[tokio::test]
+async fn fake_work_state_satisfies_the_backend_contract() {
+    let harness = FakeWorkStateHarness(FakeWorkStateRepository::new(ManualClock::new(at(
+        "2026-10-15T00:00:00Z",
+    ))));
+
+    reili_core::work::conformance::assert_work_state_contract(&harness).await;
 }

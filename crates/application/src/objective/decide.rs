@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use reili_core::objective::ObjectiveDefinition;
 use reili_core::work::{
     EvidenceRef, Finding, HumanDecisionRequest, Hypothesis, InvestigationReport, NotificationState,
-    Recommendation, StatusActor, StoredWorkItem, WORK_ITEM_SCHEMA_VERSION, WorkItemKey,
+    Recommendation, RecordKey, StatusActor, StoredWorkItem, WORK_ITEM_SCHEMA_VERSION, WorkItemKey,
     WorkItemProposal, WorkItemState, WorkItemStatus, sanitize::sanitize_for_storage, token_jaccard,
 };
 
@@ -20,7 +20,7 @@ const MAX_SHORT_TEXT_CHARS: usize = 500;
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlannedChange {
     Update {
-        record_key: String,
+        record_key: RecordKey,
         proposal: WorkItemProposal,
     },
     Create {
@@ -131,7 +131,9 @@ fn find_match<'a>(
     key: &WorkItemKey,
 ) -> Option<&'a StoredWorkItem> {
     if let Some(record_key) = proposal.existing_record.as_deref().map(str::trim)
-        && let Some(found) = existing.iter().find(|item| item.record.key == record_key)
+        && let Some(found) = existing
+            .iter()
+            .find(|item| item.record.key.as_str() == record_key)
     {
         return Some(found);
     }
@@ -418,8 +420,8 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use reili_core::objective::ObjectiveDefinition;
     use reili_core::work::{
-        HypothesisStatus, RecordRef, Severity, StoredWorkItem, WorkItemKey, WorkItemStatus,
-        test_support::sample_work_item,
+        HypothesisStatus, RecordKey, RecordRef, Severity, StoredWorkItem, WorkItemKey,
+        WorkItemStatus, test_support::sample_work_item,
     };
 
     use super::{
@@ -434,7 +436,7 @@ mod tests {
         state.status = status;
         StoredWorkItem {
             record: RecordRef {
-                key: format!("#{number}"),
+                key: RecordKey::new(format!("#{number}")),
                 url: format!("https://github.com/acme/work/issues/{number}"),
             },
             state,
@@ -466,7 +468,7 @@ mod tests {
 
         assert!(matches!(
             changes.as_slice(),
-            [PlannedChange::Update { record_key, .. }] if record_key == "#7"
+            [PlannedChange::Update { record_key, .. }] if record_key.as_str() == "#7"
         ));
     }
 

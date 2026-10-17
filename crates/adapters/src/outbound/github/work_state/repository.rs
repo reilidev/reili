@@ -16,9 +16,9 @@ use reili_core::error::PortError;
 use reili_core::objective::ObjectiveId;
 use reili_core::secret::SecretString;
 use reili_core::work::{
-    HumanComment, ObjectiveLedgerState, RecordRef, StoredLedger, StoredWorkItem, WorkItemState,
-    WorkItemStatus, WorkStateComment, WorkStateError, WorkStateRepositoryPort,
-    sanitize::truncate_chars,
+    CommentId, HumanComment, ObjectiveLedgerState, RecordKey, RecordRef, StoredLedger,
+    StoredWorkItem, WorkItemState, WorkItemStatus, WorkStateComment, WorkStateError,
+    WorkStateRepositoryPort, sanitize::truncate_chars,
 };
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderValue};
 use serde::Deserialize;
@@ -178,12 +178,12 @@ struct ApiComment {
 }
 
 /// GitHub records are keyed by issue number in the familiar `#<number>` form.
-fn record_key(number: u64) -> String {
-    format!("#{number}")
+fn record_key(number: u64) -> RecordKey {
+    RecordKey::new(format!("#{number}"))
 }
 
-fn parse_record_key(key: &str) -> Option<u64> {
-    key.strip_prefix('#')?.parse().ok()
+fn parse_record_key(key: &RecordKey) -> Option<u64> {
+    key.as_str().strip_prefix('#')?.parse().ok()
 }
 
 fn objective_label(objective_id: &str) -> String {
@@ -500,21 +500,16 @@ impl GitHubWorkStateRepository {
         let body = issue.body.as_deref().unwrap_or_default();
         Ok(StoredLedger {
             record: issue.record_ref(),
-            state: decode_state(body).map_err(|message| WorkStateError::Corrupted {
-                record: record_key(issue.number),
-                message,
-            })?,
+            state: decode_state(body)
+                .map_err(|error| WorkStateError::undecodable(record_key(issue.number), error))?,
             human_notes: extract_human_notes(body),
         })
     }
 
     fn to_work_item(issue: &ApiIssue) -> Result<StoredWorkItem, WorkStateError> {
         let body = issue.body.as_deref().unwrap_or_default();
-        let state: WorkItemState =
-            decode_state(body).map_err(|message| WorkStateError::Corrupted {
-                record: record_key(issue.number),
-                message,
-            })?;
+        let state: WorkItemState = decode_state(body)
+            .map_err(|error| WorkStateError::undecodable(record_key(issue.number), error))?;
         Ok(StoredWorkItem {
             record: issue.record_ref(),
             observed_status: observed_status(issue, state.status),
@@ -757,12 +752,13 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
     async fn list_human_comments(
         &self,
         record: &RecordRef,
-        after_comment_id: Option<String>,
+        after_comment_id: Option<CommentId>,
     ) -> Result<Vec<HumanComment>, WorkStateError> {
         let number = self.guard(record)?;
         let after_comment_id = after_comment_id
             .map(|cursor| {
                 cursor
+                    .as_str()
                     .parse::<u64>()
                     .map_err(|_| WorkStateError::Corrupted {
                         record: record.key.clone(),
@@ -800,7 +796,7 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
                 comments.push((
                     comment.id,
                     HumanComment {
-                        id: comment.id.to_string(),
+                        id: CommentId::new(comment.id.to_string()),
                         author_trusted: user.kind != "Bot"
                             && TRUSTED_ASSOCIATIONS.contains(&comment.author_association.as_str()),
                         author: user.login,

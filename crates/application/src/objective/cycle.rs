@@ -26,8 +26,8 @@ use reili_core::task::{
 };
 use reili_core::work::{
     ActiveCycle, CyclePhase, CycleRecord, CycleResult, InvestigationReport, KnowledgeDraft,
-    ObjectiveLedgerState, StoredLedger, StoredWorkItem, WorkStateComment, WorkStateCommentKind,
-    WorkStateError, sanitize::truncate_chars,
+    ObjectiveLedgerState, RecordKey, StoredLedger, StoredWorkItem, WorkStateComment,
+    WorkStateCommentKind, WorkStateError, sanitize::truncate_chars,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -533,7 +533,7 @@ impl ObjectiveCycleRunner {
             now,
             report,
         };
-        let mut touched: Vec<String> = Vec::new();
+        let mut touched: Vec<RecordKey> = Vec::new();
         let mut skipped = Vec::new();
         for change in &changes {
             match change {

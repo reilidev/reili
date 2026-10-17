@@ -548,10 +548,9 @@ async fn scenario_d_feedback_and_human_decisions_shape_the_next_cycle() {
         .expect("item");
     assert_eq!(item.status, WorkItemStatus::Resolved);
     assert!(
-        item.history.last().is_some_and(|change| matches!(
-            change.actor,
-            reili_core::work::StatusActor::Human { .. }
-        ))
+        item.history
+            .last()
+            .is_some_and(|change| matches!(change.actor, reili_core::work::StatusActor::Human))
     );
 }
 
