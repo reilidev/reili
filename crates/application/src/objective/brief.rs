@@ -1,22 +1,22 @@
-//! Builds the investigation brief: trusted sections (goal definition, cycle context) are kept apart from untrusted data (work item text, human comments, Canvas
+//! Builds the investigation brief: trusted sections (objective definition, cycle context) are kept apart from untrusted data (work item text, human comments, Canvas
 //! memories), which the runner frames as data the agent must never take instructions from.
 
 use std::fmt::Write as _;
 
 use chrono::{DateTime, Utc};
-use reili_core::goal::GoalDefinition;
 use reili_core::investigation::{BriefSection, BriefTrust, InvestigationBrief};
 use reili_core::messaging::slack::SlackCanvasMemoryRecord;
+use reili_core::objective::ObjectiveDefinition;
 use reili_core::work::{
-    GoalLedgerState, HypothesisStatus, StoredWorkItem, sanitize::truncate_chars,
+    HypothesisStatus, ObjectiveLedgerState, StoredWorkItem, sanitize::truncate_chars,
 };
 
 const MAX_SECTION_CHARS: usize = 12_000;
 const MAX_CLOSED_ITEMS: usize = 10;
 
 pub struct BuildBriefInput<'a> {
-    pub goal: &'a GoalDefinition,
-    pub ledger: &'a GoalLedgerState,
+    pub objective: &'a ObjectiveDefinition,
+    pub ledger: &'a ObjectiveLedgerState,
     pub ledger_human_notes: &'a str,
     pub items: &'a [StoredWorkItem],
     pub memories: &'a [SlackCanvasMemoryRecord],
@@ -29,7 +29,10 @@ pub struct BuildBriefInput<'a> {
 #[must_use]
 pub fn build_brief(input: &BuildBriefInput<'_>) -> InvestigationBrief {
     let mut sections = vec![
-        trusted("Goal", goal_section(input.goal, input.ledger)),
+        trusted(
+            "Objective",
+            objective_section(input.objective, input.ledger),
+        ),
         trusted("This cycle", cycle_section(input)),
     ];
     sections.push(untrusted(
@@ -55,8 +58,8 @@ pub fn build_brief(input: &BuildBriefInput<'_>) -> InvestigationBrief {
     }
     if !input.ledger_human_notes.trim().is_empty() {
         sections.push(untrusted(
-            "Human notes on the goal",
-            "goal ledger issue",
+            "Human notes on the objective",
+            "objective ledger issue",
             input.ledger_human_notes.to_string(),
         ));
     }
@@ -70,7 +73,7 @@ pub fn build_brief(input: &BuildBriefInput<'_>) -> InvestigationBrief {
 
     InvestigationBrief {
         run_id: input.run_id.to_string(),
-        goal_id: input.goal.id.to_string(),
+        objective_id: input.objective.id.to_string(),
         sections: sections
             .into_iter()
             .map(|mut section| {
@@ -101,14 +104,14 @@ fn untrusted(heading: &str, source: &str, body: String) -> BriefSection {
     }
 }
 
-fn goal_section(goal: &GoalDefinition, ledger: &GoalLedgerState) -> String {
+fn objective_section(objective: &ObjectiveDefinition, ledger: &ObjectiveLedgerState) -> String {
     let mut body = format!(
-        "- id: {}\n- objective: {}\n- services: {}\n- repositories: {}\n- environments: {}\n",
-        goal.id,
-        goal.objective.trim(),
-        join_or_none(&goal.scope.services),
-        join_or_none(&goal.scope.repositories),
-        join_or_none(&goal.scope.environments),
+        "- id: {}\n- description: {}\n- services: {}\n- repositories: {}\n- environments: {}\n",
+        objective.id,
+        objective.description.trim(),
+        join_or_none(&objective.scope.services),
+        join_or_none(&objective.scope.repositories),
+        join_or_none(&objective.scope.environments),
     );
     let changed_since_last_cycle = ledger.definition_changes.last().is_some_and(|changed| {
         ledger
@@ -117,7 +120,7 @@ fn goal_section(goal: &GoalDefinition, ledger: &GoalLedgerState) -> String {
     });
     if changed_since_last_cycle {
         body.push_str(
-            "- NOTE: the goal definition changed since the last cycle. Re-check whether each open work item is still in scope and say so explicitly.\n",
+            "- NOTE: the objective definition changed since the last cycle. Re-check whether each open work item is still in scope and say so explicitly.\n",
         );
     }
     body
@@ -129,11 +132,11 @@ fn cycle_section(input: &BuildBriefInput<'_>) -> String {
         input.run_id,
         input.now.to_rfc3339(),
         input.deadline.to_rfc3339(),
-        input.goal.budget.max_tool_calls_per_cycle,
-        input.goal.budget.max_llm_tokens_per_cycle,
-        input.goal.budget.max_sub_agents_per_cycle,
-        input.goal.budget.max_new_work_items_per_cycle,
-        input.goal.budget.max_open_work_items,
+        input.objective.budget.max_tool_calls_per_cycle,
+        input.objective.budget.max_llm_tokens_per_cycle,
+        input.objective.budget.max_sub_agents_per_cycle,
+        input.objective.budget.max_new_work_items_per_cycle,
+        input.objective.budget.max_open_work_items,
     );
     match input.ledger.last_cycle() {
         Some(last) => {
@@ -288,13 +291,13 @@ mod tests {
     use chrono::TimeZone;
     use reili_core::investigation::BriefTrust;
     use reili_core::work::{
-        FeedbackNote, GoalLedgerState, IssueRef, StoredWorkItem, WorkItemStatus,
+        FeedbackNote, IssueRef, ObjectiveLedgerState, StoredWorkItem, WorkItemStatus,
         test_support::sample_work_item,
     };
 
     use super::{BuildBriefInput, build_brief};
-    use crate::goal::testing::at;
-    use crate::goal::tests_support::sample_goal;
+    use crate::objective::testing::at;
+    use crate::objective::tests_support::sample_objective;
 
     fn stored(number: u64, status: WorkItemStatus) -> StoredWorkItem {
         let mut state = sample_work_item(&format!("checkout:item-{number}"));
@@ -320,15 +323,15 @@ mod tests {
 
     #[test]
     fn separates_trusted_and_untrusted_sections() {
-        let goal = sample_goal("checkout");
-        let ledger = GoalLedgerState::new(&goal, at("2026-10-15T00:00:00Z"));
+        let objective = sample_objective("checkout");
+        let ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
         let items = vec![
             stored(1, WorkItemStatus::Investigating),
             stored(2, WorkItemStatus::Dismissed),
         ];
 
         let brief = build_brief(&BuildBriefInput {
-            goal: &goal,
+            objective: &objective,
             ledger: &ledger,
             ledger_human_notes: "",
             items: &items,
@@ -339,9 +342,9 @@ mod tests {
             notes: &[],
         });
 
-        let goal_section = &brief.sections[0];
-        assert_eq!(goal_section.trust, BriefTrust::Trusted);
-        assert!(goal_section.body.contains("checkout-api"));
+        let objective_section = &brief.sections[0];
+        assert_eq!(objective_section.trust, BriefTrust::Trusted);
+        assert!(objective_section.body.contains("checkout-api"));
         let feedback = brief
             .sections
             .iter()

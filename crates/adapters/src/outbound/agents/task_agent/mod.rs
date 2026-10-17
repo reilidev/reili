@@ -10,13 +10,13 @@ use reili_core::task::{
 use rig::agent::Agent;
 use rig::prelude::{AgentClientExt, CompletionClient};
 
-mod goal_instructions;
 mod instructions;
+mod objective_instructions;
 mod prompt;
 mod spawn;
 mod sub_agent;
 
-pub use goal_instructions::{BuildGoalPromptInput, build_goal_prompt};
+pub use objective_instructions::{BuildObjectivePromptInput, build_objective_prompt};
 pub use prompt::{BuildTaskPromptInput, build_task_prompt};
 
 use super::connector::PreparedConnector;
@@ -27,8 +27,8 @@ use super::tools::{
     SaveSharedMemoryTool, SearchSlackMessagesTool, SearchWebTool, SpawnAgentTool,
     SpawnAgentToolInput, SpawnedSubAgentSpec, SubmitInvestigationReportTool,
 };
-use goal_instructions::{BuildGoalInstructionsInput, build_goal_instructions};
 use instructions::{BuildTaskInstructionsInput, build_task_instructions};
+use objective_instructions::{BuildObjectiveInstructionsInput, build_objective_instructions};
 use spawn::{render_spawn_tool_catalog, spawn_catalog_tool_names, spawn_tool_catalog_groups};
 use sub_agent::{
     BuildSpawnedSubAgentInput, CreateSubAgentFactoryInput, SubAgentConfig, SubAgentFactory,
@@ -160,10 +160,10 @@ where
         builder.build()
     }
 
-    /// Builds the lead agent for a goal cycle: goal-mode instructions, `spawn_agent` bounded by the
+    /// Builds the lead agent for an objective cycle: objective-mode instructions, `spawn_agent` bounded by the
     /// run budget, and the structured report tool as the only exit.
     #[must_use]
-    pub fn build_goal_agent(&self, input: BuildGoalAgentInput) -> Agent {
+    pub fn build_objective_agent(&self, input: BuildObjectiveAgentInput) -> Agent {
         let sub_agent_factory = SubAgentFactory::new(CreateSubAgentFactoryInput {
             client: self.sub_agent_client.clone(),
             config: self.sub_agent_config(),
@@ -180,11 +180,17 @@ where
             .client
             .clone()
             .agent(self.config.settings.task_runner_model.clone())
-            .name("GoalRunner")
-            .preamble(&build_goal_instructions(BuildGoalInstructionsInput {
-                additional_system_prompt: self.config.instructions.additional_system_prompt.clone(),
-                spawn_tool_catalog: render_spawn_tool_catalog(&catalog_groups),
-            }))
+            .name("ObjectiveRunner")
+            .preamble(&build_objective_instructions(
+                BuildObjectiveInstructionsInput {
+                    additional_system_prompt: self
+                        .config
+                        .instructions
+                        .additional_system_prompt
+                        .clone(),
+                    spawn_tool_catalog: render_spawn_tool_catalog(&catalog_groups),
+                },
+            ))
             .default_max_turns(self.config.settings.task_runner_max_turns)
             .additional_params(self.config.settings.additional_params.clone());
         let builder = with_max_tokens(builder, self.config.settings.task_runner_max_tokens);
@@ -234,7 +240,7 @@ where
     }
 }
 
-pub struct BuildGoalAgentInput {
+pub struct BuildObjectiveAgentInput {
     pub run_context: TaskAgentRunContext,
     pub prepared_connectors: Vec<Arc<dyn PreparedConnector>>,
     pub report_slot: ReportSlot,

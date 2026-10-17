@@ -1,6 +1,6 @@
-//! One goal cycle: Observe → Plan/Investigate (agent) → Decide → Report → Learn.
+//! One objective cycle: Observe → Plan/Investigate (agent) → Decide → Report → Learn.
 //!
-//! Durability: every phase boundary is checkpointed in the goal ledger (a GitHub Issue). A cycle
+//! Durability: every phase boundary is checkpointed in the objective ledger (a GitHub Issue). A cycle
 //! holds a time-limited lease that is renewed while the agent runs; if the process dies, the lease
 //! expires and the next scheduler tick resumes the cycle. Phases after Decide never re-run the
 //! agent, so a crash during reporting does not repeat (or pay for) the investigation. GitHub
@@ -13,20 +13,20 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use reili_core::error::PortError;
-use reili_core::goal::{GoalDefinition, stable_fingerprint};
 use reili_core::investigation::{
     InvestigationRunOutcome, InvestigationRunnerPort, RunBudget, RunInvestigationInput, RunLimits,
 };
 use reili_core::messaging::slack::{
-    AppendSlackCanvasMemoryInput, GoalReportMessage, GoalReportPort, ListSlackCanvasMemoriesInput,
-    SlackCanvasMemoryVisibility,
+    AppendSlackCanvasMemoryInput, ListSlackCanvasMemoriesInput, ObjectiveReportMessage,
+    ObjectiveReportPort, SlackCanvasMemoryVisibility,
 };
+use reili_core::objective::{ObjectiveDefinition, stable_fingerprint};
 use reili_core::task::{
     TaskCancellation, TaskProgressEventInput, TaskProgressEventPort, TaskResources,
 };
 use reili_core::work::{
-    ActiveCycle, CyclePhase, CycleRecord, CycleResult, GoalLedgerState, InvestigationReport,
-    KnowledgeDraft, StoredLedger, StoredWorkItem, WorkStateComment, WorkStateCommentKind,
+    ActiveCycle, CyclePhase, CycleRecord, CycleResult, InvestigationReport, KnowledgeDraft,
+    ObjectiveLedgerState, StoredLedger, StoredWorkItem, WorkStateComment, WorkStateCommentKind,
     WorkStateError, sanitize::truncate_chars,
 };
 use thiserror::Error;
@@ -51,10 +51,10 @@ const MAX_FACTS_PER_CYCLE: usize = 5;
 const CANCEL_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Clone)]
-pub struct GoalCycleDeps {
+pub struct ObjectiveCycleDeps {
     pub store: WorkStateStore,
     pub investigation_runner: Arc<dyn InvestigationRunnerPort>,
-    pub report_port: Arc<dyn GoalReportPort>,
+    pub report_port: Arc<dyn ObjectiveReportPort>,
     pub task_resources: TaskResources,
     pub clock: Arc<dyn Clock>,
     pub logger: Arc<dyn TaskLogger>,
@@ -89,15 +89,15 @@ pub enum CycleRunOutcome {
 }
 
 #[derive(Debug, Error)]
-pub enum GoalCycleError {
+pub enum ObjectiveCycleError {
     #[error(transparent)]
     WorkState(#[from] WorkStateError),
-    #[error("goal `{goal}` cannot run: {reason}")]
-    NotRunnable { goal: String, reason: String },
+    #[error("objective `{objective}` cannot run: {reason}")]
+    NotRunnable { objective: String, reason: String },
 }
 
-pub struct GoalCycleRunner {
-    deps: GoalCycleDeps,
+pub struct ObjectiveCycleRunner {
+    deps: ObjectiveCycleDeps,
 }
 
 enum Acquisition {
@@ -126,25 +126,25 @@ enum InvestigationResult {
     },
 }
 
-impl GoalCycleRunner {
-    pub fn new(deps: GoalCycleDeps) -> Self {
+impl ObjectiveCycleRunner {
+    pub fn new(deps: ObjectiveCycleDeps) -> Self {
         Self { deps }
     }
 
     pub async fn run(
         &self,
-        goal: &GoalDefinition,
+        objective: &ObjectiveDefinition,
         start: CycleStart,
         cancellation: TaskCancellation,
-    ) -> Result<CycleRunOutcome, GoalCycleError> {
-        if !goal.enabled {
-            return Err(GoalCycleError::NotRunnable {
-                goal: goal.id.to_string(),
-                reason: "goal is disabled in config".to_string(),
+    ) -> Result<CycleRunOutcome, ObjectiveCycleError> {
+        if !objective.enabled {
+            return Err(ObjectiveCycleError::NotRunnable {
+                objective: objective.id.to_string(),
+                reason: "objective is disabled in config".to_string(),
             });
         }
         let now = self.deps.clock.now();
-        let ledger = self.deps.store.ensure_ledger(goal, now).await?;
+        let ledger = self.deps.store.ensure_ledger(objective, now).await?;
 
         if let Some(active) = &ledger.state.active_cycle
             && active.lease_is_live(now)
@@ -173,7 +173,7 @@ impl GoalCycleRunner {
             .mutate_ledger(&ledger, |state| {
                 acquire(
                     state,
-                    goal,
+                    objective,
                     &start,
                     &instance_id,
                     &candidate_run_id,
@@ -186,7 +186,8 @@ impl GoalCycleRunner {
             Acquisition::Run(active) => active,
             Acquisition::Busy(reason) => return Ok(CycleRunOutcome::Skipped { reason }),
             Acquisition::Finished(result) => {
-                self.notify_terminal_result(goal, &ledger, &result).await;
+                self.notify_terminal_result(objective, &ledger, &result)
+                    .await;
                 return Ok(CycleRunOutcome::Finished {
                     run_id: candidate_run_id,
                     result,
@@ -195,7 +196,7 @@ impl GoalCycleRunner {
         };
 
         // Read back to detect a concurrent instance that wrote its own lease in between.
-        let confirmed = self.deps.store.reload_ledger(&goal.id).await?;
+        let confirmed = self.deps.store.reload_ledger(&objective.id).await?;
         let still_ours = confirmed.state.active_cycle.as_ref().is_some_and(|cycle| {
             cycle.run_id == active.run_id && cycle.lease_holder == self.deps.instance_id
         });
@@ -205,21 +206,21 @@ impl GoalCycleRunner {
             });
         }
 
-        self.log("goal_cycle_started", goal, &active, None);
-        self.continue_cycle(goal, confirmed, active, cancellation)
+        self.log("objective_cycle_started", objective, &active, None);
+        self.continue_cycle(objective, confirmed, active, cancellation)
             .await
     }
 
     async fn continue_cycle(
         &self,
-        goal: &GoalDefinition,
+        objective: &ObjectiveDefinition,
         mut ledger: StoredLedger,
         mut active: ActiveCycle,
         cancellation: TaskCancellation,
-    ) -> Result<CycleRunOutcome, GoalCycleError> {
+    ) -> Result<CycleRunOutcome, ObjectiveCycleError> {
         let run_id = active.run_id.clone();
         if !active.phase.investigation_persisted() {
-            let observed = self.observe(goal, &ledger).await?;
+            let observed = self.observe(objective, &ledger).await?;
             let now = self.deps.clock.now();
             let lease = self.deps.lease_duration;
             let (saved, ()) = self
@@ -236,7 +237,7 @@ impl GoalCycleRunner {
             ledger = saved;
 
             let investigation = self
-                .investigate(goal, &mut ledger, &active, &observed, &cancellation)
+                .investigate(objective, &mut ledger, &active, &observed, &cancellation)
                 .await?;
             match investigation {
                 InvestigationResult::Interrupted { tokens } => {
@@ -248,13 +249,13 @@ impl GoalCycleRunner {
                 }
                 InvestigationResult::Ended { result, tokens } => {
                     let result = self
-                        .finalize(goal, &ledger, &active, result, tokens)
+                        .finalize(objective, &ledger, &active, result, tokens)
                         .await?;
                     return Ok(CycleRunOutcome::Finished { run_id, result });
                 }
                 InvestigationResult::Report { report, tokens } => {
                     ledger = self
-                        .decide(goal, &ledger, &active, &observed, &report, tokens)
+                        .decide(objective, &ledger, &active, &observed, &report, tokens)
                         .await?;
                 }
             }
@@ -262,17 +263,17 @@ impl GoalCycleRunner {
                 .state
                 .active_cycle
                 .clone()
-                .ok_or_else(|| missing_cycle(goal))?;
+                .ok_or_else(|| missing_cycle(objective))?;
         }
 
         if active.phase == CyclePhase::Reporting {
-            match self.report(goal, &ledger, &active).await {
+            match self.report(objective, &ledger, &active).await {
                 Ok(saved) => ledger = saved,
                 Err(ReportError::WorkState(error)) => return Err(error.into()),
                 Err(ReportError::Slack(error)) => {
                     self.log(
-                        "goal_cycle_report_failed",
-                        goal,
+                        "objective_cycle_report_failed",
+                        objective,
                         &active,
                         Some(&error.message),
                     );
@@ -286,11 +287,11 @@ impl GoalCycleRunner {
                 .state
                 .active_cycle
                 .clone()
-                .ok_or_else(|| missing_cycle(goal))?;
+                .ok_or_else(|| missing_cycle(objective))?;
         }
 
         if active.phase == CyclePhase::Learning {
-            ledger = self.learn(goal, &ledger, &active).await?;
+            ledger = self.learn(objective, &ledger, &active).await?;
         }
 
         let result = if active.no_new_findings {
@@ -298,21 +299,23 @@ impl GoalCycleRunner {
         } else {
             CycleResult::Completed
         };
-        let result = self.finalize(goal, &ledger, &active, result, 0).await?;
+        let result = self
+            .finalize(objective, &ledger, &active, result, 0)
+            .await?;
         Ok(CycleRunOutcome::Finished { run_id, result })
     }
 
     async fn observe(
         &self,
-        goal: &GoalDefinition,
+        objective: &ObjectiveDefinition,
         ledger: &StoredLedger,
-    ) -> Result<ObserveOutput, GoalCycleError> {
+    ) -> Result<ObserveOutput, ObjectiveCycleError> {
         let now = self.deps.clock.now();
         let items = self
             .deps
             .store
             .repository()
-            .list_work_items(&goal.id)
+            .list_work_items(&objective.id)
             .await?;
         let reconciled = reconcile_human_signals(&self.deps.store, items, now).await?;
         let mut notes = reconciled.notes;
@@ -322,7 +325,7 @@ impl GoalCycleRunner {
         let memories = match &self.deps.task_resources.canvas_memory_port {
             Some(port) => match port
                 .list_channel_memories(ListSlackCanvasMemoriesInput {
-                    channel_id: goal.report.channel_id.clone(),
+                    channel_id: objective.report.channel_id.clone(),
                     channel_name: None,
                     limit: MAX_MEMORIES_IN_BRIEF,
                 })
@@ -336,8 +339,8 @@ impl GoalCycleRunner {
             },
             None => Vec::new(),
         };
-        if ledger.state.definition_fingerprint != goal.fingerprint() {
-            notes.push("goal definition fingerprint differs from the ledger".to_string());
+        if ledger.state.definition_fingerprint != objective.fingerprint() {
+            notes.push("objective definition fingerprint differs from the ledger".to_string());
         }
 
         Ok(ObserveOutput {
@@ -349,32 +352,32 @@ impl GoalCycleRunner {
 
     async fn investigate(
         &self,
-        goal: &GoalDefinition,
+        objective: &ObjectiveDefinition,
         ledger: &mut StoredLedger,
         active: &ActiveCycle,
         observed: &ObserveOutput,
         cancellation: &TaskCancellation,
-    ) -> Result<InvestigationResult, GoalCycleError> {
+    ) -> Result<InvestigationResult, ObjectiveCycleError> {
         let now = self.deps.clock.now();
         let max_duration = Duration::seconds(
-            i64::try_from(goal.budget.max_cycle_duration_secs).unwrap_or(i64::MAX / 2),
+            i64::try_from(objective.budget.max_cycle_duration_secs).unwrap_or(i64::MAX / 2),
         );
-        let remaining_today = goal
+        let remaining_today = objective
             .budget
             .max_llm_tokens_per_day
             .saturating_sub(ledger.state.tokens_used_on(now.date_naive()));
         let budget = RunBudget::new(RunLimits {
-            max_tool_calls: goal.budget.max_tool_calls_per_cycle,
-            max_llm_tokens: goal
+            max_tool_calls: objective.budget.max_tool_calls_per_cycle,
+            max_llm_tokens: objective
                 .budget
                 .max_llm_tokens_per_cycle
                 .min(remaining_today)
                 .max(1),
-            max_sub_agents: goal.budget.max_sub_agents_per_cycle,
-            max_parallel_tools: goal.budget.max_parallel_tools,
+            max_sub_agents: objective.budget.max_sub_agents_per_cycle,
+            max_parallel_tools: objective.budget.max_parallel_tools,
         });
         let brief = build_brief(&BuildBriefInput {
-            goal,
+            objective,
             ledger: &ledger.state,
             ledger_human_notes: &ledger.human_notes,
             items: &observed.items,
@@ -438,7 +441,7 @@ impl GoalCycleRunner {
                 result: CycleResult::BudgetExhausted {
                     reason: format!(
                         "time limit of {}s reached before a report was submitted",
-                        goal.budget.max_cycle_duration_secs
+                        objective.budget.max_cycle_duration_secs
                     ),
                 },
                 tokens,
@@ -460,7 +463,8 @@ impl GoalCycleRunner {
                         tokens,
                     },
                     None if budget.tokens_exhausted()
-                        || budget.tool_calls_used() >= goal.budget.max_tool_calls_per_cycle =>
+                        || budget.tool_calls_used()
+                            >= objective.budget.max_tool_calls_per_cycle =>
                     {
                         InvestigationResult::Ended {
                             result: CycleResult::BudgetExhausted {
@@ -499,9 +503,9 @@ impl GoalCycleRunner {
         {
             Ok((saved, ())) => *ledger = saved,
             Err(error) => self.deps.logger.warn(
-                "goal_cycle_lease_renewal_failed",
+                "objective_cycle_lease_renewal_failed",
                 string_log_meta([
-                    ("goalId", ledger.state.goal_id.to_string()),
+                    ("objectiveId", ledger.state.objective_id.to_string()),
                     ("error", error.to_string()),
                 ]),
             ),
@@ -510,17 +514,17 @@ impl GoalCycleRunner {
 
     async fn decide(
         &self,
-        goal: &GoalDefinition,
+        objective: &ObjectiveDefinition,
         ledger: &StoredLedger,
         active: &ActiveCycle,
         observed: &ObserveOutput,
         report: &InvestigationReport,
         tokens: u64,
-    ) -> Result<StoredLedger, GoalCycleError> {
+    ) -> Result<StoredLedger, ObjectiveCycleError> {
         let now = self.deps.clock.now();
         let policy = apply_report_policy(report);
         let changes = plan_changes(&PlanChangesInput {
-            goal,
+            objective,
             existing: &observed.items,
             proposals: &policy.proposals,
         });
@@ -554,7 +558,7 @@ impl GoalCycleRunner {
                     touched.push(saved.issue.number);
                 }
                 PlannedChange::Create { proposal } => {
-                    let Some(state) = new_work_item_state(goal, proposal, &context) else {
+                    let Some(state) = new_work_item_state(objective, proposal, &context) else {
                         continue;
                     };
                     let saved = self.deps.store.create_work_item_once(&state).await?;
@@ -631,7 +635,7 @@ impl GoalCycleRunner {
                 .await?;
         }
 
-        let knowledge: Vec<KnowledgeDraft> = if goal.permissions.save_knowledge {
+        let knowledge: Vec<KnowledgeDraft> = if objective.permissions.save_knowledge {
             policy.knowledge.clone()
         } else {
             Vec::new()
@@ -679,7 +683,7 @@ impl GoalCycleRunner {
 
     async fn report(
         &self,
-        goal: &GoalDefinition,
+        objective: &ObjectiveDefinition,
         ledger: &StoredLedger,
         active: &ActiveCycle,
     ) -> Result<StoredLedger, ReportError> {
@@ -688,7 +692,7 @@ impl GoalCycleRunner {
             .deps
             .store
             .repository()
-            .list_work_items(&goal.id)
+            .list_work_items(&objective.id)
             .await?;
         let mut candidates = active.pending_notifications.clone();
         candidates.extend(
@@ -702,7 +706,7 @@ impl GoalCycleRunner {
                 .map(|item| item.issue.number),
         );
         let decision = compose_report(&ComposeReportInput {
-            goal,
+            objective,
             ledger: &ledger.state,
             ledger_url: &ledger.issue.url,
             items: &items,
@@ -714,20 +718,20 @@ impl GoalCycleRunner {
 
         let mut posted_key = None;
         match decision {
-            ReportDecision::Post { text, item_numbers } if goal.permissions.post_reports => {
-                let key = report_key(goal.id.as_str(), &active.run_id);
+            ReportDecision::Post { text, item_numbers } if objective.permissions.post_reports => {
+                let key = report_key(objective.id.as_str(), &active.run_id);
                 let already = self
                     .deps
                     .report_port
-                    .find_posted_report(&goal.report.channel_id, &key)
+                    .find_posted_report(&objective.report.channel_id, &key)
                     .await
                     .map_err(ReportError::Slack)?;
                 if already.is_none() {
                     self.deps
                         .report_port
-                        .post_report(GoalReportMessage {
-                            channel_id: goal.report.channel_id.clone(),
-                            goal_id: goal.id.to_string(),
+                        .post_report(ObjectiveReportMessage {
+                            channel_id: objective.report.channel_id.clone(),
+                            objective_id: objective.id.to_string(),
                             report_key: key.clone(),
                             text,
                         })
@@ -751,7 +755,12 @@ impl GoalCycleRunner {
             }
             ReportDecision::Post { .. } | ReportDecision::Nothing => {}
             ReportDecision::Deferred { reason } => {
-                self.log("goal_cycle_report_deferred", goal, active, Some(&reason));
+                self.log(
+                    "objective_cycle_report_deferred",
+                    objective,
+                    active,
+                    Some(&reason),
+                );
             }
         }
 
@@ -776,16 +785,16 @@ impl GoalCycleRunner {
 
     async fn learn(
         &self,
-        goal: &GoalDefinition,
+        objective: &ObjectiveDefinition,
         ledger: &StoredLedger,
         active: &ActiveCycle,
-    ) -> Result<StoredLedger, GoalCycleError> {
+    ) -> Result<StoredLedger, ObjectiveCycleError> {
         let Some(canvas) = self
             .deps
             .task_resources
             .canvas_memory_port
             .as_ref()
-            .filter(|_| goal.permissions.save_knowledge)
+            .filter(|_| objective.permissions.save_knowledge)
         else {
             return Ok(ledger.clone());
         };
@@ -802,7 +811,7 @@ impl GoalCycleRunner {
                     } else {
                         SlackCanvasMemoryVisibility::Channel
                     },
-                    channel_id: goal.report.channel_id.clone(),
+                    channel_id: objective.report.channel_id.clone(),
                     channel_name: None,
                     source_message_ts: String::new(),
                     source_url: Some(ledger.issue.url.clone()),
@@ -814,8 +823,8 @@ impl GoalCycleRunner {
             match result {
                 Ok(()) => learned.push(fingerprint),
                 Err(error) => self.log(
-                    "goal_cycle_learn_failed",
-                    goal,
+                    "objective_cycle_learn_failed",
+                    objective,
                     active,
                     Some(&error.message),
                 ),
@@ -840,14 +849,14 @@ impl GoalCycleRunner {
 
     async fn finalize(
         &self,
-        goal: &GoalDefinition,
+        objective: &ObjectiveDefinition,
         ledger: &StoredLedger,
         active: &ActiveCycle,
         result: CycleResult,
         extra_tokens: u64,
-    ) -> Result<CycleResult, GoalCycleError> {
+    ) -> Result<CycleResult, ObjectiveCycleError> {
         let now = self.deps.clock.now();
-        let max_attempts = goal.budget.max_cycle_attempts as usize;
+        let max_attempts = objective.budget.max_cycle_attempts as usize;
         let active = active.clone();
         let (saved, final_result) = self
             .deps
@@ -901,12 +910,12 @@ impl GoalCycleRunner {
             })
             .await?;
         self.log(
-            "goal_cycle_finished",
-            goal,
+            "objective_cycle_finished",
+            objective,
             &active,
             Some(&final_result.label()),
         );
-        self.notify_terminal_result(goal, &saved, &final_result)
+        self.notify_terminal_result(objective, &saved, &final_result)
             .await;
         Ok(final_result)
     }
@@ -914,32 +923,32 @@ impl GoalCycleRunner {
     /// Posts a one-off notice for cycles that ended without results humans should know about.
     async fn notify_terminal_result(
         &self,
-        goal: &GoalDefinition,
+        objective: &ObjectiveDefinition,
         ledger: &StoredLedger,
         result: &CycleResult,
     ) {
         let message = match result {
             CycleResult::Abandoned { reason } => format!(
-                "*Goal `{}`*: a cycle was abandoned — {reason}. Reili will try again at the next scheduled time. <{}|goal ledger>",
-                goal.id, ledger.issue.url
+                "*Objective `{}`*: a cycle was abandoned — {reason}. Reili will try again at the next scheduled time. <{}|objective ledger>",
+                objective.id, ledger.issue.url
             ),
             CycleResult::BudgetExhausted { reason } => format!(
-                "*Goal `{}`*: a cycle stopped on its budget — {reason}. Partial results were not recorded as findings. <{}|goal ledger>",
-                goal.id, ledger.issue.url
+                "*Objective `{}`*: a cycle stopped on its budget — {reason}. Partial results were not recorded as findings. <{}|objective ledger>",
+                objective.id, ledger.issue.url
             ),
             CycleResult::Skipped { reason } if reason.contains("budget") => format!(
-                "*Goal `{}`*: skipped a cycle — {reason}. <{}|goal ledger>",
-                goal.id, ledger.issue.url
+                "*Objective `{}`*: skipped a cycle — {reason}. <{}|objective ledger>",
+                objective.id, ledger.issue.url
             ),
             _ => return,
         };
-        if !goal.permissions.post_reports {
+        if !objective.permissions.post_reports {
             return;
         }
         let today = self.deps.clock.now().date_naive();
         let key = format!(
             "{}:notice:{}:{}",
-            goal.id,
+            objective.id,
             today,
             stable_fingerprint(&message)
         );
@@ -949,7 +958,7 @@ impl GoalCycleRunner {
         let posted = self
             .deps
             .report_port
-            .find_posted_report(&goal.report.channel_id, &key)
+            .find_posted_report(&objective.report.channel_id, &key)
             .await;
         if !matches!(posted, Ok(None)) {
             return;
@@ -957,9 +966,9 @@ impl GoalCycleRunner {
         let post = self
             .deps
             .report_port
-            .post_report(GoalReportMessage {
-                channel_id: goal.report.channel_id.clone(),
-                goal_id: goal.id.to_string(),
+            .post_report(ObjectiveReportMessage {
+                channel_id: objective.report.channel_id.clone(),
+                objective_id: objective.id.to_string(),
                 report_key: key.clone(),
                 text: message,
             })
@@ -974,7 +983,11 @@ impl GoalCycleRunner {
         }
     }
 
-    async fn record_usage(&self, ledger: &StoredLedger, tokens: u64) -> Result<(), GoalCycleError> {
+    async fn record_usage(
+        &self,
+        ledger: &StoredLedger,
+        tokens: u64,
+    ) -> Result<(), ObjectiveCycleError> {
         if tokens == 0 {
             return Ok(());
         }
@@ -994,12 +1007,12 @@ impl GoalCycleRunner {
     fn log(
         &self,
         event: &'static str,
-        goal: &GoalDefinition,
+        objective: &ObjectiveDefinition,
         active: &ActiveCycle,
         detail: Option<&str>,
     ) {
         let mut fields = string_log_meta([
-            ("goalId", goal.id.to_string()),
+            ("objectiveId", objective.id.to_string()),
             ("runId", active.run_id.clone()),
             ("attempt", active.attempt.to_string()),
             ("phase", format!("{:?}", active.phase)),
@@ -1022,16 +1035,16 @@ impl From<WorkStateError> for ReportError {
     }
 }
 
-fn missing_cycle(goal: &GoalDefinition) -> GoalCycleError {
-    GoalCycleError::WorkState(WorkStateError::Other(PortError::new(format!(
+fn missing_cycle(objective: &ObjectiveDefinition) -> ObjectiveCycleError {
+    ObjectiveCycleError::WorkState(WorkStateError::Other(PortError::new(format!(
         "active cycle for `{}` disappeared from the ledger",
-        goal.id
+        objective.id
     ))))
 }
 
 fn acquire(
-    state: &mut GoalLedgerState,
-    goal: &GoalDefinition,
+    state: &mut ObjectiveLedgerState,
+    objective: &ObjectiveDefinition,
     start: &CycleStart,
     instance_id: &str,
     run_id: &str,
@@ -1042,7 +1055,7 @@ fn acquire(
         if active.lease_is_live(now) {
             return Acquisition::Busy(format!("cycle {} is already running", active.run_id));
         }
-        if active.attempt >= goal.budget.max_cycle_attempts {
+        if active.attempt >= objective.budget.max_cycle_attempts {
             let abandoned = active.clone();
             state.record_cycle(CycleRecord {
                 run_id: abandoned.run_id.clone(),
@@ -1081,10 +1094,10 @@ fn acquire(
         return Acquisition::Busy("no interrupted cycle to resume".to_string());
     };
     let today = now.date_naive();
-    if state.tokens_used_on(today) >= goal.budget.max_llm_tokens_per_day {
+    if state.tokens_used_on(today) >= objective.budget.max_llm_tokens_per_day {
         let reason = format!(
             "daily LLM token budget ({}) exhausted",
-            goal.budget.max_llm_tokens_per_day
+            objective.budget.max_llm_tokens_per_day
         );
         state.record_cycle(CycleRecord {
             run_id: run_id.to_string(),

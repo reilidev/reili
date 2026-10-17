@@ -1,16 +1,17 @@
-//! Resolves and validates goal-driven autonomy settings.
+//! Resolves and validates objective-driven autonomy settings.
 
 use std::collections::BTreeSet;
 
-use reili_core::goal::{
-    GoalBudget, GoalDefinition, GoalId, GoalPermissions, GoalReportPolicy, GoalSchedule, GoalScope,
+use reili_core::objective::{
+    ObjectiveBudget, ObjectiveDefinition, ObjectiveId, ObjectivePermissions, ObjectiveReportPolicy,
+    ObjectiveSchedule, ObjectiveScope,
 };
 
 use super::ConfigError;
 use super::env::{EnvironmentReader, read_required_secret};
 use super::file::FileConfig;
-use super::goal_file::GoalFileConfig;
 use super::model::{AutonomyConfig, WorkStateConfig};
+use super::objective_file::ObjectiveFileConfig;
 use crate::config::SecretString;
 
 const DEFAULT_GITHUB_API_BASE_URL: &str = "https://api.github.com";
@@ -47,15 +48,15 @@ pub(super) fn resolve_autonomy(file_config: &FileConfig) -> Result<AutonomyConfi
 pub(super) fn resolve_work_state(
     file_config: &FileConfig,
     env: &dyn EnvironmentReader,
-    goals: &[GoalDefinition],
+    objectives: &[ObjectiveDefinition],
 ) -> Result<Option<WorkStateConfig>, ConfigError> {
     let Some(github) = file_config.work_state.github.as_ref() else {
-        if goals.is_empty() {
+        if objectives.is_empty() {
             return Ok(None);
         }
         return Err(invalid(
             "work_state.github",
-            "is required when [[goals]] are configured: goals persist their work state as GitHub Issues",
+            "is required when [[objectives]] are configured: objectives persist their work state as GitHub Issues",
         ));
     };
     let repository = github.repository.trim().to_string();
@@ -125,18 +126,20 @@ pub(super) fn resolve_work_state(
     }))
 }
 
-pub(super) fn resolve_goals(file_config: &FileConfig) -> Result<Vec<GoalDefinition>, ConfigError> {
+pub(super) fn resolve_objectives(
+    file_config: &FileConfig,
+) -> Result<Vec<ObjectiveDefinition>, ConfigError> {
     let mut seen = BTreeSet::new();
     file_config
-        .goals
+        .objectives
         .iter()
         .enumerate()
-        .map(|(index, goal)| {
-            let resolved = resolve_goal(goal, index)?;
+        .map(|(index, objective)| {
+            let resolved = resolve_objective(objective, index)?;
             if !seen.insert(resolved.id.clone()) {
                 return Err(invalid(
-                    format!("goals[{index}].id"),
-                    format!("duplicate goal id `{}`", resolved.id),
+                    format!("objectives[{index}].id"),
+                    format!("duplicate objective id `{}`", resolved.id),
                 ));
             }
             Ok(resolved)
@@ -144,36 +147,39 @@ pub(super) fn resolve_goals(file_config: &FileConfig) -> Result<Vec<GoalDefiniti
         .collect()
 }
 
-fn resolve_goal(goal: &GoalFileConfig, index: usize) -> Result<GoalDefinition, ConfigError> {
-    let field = |name: &str| format!("goals[{index}].{name}");
-    let id =
-        GoalId::new(goal.id.trim()).map_err(|error| invalid(field("id"), error.to_string()))?;
-    let schedule = GoalSchedule::parse(&goal.schedule, &goal.timezone)
+fn resolve_objective(
+    objective: &ObjectiveFileConfig,
+    index: usize,
+) -> Result<ObjectiveDefinition, ConfigError> {
+    let field = |name: &str| format!("objectives[{index}].{name}");
+    let id = ObjectiveId::new(objective.id.trim())
+        .map_err(|error| invalid(field("id"), error.to_string()))?;
+    let schedule = ObjectiveSchedule::parse(&objective.schedule, &objective.timezone)
         .map_err(|error| invalid(field("schedule"), error.to_string()))?;
-    let channel = goal.report_channel.trim();
+    let channel = objective.report_channel.trim();
     if !(channel.starts_with('C') || channel.starts_with('G')) || channel.len() < 9 {
         return Err(invalid(
             field("report_channel"),
             "must be a Slack channel ID such as C0123456789 (not a channel name)",
         ));
     }
-    let defaults = GoalBudget::default();
-    let budget = &goal.budget;
-    let definition = GoalDefinition {
+    let defaults = ObjectiveBudget::default();
+    let budget = &objective.budget;
+    let definition = ObjectiveDefinition {
         id,
-        objective: goal.objective.trim().to_string(),
-        scope: GoalScope {
-            services: goal.scope.clone(),
-            repositories: goal.repositories.clone(),
-            environments: goal.environments.clone(),
+        description: objective.description.trim().to_string(),
+        scope: ObjectiveScope {
+            services: objective.scope.clone(),
+            repositories: objective.repositories.clone(),
+            environments: objective.environments.clone(),
         },
         schedule,
-        report: GoalReportPolicy {
+        report: ObjectiveReportPolicy {
             channel_id: channel.to_string(),
-            min_interval_minutes: goal.report.min_interval_minutes,
-            max_reports_per_day: goal.report.max_reports_per_day,
+            min_interval_minutes: objective.report.min_interval_minutes,
+            max_reports_per_day: objective.report.max_reports_per_day,
         },
-        budget: GoalBudget {
+        budget: ObjectiveBudget {
             max_cycle_duration_secs: budget
                 .max_cycle_minutes
                 .map_or(defaults.max_cycle_duration_secs, |minutes| {
@@ -204,14 +210,14 @@ fn resolve_goal(goal: &GoalFileConfig, index: usize) -> Result<GoalDefinition, C
                 .max_cycle_attempts
                 .unwrap_or(defaults.max_cycle_attempts),
         },
-        permissions: GoalPermissions {
-            save_knowledge: goal.permissions.save_knowledge,
-            post_reports: goal.permissions.post_reports,
+        permissions: ObjectivePermissions {
+            save_knowledge: objective.permissions.save_knowledge,
+            post_reports: objective.permissions.post_reports,
         },
-        enabled: goal.enabled,
+        enabled: objective.enabled,
     };
     definition
         .validate()
-        .map_err(|error| invalid(format!("goals[{index}]"), error.to_string()))?;
+        .map_err(|error| invalid(format!("objectives[{index}]"), error.to_string()))?;
     Ok(definition)
 }

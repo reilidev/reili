@@ -1,4 +1,4 @@
-//! Runs a goal cycle investigation on any rig completion client: the lead agent works the brief,
+//! Runs an objective cycle investigation on any rig completion client: the lead agent works the brief,
 //! sub-agents share one budget, and the structured report submitted through
 //! `submit_investigation_report` is returned.
 
@@ -19,9 +19,9 @@ use crate::outbound::agents::connector::{
     ConnectorPrepareError, ConnectorPromptFact, ConnectorSet,
 };
 use crate::outbound::agents::task_agent::{
-    AgentInstructionsConfig, BuildGoalAgentInput, BuildGoalPromptInput,
+    AgentInstructionsConfig, BuildObjectiveAgentInput, BuildObjectivePromptInput,
     CreateTaskAgentFactoryInput, TaskAgentConfig, TaskAgentExecutionContext, TaskAgentFactory,
-    TaskAgentRunContext, build_goal_prompt,
+    TaskAgentRunContext, build_objective_prompt,
 };
 
 pub struct RunLlmInvestigationInput<C>
@@ -51,7 +51,7 @@ where
     let usage_collector = LlmUsageCollector::new();
     let runtime = TaskRuntime {
         started_at_iso: run.brief.now.to_rfc3339(),
-        channel: format!("goal:{}", run.brief.goal_id),
+        channel: format!("objective:{}", run.brief.objective_id),
         thread_ts: run.brief.run_id.clone(),
         retry_count: 0,
     };
@@ -70,7 +70,7 @@ where
         .iter()
         .flat_map(|connector| connector.prompt_facts())
         .collect();
-    let prompt = build_goal_prompt(&BuildGoalPromptInput {
+    let prompt = build_objective_prompt(&BuildObjectivePromptInput {
         brief: &run.brief,
         language: &input.language,
         prompt_facts: &prompt_facts,
@@ -96,7 +96,7 @@ where
             },
         },
     });
-    let agent = factory.build_goal_agent(BuildGoalAgentInput {
+    let agent = factory.build_objective_agent(BuildObjectiveAgentInput {
         run_context: TaskAgentRunContext {
             resources: Arc::new(run.resources),
             execution,

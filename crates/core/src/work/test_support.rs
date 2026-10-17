@@ -6,7 +6,7 @@ use super::item::{
     NotificationState, Severity, WORK_ITEM_SCHEMA_VERSION, WorkItemKey, WorkItemKind,
     WorkItemState, WorkItemStatus,
 };
-use crate::goal::GoalId;
+use crate::objective::ObjectiveId;
 
 #[must_use]
 pub fn sample_work_item(key: &str) -> WorkItemState {
@@ -18,7 +18,7 @@ pub fn sample_work_item(key: &str) -> WorkItemState {
         schema_version: WORK_ITEM_SCHEMA_VERSION,
         key: WorkItemKey::normalize(key)
             .unwrap_or_else(|| WorkItemKey::normalize("sample").unwrap_or_else(|| unreachable!())),
-        goal_id: GoalId::new("checkout").unwrap_or_else(|_| unreachable!()),
+        objective_id: ObjectiveId::new("checkout").unwrap_or_else(|_| unreachable!()),
         title: format!("Sample {key}"),
         kind: WorkItemKind::Incident,
         severity: Severity::Medium,

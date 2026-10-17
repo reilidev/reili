@@ -4,36 +4,36 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::fingerprint::stable_fingerprint;
-use super::schedule::GoalSchedule;
+use super::schedule::ObjectiveSchedule;
 
-/// GitHub label names are limited to 50 characters and goals are labelled `reili-goal:<id>`.
-const MAX_GOAL_ID_LENGTH: usize = 39;
+/// GitHub label names are limited to 50 characters and objectives are labelled `reili-objective:<id>`.
+const MAX_OBJECTIVE_ID_LENGTH: usize = 34;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum GoalDefinitionError {
-    #[error("goal id `{0}` must be 1-39 chars of lowercase letters, digits, `-` or `_`")]
+pub enum ObjectiveDefinitionError {
+    #[error("objective id `{0}` must be 1-34 chars of lowercase letters, digits, `-` or `_`")]
     InvalidId(String),
-    #[error("goal `{goal}`: {message}")]
-    Invalid { goal: String, message: String },
+    #[error("objective `{objective}`: {message}")]
+    Invalid { objective: String, message: String },
 }
 
-/// Stable, label-safe goal identifier (used in GitHub labels and Slack commands).
+/// Stable, label-safe objective identifier (used in GitHub labels and Slack commands).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-pub struct GoalId(String);
+pub struct ObjectiveId(String);
 
-impl GoalId {
-    pub fn new(value: impl Into<String>) -> Result<Self, GoalDefinitionError> {
+impl ObjectiveId {
+    pub fn new(value: impl Into<String>) -> Result<Self, ObjectiveDefinitionError> {
         let value = value.into();
         let valid = !value.is_empty()
-            && value.len() <= MAX_GOAL_ID_LENGTH
+            && value.len() <= MAX_OBJECTIVE_ID_LENGTH
             && value
                 .chars()
                 .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_');
         if valid {
             Ok(Self(value))
         } else {
-            Err(GoalDefinitionError::InvalidId(value))
+            Err(ObjectiveDefinitionError::InvalidId(value))
         }
     }
 
@@ -43,35 +43,35 @@ impl GoalId {
     }
 }
 
-impl fmt::Display for GoalId {
+impl fmt::Display for ObjectiveId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
 
-impl TryFrom<String> for GoalId {
-    type Error = GoalDefinitionError;
+impl TryFrom<String> for ObjectiveId {
+    type Error = ObjectiveDefinitionError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         Self::new(value)
     }
 }
 
-impl From<GoalId> for String {
-    fn from(value: GoalId) -> Self {
+impl From<ObjectiveId> for String {
+    fn from(value: ObjectiveId) -> Self {
         value.0
     }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GoalScope {
+pub struct ObjectiveScope {
     pub services: Vec<String>,
     pub repositories: Vec<String>,
     pub environments: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GoalBudget {
+pub struct ObjectiveBudget {
     pub max_cycle_duration_secs: u64,
     pub max_llm_tokens_per_cycle: u64,
     pub max_llm_tokens_per_day: u64,
@@ -83,7 +83,7 @@ pub struct GoalBudget {
     pub max_cycle_attempts: u32,
 }
 
-impl Default for GoalBudget {
+impl Default for ObjectiveBudget {
     fn default() -> Self {
         Self {
             max_cycle_duration_secs: 30 * 60,
@@ -100,22 +100,22 @@ impl Default for GoalBudget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GoalReportPolicy {
+pub struct ObjectiveReportPolicy {
     /// Slack channel ID reports are posted to.
     pub channel_id: String,
     pub min_interval_minutes: u32,
     pub max_reports_per_day: u32,
 }
 
-/// What a goal is allowed to write. Writes are always limited to the configured management
-/// repository, the goal's report channel, and the configured Canvas; these flags only narrow that.
+/// What an objective is allowed to write. Writes are always limited to the configured management
+/// repository, the objective's report channel, and the configured Canvas; these flags only narrow that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GoalPermissions {
+pub struct ObjectivePermissions {
     pub save_knowledge: bool,
     pub post_reports: bool,
 }
 
-impl Default for GoalPermissions {
+impl Default for ObjectivePermissions {
     fn default() -> Self {
         Self {
             save_knowledge: true,
@@ -125,26 +125,26 @@ impl Default for GoalPermissions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GoalDefinition {
-    pub id: GoalId,
-    pub objective: String,
-    pub scope: GoalScope,
-    pub schedule: GoalSchedule,
-    pub report: GoalReportPolicy,
-    pub budget: GoalBudget,
-    pub permissions: GoalPermissions,
+pub struct ObjectiveDefinition {
+    pub id: ObjectiveId,
+    pub description: String,
+    pub scope: ObjectiveScope,
+    pub schedule: ObjectiveSchedule,
+    pub report: ObjectiveReportPolicy,
+    pub budget: ObjectiveBudget,
+    pub permissions: ObjectivePermissions,
     pub enabled: bool,
 }
 
-impl GoalDefinition {
+impl ObjectiveDefinition {
     /// Validates invariants that the config loader cannot express structurally.
-    pub fn validate(&self) -> Result<(), GoalDefinitionError> {
-        let invalid = |message: &str| GoalDefinitionError::Invalid {
-            goal: self.id.to_string(),
+    pub fn validate(&self) -> Result<(), ObjectiveDefinitionError> {
+        let invalid = |message: &str| ObjectiveDefinitionError::Invalid {
+            objective: self.id.to_string(),
             message: message.to_string(),
         };
-        if self.objective.trim().is_empty() {
-            return Err(invalid("objective must not be empty"));
+        if self.description.trim().is_empty() {
+            return Err(invalid("description must not be empty"));
         }
         if self.report.channel_id.trim().is_empty() {
             return Err(invalid("report_channel must not be empty"));
@@ -165,7 +165,7 @@ impl GoalDefinition {
         Ok(())
     }
 
-    /// Fingerprint of everything that changes what the goal asks for. Persisted in the goal
+    /// Fingerprint of everything that changes what the objective asks for. Persisted in the objective
     /// ledger so definition changes are detected across restarts.
     #[must_use]
     pub fn fingerprint(&self) -> String {
@@ -176,26 +176,29 @@ impl GoalDefinition {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::{GoalBudget, GoalDefinition, GoalId, GoalPermissions, GoalReportPolicy, GoalScope};
-    use crate::goal::GoalSchedule;
+    use super::{
+        ObjectiveBudget, ObjectiveDefinition, ObjectiveId, ObjectivePermissions,
+        ObjectiveReportPolicy, ObjectiveScope,
+    };
+    use crate::objective::ObjectiveSchedule;
 
-    pub(crate) fn sample_goal(id: &str) -> GoalDefinition {
-        GoalDefinition {
-            id: GoalId::new(id).expect("goal id"),
-            objective: "Improve checkout reliability".to_string(),
-            scope: GoalScope {
+    pub(crate) fn sample_objective(id: &str) -> ObjectiveDefinition {
+        ObjectiveDefinition {
+            id: ObjectiveId::new(id).expect("objective id"),
+            description: "Improve checkout reliability".to_string(),
+            scope: ObjectiveScope {
                 services: vec!["checkout-api".to_string()],
                 repositories: vec!["acme/checkout".to_string()],
                 environments: vec!["production".to_string()],
             },
-            schedule: GoalSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("schedule"),
-            report: GoalReportPolicy {
+            schedule: ObjectiveSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("schedule"),
+            report: ObjectiveReportPolicy {
                 channel_id: "C0123".to_string(),
                 min_interval_minutes: 60,
                 max_reports_per_day: 4,
             },
-            budget: GoalBudget::default(),
-            permissions: GoalPermissions::default(),
+            budget: ObjectiveBudget::default(),
+            permissions: ObjectivePermissions::default(),
             enabled: true,
         }
     }
@@ -203,39 +206,42 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::sample_goal;
-    use super::{GoalDefinitionError, GoalId};
+    use super::test_support::sample_objective;
+    use super::{ObjectiveDefinitionError, ObjectiveId};
 
     #[test]
-    fn validates_goal_ids() {
-        assert!(GoalId::new("checkout-reliability").is_ok());
-        assert!(GoalId::new("ci_stability2").is_ok());
+    fn validates_objective_ids() {
+        assert!(ObjectiveId::new("checkout-reliability").is_ok());
+        assert!(ObjectiveId::new("ci_stability2").is_ok());
         assert_eq!(
-            GoalId::new("Checkout"),
-            Err(GoalDefinitionError::InvalidId("Checkout".to_string()))
+            ObjectiveId::new("Checkout"),
+            Err(ObjectiveDefinitionError::InvalidId("Checkout".to_string()))
         );
-        assert!(GoalId::new("").is_err());
-        assert!(GoalId::new("a b").is_err());
-        assert!(GoalId::new("x".repeat(39)).is_ok());
-        assert!(GoalId::new("x".repeat(40)).is_err());
+        assert!(ObjectiveId::new("").is_err());
+        assert!(ObjectiveId::new("a b").is_err());
+        assert!(ObjectiveId::new("x".repeat(34)).is_ok());
+        assert!(ObjectiveId::new("x".repeat(35)).is_err());
     }
 
     #[test]
     fn fingerprint_changes_with_definition() {
-        let goal = sample_goal("checkout");
-        let mut changed = goal.clone();
-        changed.objective = "Reduce checkout latency".to_string();
+        let objective = sample_objective("checkout");
+        let mut changed = objective.clone();
+        changed.description = "Reduce checkout latency".to_string();
 
-        assert_eq!(goal.fingerprint(), sample_goal("checkout").fingerprint());
-        assert_ne!(goal.fingerprint(), changed.fingerprint());
+        assert_eq!(
+            objective.fingerprint(),
+            sample_objective("checkout").fingerprint()
+        );
+        assert_ne!(objective.fingerprint(), changed.fingerprint());
     }
 
     #[test]
     fn rejects_inconsistent_budget() {
-        let mut goal = sample_goal("checkout");
-        goal.budget.max_llm_tokens_per_cycle = goal.budget.max_llm_tokens_per_day + 1;
+        let mut objective = sample_objective("checkout");
+        objective.budget.max_llm_tokens_per_cycle = objective.budget.max_llm_tokens_per_day + 1;
 
-        assert!(goal.validate().is_err());
-        assert!(sample_goal("checkout").validate().is_ok());
+        assert!(objective.validate().is_err());
+        assert!(sample_objective("checkout").validate().is_ok());
     }
 }

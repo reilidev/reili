@@ -1,9 +1,9 @@
 //! Decide: map screened proposals onto existing work items (stable keys, then fuzzy matching),
-//! enforce per-goal limits, and merge investigation results into durable state while respecting
+//! enforce per-objective limits, and merge investigation results into durable state while respecting
 //! human decisions.
 
 use chrono::{DateTime, Utc};
-use reili_core::goal::GoalDefinition;
+use reili_core::objective::ObjectiveDefinition;
 use reili_core::work::{
     EvidenceRef, Finding, HumanDecisionRequest, Hypothesis, InvestigationReport, NotificationState,
     Recommendation, StatusActor, StoredWorkItem, WORK_ITEM_SCHEMA_VERSION, WorkItemKey,
@@ -33,7 +33,7 @@ pub enum PlannedChange {
 }
 
 pub struct PlanChangesInput<'a> {
-    pub goal: &'a GoalDefinition,
+    pub objective: &'a ObjectiveDefinition,
     pub existing: &'a [StoredWorkItem],
     pub proposals: &'a [WorkItemProposal],
 }
@@ -100,15 +100,15 @@ pub fn plan_changes(input: &PlanChangesInput<'_>) -> Vec<PlannedChange> {
             });
             continue;
         }
-        let reason = if created >= input.goal.budget.max_new_work_items_per_cycle {
+        let reason = if created >= input.objective.budget.max_new_work_items_per_cycle {
             Some(format!(
                 "max_new_work_items_per_cycle ({}) reached",
-                input.goal.budget.max_new_work_items_per_cycle
+                input.objective.budget.max_new_work_items_per_cycle
             ))
-        } else if open_count >= input.goal.budget.max_open_work_items as usize {
+        } else if open_count >= input.objective.budget.max_open_work_items as usize {
             Some(format!(
                 "max_open_work_items ({}) reached",
-                input.goal.budget.max_open_work_items
+                input.objective.budget.max_open_work_items
             ))
         } else {
             None
@@ -187,7 +187,7 @@ pub fn short_run_id(run_id: &str) -> String {
 
 #[must_use]
 pub fn new_work_item_state(
-    goal: &GoalDefinition,
+    objective: &ObjectiveDefinition,
     proposal: &WorkItemProposal,
     context: &ApplyContext<'_>,
 ) -> Option<WorkItemState> {
@@ -195,7 +195,7 @@ pub fn new_work_item_state(
     let mut state = WorkItemState {
         schema_version: WORK_ITEM_SCHEMA_VERSION,
         key,
-        goal_id: goal.id.clone(),
+        objective_id: objective.id.clone(),
         title: String::new(),
         kind: proposal.kind,
         severity: proposal.severity,
@@ -416,7 +416,7 @@ fn merge_findings(state: &mut WorkItemState, findings: &[Finding], context: &App
 #[cfg(test)]
 mod tests {
     use chrono::{TimeZone, Utc};
-    use reili_core::goal::GoalDefinition;
+    use reili_core::objective::ObjectiveDefinition;
     use reili_core::work::{
         HypothesisStatus, IssueRef, Severity, StoredWorkItem, WorkItemKey, WorkItemStatus,
         test_support::sample_work_item,
@@ -426,8 +426,8 @@ mod tests {
         ApplyContext, PlanChangesInput, PlannedChange, apply_proposal, new_work_item_state,
         plan_changes,
     };
-    use crate::goal::policy::tests::{proposal, report};
-    use crate::goal::tests_support::sample_goal;
+    use crate::objective::policy::tests::{proposal, report};
+    use crate::objective::tests_support::sample_objective;
 
     fn stored(number: u64, key: &str, status: WorkItemStatus) -> StoredWorkItem {
         let mut state = sample_work_item(key);
@@ -444,8 +444,8 @@ mod tests {
         }
     }
 
-    fn goal() -> GoalDefinition {
-        sample_goal("checkout")
+    fn objective() -> ObjectiveDefinition {
+        sample_objective("checkout")
     }
 
     #[test]
@@ -455,11 +455,11 @@ mod tests {
             "checkout:after-deploy-5xx",
             WorkItemStatus::Investigating,
         )];
-        let goal = goal();
+        let objective = objective();
         let proposals = vec![proposal(HypothesisStatus::Proposed)];
 
         let changes = plan_changes(&PlanChangesInput {
-            goal: &goal,
+            objective: &objective,
             existing: &existing,
             proposals: &proposals,
         });
@@ -480,11 +480,11 @@ mod tests {
             "checkout:5xx-after-deploy",
             WorkItemStatus::Dismissed,
         )];
-        let goal = goal();
+        let objective = objective();
         let proposals = vec![proposal(HypothesisStatus::Proposed)];
 
         let changes = plan_changes(&PlanChangesInput {
-            goal: &goal,
+            objective: &objective,
             existing: &existing,
             proposals: &proposals,
         });
@@ -497,8 +497,8 @@ mod tests {
 
     #[test]
     fn enforces_new_item_limits_by_severity() {
-        let mut goal = goal();
-        goal.budget.max_new_work_items_per_cycle = 1;
+        let mut objective = objective();
+        objective.budget.max_new_work_items_per_cycle = 1;
         let mut low = proposal(HypothesisStatus::Proposed);
         low.key = "a:low".to_string();
         low.title = "low thing".to_string();
@@ -509,7 +509,7 @@ mod tests {
         critical.severity = Severity::Critical;
 
         let changes = plan_changes(&PlanChangesInput {
-            goal: &goal,
+            objective: &objective,
             existing: &[],
             proposals: &[low, critical],
         });
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn new_state_scopes_ids_and_keeps_only_cited_evidence() {
-        let goal = goal();
+        let objective = objective();
         let screened = proposal(HypothesisStatus::Supported);
         let report = report(vec![screened.clone()]);
         let context = ApplyContext {
@@ -533,7 +533,7 @@ mod tests {
             report: &report,
         };
 
-        let state = new_work_item_state(&goal, &screened, &context).expect("state");
+        let state = new_work_item_state(&objective, &screened, &context).expect("state");
 
         assert_eq!(state.status, WorkItemStatus::NeedsHuman);
         assert_eq!(state.hypotheses[0].status, HypothesisStatus::Supported);

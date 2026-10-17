@@ -14,18 +14,19 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use chrono::{DateTime, Duration, Utc};
 use reili_adapters::outbound::github::{GitHubWorkStateConfig, GitHubWorkStateRepository};
-use reili_application::goal::{Clock, GoalScheduler};
+use reili_application::objective::{Clock, ObjectiveScheduler};
 use reili_core::error::{AgentRunFailedError, PortError};
-use reili_core::goal::{
-    GoalBudget, GoalDefinition, GoalId, GoalPermissions, GoalReportPolicy, GoalSchedule, GoalScope,
-};
 use reili_core::investigation::{
     InvestigationRunOutcome, InvestigationRunReport, InvestigationRunnerPort, RunInvestigationInput,
 };
 use reili_core::logger::LogEntry;
 use reili_core::messaging::slack::{
-    GoalReportMessage, GoalReportPort, MockSlackFileDownloadPort, MockSlackMessageSearchPort,
-    PostedGoalReport,
+    MockSlackFileDownloadPort, MockSlackMessageSearchPort, ObjectiveReportMessage,
+    ObjectiveReportPort, PostedObjectiveReport,
+};
+use reili_core::objective::{
+    ObjectiveBudget, ObjectiveDefinition, ObjectiveId, ObjectivePermissions, ObjectiveReportPolicy,
+    ObjectiveSchedule, ObjectiveScope,
 };
 use reili_core::secret::SecretString;
 use reili_core::task::{LlmExecutionMetadata, LlmUsageSnapshot, TaskResources};
@@ -35,7 +36,7 @@ use reili_core::work::{
 };
 use serde_json::{Value, json};
 
-use super::{AssembleGoalSchedulerInput, assemble_goal_scheduler};
+use super::{AssembleObjectiveSchedulerInput, assemble_objective_scheduler};
 use crate::config::AutonomyConfig;
 
 const OWNER: &str = "acme";
@@ -301,32 +302,35 @@ impl InvestigationRunnerPort for ScriptedRunner {
 
 #[derive(Default)]
 struct RecordingSlack {
-    posted: Mutex<Vec<GoalReportMessage>>,
+    posted: Mutex<Vec<ObjectiveReportMessage>>,
 }
 
 #[async_trait]
-impl GoalReportPort for RecordingSlack {
+impl ObjectiveReportPort for RecordingSlack {
     async fn find_posted_report(
         &self,
         _channel_id: &str,
         report_key: &str,
-    ) -> Result<Option<PostedGoalReport>, PortError> {
+    ) -> Result<Option<PostedObjectiveReport>, PortError> {
         Ok(self
             .posted
             .lock()
             .expect("lock")
             .iter()
             .find(|message| message.report_key == report_key)
-            .map(|message| PostedGoalReport {
+            .map(|message| PostedObjectiveReport {
                 channel_id: message.channel_id.clone(),
                 ts: "1.0".to_string(),
             }))
     }
 
-    async fn post_report(&self, message: GoalReportMessage) -> Result<PostedGoalReport, PortError> {
+    async fn post_report(
+        &self,
+        message: ObjectiveReportMessage,
+    ) -> Result<PostedObjectiveReport, PortError> {
         let channel_id = message.channel_id.clone();
         self.posted.lock().expect("lock").push(message);
-        Ok(PostedGoalReport {
+        Ok(PostedObjectiveReport {
             channel_id,
             ts: "1.0".to_string(),
         })
@@ -343,23 +347,23 @@ impl reili_core::logger::Logger for QuietLogger {
     fn log(&self, _entry: LogEntry) {}
 }
 
-fn goal() -> GoalDefinition {
-    GoalDefinition {
-        id: GoalId::new("checkout-reliability").expect("id"),
-        objective: "Continuously improve checkout service reliability.".to_string(),
-        scope: GoalScope {
+fn objective() -> ObjectiveDefinition {
+    ObjectiveDefinition {
+        id: ObjectiveId::new("checkout-reliability").expect("id"),
+        description: "Continuously improve checkout service reliability.".to_string(),
+        scope: ObjectiveScope {
             services: vec!["checkout-api".to_string()],
             repositories: Vec::new(),
             environments: Vec::new(),
         },
-        schedule: GoalSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("schedule"),
-        report: GoalReportPolicy {
+        schedule: ObjectiveSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("schedule"),
+        report: ObjectiveReportPolicy {
             channel_id: "C0123456789".to_string(),
             min_interval_minutes: 60,
             max_reports_per_day: 6,
         },
-        budget: GoalBudget::default(),
-        permissions: GoalPermissions {
+        budget: ObjectiveBudget::default(),
+        permissions: ObjectivePermissions {
             save_knowledge: false,
             post_reports: true,
         },
@@ -428,7 +432,7 @@ fn process(
     slack: &Arc<RecordingSlack>,
     clock: &Arc<SteppedClock>,
     instance_id: &str,
-) -> Arc<GoalScheduler> {
+) -> Arc<ObjectiveScheduler> {
     let repository = GitHubWorkStateRepository::with_static_token(
         &GitHubWorkStateConfig {
             repository: format!("{OWNER}/{REPO}"),
@@ -441,8 +445,8 @@ fn process(
         SecretString::from("token"),
     )
     .expect("repository");
-    assemble_goal_scheduler(AssembleGoalSchedulerInput {
-        goals: vec![goal()],
+    assemble_objective_scheduler(AssembleObjectiveSchedulerInput {
+        objectives: vec![objective()],
         autonomy: &AutonomyConfig {
             tick_interval_seconds: 60,
             max_concurrent_cycles: 1,
@@ -456,14 +460,14 @@ fn process(
             web_search_port: None,
             canvas_memory_port: None,
         },
-        report_port: Arc::clone(slack) as Arc<dyn GoalReportPort>,
+        report_port: Arc::clone(slack) as Arc<dyn ObjectiveReportPort>,
         clock: Arc::clone(clock) as Arc<dyn Clock>,
         logger: Arc::new(QuietLogger),
         instance_id: instance_id.to_string(),
     })
 }
 
-async fn run_tick(scheduler: &Arc<GoalScheduler>) -> usize {
+async fn run_tick(scheduler: &Arc<ObjectiveScheduler>) -> usize {
     let handles = scheduler.tick().await;
     let count = handles.len();
     for handle in handles {
@@ -485,7 +489,7 @@ fn labels_of(issue: &Value) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn goal_cycles_persist_to_github_issues_and_resume_across_processes() {
+async fn objective_cycles_persist_to_github_issues_and_resume_across_processes() {
     let (api_base_url, github) = start_fake_github().await;
     let runner = Arc::new(ScriptedRunner {
         reports: Mutex::new(vec![report()]),
@@ -503,7 +507,7 @@ async fn goal_cycles_persist_to_github_issues_and_resume_across_processes() {
         let ledger = state
             .issues
             .values()
-            .find(|issue| labels_of(issue).contains(&"reili:goal".to_string()))
+            .find(|issue| labels_of(issue).contains(&"reili:objective".to_string()))
             .expect("ledger issue");
         let item = state
             .issues
@@ -511,7 +515,7 @@ async fn goal_cycles_persist_to_github_issues_and_resume_across_processes() {
             .find(|issue| labels_of(issue).contains(&"reili:work-item".to_string()))
             .expect("work item issue");
         assert!(labels_of(item).contains(&"reili-status:needs-human".to_string()));
-        assert!(labels_of(item).contains(&"reili-goal:checkout-reliability".to_string()));
+        assert!(labels_of(item).contains(&"reili-objective:checkout-reliability".to_string()));
         let body = item["body"].as_str().expect("body");
         assert!(body.contains("### Decision needed\nRoll back deploy 42?"));
         assert!(body.contains("| supported |"));

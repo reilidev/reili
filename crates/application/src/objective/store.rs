@@ -4,9 +4,9 @@
 
 use std::sync::Arc;
 
-use reili_core::goal::{GoalDefinition, GoalId};
+use reili_core::objective::{ObjectiveDefinition, ObjectiveId};
 use reili_core::work::{
-    GoalLedgerState, StoredLedger, StoredWorkItem, WorkItemState, WorkStateError,
+    ObjectiveLedgerState, StoredLedger, StoredWorkItem, WorkItemState, WorkStateError,
     WorkStateRepositoryPort,
 };
 
@@ -27,23 +27,23 @@ impl WorkStateStore {
         &self.repository
     }
 
-    /// Returns the goal's ledger, creating it when missing. If two instances created a ledger
+    /// Returns the objective's ledger, creating it when missing. If two instances created a ledger
     /// concurrently, the lowest issue number wins and the other is closed as a duplicate.
     pub async fn ensure_ledger(
         &self,
-        goal: &GoalDefinition,
+        objective: &ObjectiveDefinition,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<StoredLedger, WorkStateError> {
-        if let Some(existing) = self.repository.find_goal_ledger(&goal.id).await? {
+        if let Some(existing) = self.repository.find_objective_ledger(&objective.id).await? {
             return Ok(existing);
         }
         let created = self
             .repository
-            .create_goal_ledger(&GoalLedgerState::new(goal, now))
+            .create_objective_ledger(&ObjectiveLedgerState::new(objective, now))
             .await?;
         let canonical = self
             .repository
-            .find_goal_ledger(&goal.id)
+            .find_objective_ledger(&objective.id)
             .await?
             .unwrap_or_else(|| created.clone());
         if canonical.issue.number != created.issue.number {
@@ -61,7 +61,7 @@ impl WorkStateStore {
         mut mutate: F,
     ) -> Result<(StoredLedger, R), WorkStateError>
     where
-        F: FnMut(&mut GoalLedgerState) -> R + Send,
+        F: FnMut(&mut ObjectiveLedgerState) -> R + Send,
         R: Send,
     {
         let mut current = ledger.clone();
@@ -71,13 +71,13 @@ impl WorkStateStore {
             let result = mutate(&mut next);
             match self
                 .repository
-                .save_goal_ledger(&current.issue, current.state.revision, &next)
+                .save_objective_ledger(&current.issue, current.state.revision, &next)
                 .await
             {
                 Ok(saved) => return Ok((saved, result)),
                 Err(error @ WorkStateError::Conflict { .. }) => {
                     last_error = Some(error);
-                    current = self.reload_ledger(&current.state.goal_id).await?;
+                    current = self.reload_ledger(&current.state.objective_id).await?;
                 }
                 Err(error) => return Err(error),
             }
@@ -87,13 +87,16 @@ impl WorkStateStore {
         }))
     }
 
-    pub async fn reload_ledger(&self, goal_id: &GoalId) -> Result<StoredLedger, WorkStateError> {
+    pub async fn reload_ledger(
+        &self,
+        objective_id: &ObjectiveId,
+    ) -> Result<StoredLedger, WorkStateError> {
         self.repository
-            .find_goal_ledger(goal_id)
+            .find_objective_ledger(objective_id)
             .await?
             .ok_or_else(|| {
                 WorkStateError::Other(reili_core::error::PortError::new(format!(
-                    "goal ledger for `{goal_id}` disappeared"
+                    "objective ledger for `{objective_id}` disappeared"
                 )))
             })
     }
@@ -123,7 +126,7 @@ impl WorkStateStore {
                     last_error = Some(error);
                     current = self
                         .repository
-                        .list_work_items(&current.state.goal_id)
+                        .list_work_items(&current.state.objective_id)
                         .await?
                         .into_iter()
                         .find(|candidate| candidate.issue.number == current.issue.number)
@@ -143,13 +146,13 @@ impl WorkStateStore {
     }
 
     /// Creates a work item unless one with the same key already exists. After creating, the
-    /// goal's items are listed again (the listing API is strongly consistent, unlike search) and
+    /// objective's items are listed again (the listing API is strongly consistent, unlike search) and
     /// racing duplicates are closed in favour of the lowest issue number.
     pub async fn create_work_item_once(
         &self,
         state: &WorkItemState,
     ) -> Result<StoredWorkItem, WorkStateError> {
-        let existing = self.repository.list_work_items(&state.goal_id).await?;
+        let existing = self.repository.list_work_items(&state.objective_id).await?;
         if let Some(found) = existing
             .into_iter()
             .find(|item| item.state.key == state.key)
@@ -161,7 +164,7 @@ impl WorkStateStore {
         let created = self.repository.create_work_item(&state).await?;
         let mut same_key: Vec<StoredWorkItem> = self
             .repository
-            .list_work_items(&state.goal_id)
+            .list_work_items(&state.objective_id)
             .await?
             .into_iter()
             .filter(|item| item.state.key == state.key)

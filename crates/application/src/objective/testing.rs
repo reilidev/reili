@@ -8,19 +8,21 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use reili_core::error::{AgentRunFailedError, PortError};
-use reili_core::goal::GoalId;
 use reili_core::investigation::{
     InvestigationRunOutcome, InvestigationRunReport, InvestigationRunnerPort, RunInvestigationInput,
 };
 use reili_core::logger::LogEntry;
 use reili_core::messaging::slack::{
-    AppendSlackCanvasMemoryInput, GoalReportMessage, GoalReportPort, ListSlackCanvasMemoriesInput,
-    PostedGoalReport, SlackCanvasMemoryPort, SlackCanvasMemoryRecord, SlackCanvasMemoryVisibility,
+    AppendSlackCanvasMemoryInput, ListSlackCanvasMemoriesInput, ObjectiveReportMessage,
+    ObjectiveReportPort, PostedObjectiveReport, SlackCanvasMemoryPort, SlackCanvasMemoryRecord,
+    SlackCanvasMemoryVisibility,
 };
+use reili_core::objective::ObjectiveId;
 use reili_core::task::{LlmExecutionMetadata, LlmUsageSnapshot};
 use reili_core::work::{
-    GoalLedgerState, HumanComment, InvestigationReport, IssueRef, StoredLedger, StoredWorkItem,
-    WorkItemState, WorkItemStatus, WorkStateComment, WorkStateError, WorkStateRepositoryPort,
+    HumanComment, InvestigationReport, IssueRef, ObjectiveLedgerState, StoredLedger,
+    StoredWorkItem, WorkItemState, WorkItemStatus, WorkStateComment, WorkStateError,
+    WorkStateRepositoryPort,
 };
 
 use super::clock::Clock;
@@ -84,7 +86,7 @@ pub(crate) enum FakeIssueBody {
 #[derive(Debug, Clone)]
 pub(crate) struct FakeIssue {
     pub number: u64,
-    pub goal_id: GoalId,
+    pub objective_id: ObjectiveId,
     pub body: FakeIssueBody,
     pub human_notes: String,
     pub observed_status: Option<WorkItemStatus>,
@@ -179,12 +181,12 @@ impl FakeWorkStateRepository {
             .collect()
     }
 
-    pub(crate) fn ledger(&self, goal_id: &str) -> Option<GoalLedgerState> {
+    pub(crate) fn ledger(&self, objective_id: &str) -> Option<ObjectiveLedgerState> {
         self.issues()
             .into_iter()
             .find_map(|issue| match issue.body {
                 FakeIssueBody::Ledger(json)
-                    if issue.goal_id.as_str() == goal_id && !issue.closed =>
+                    if issue.objective_id.as_str() == objective_id && !issue.closed =>
                 {
                     serde_json::from_str(&json).ok()
                 }
@@ -298,9 +300,9 @@ impl FakeWorkStateRepository {
 
 #[async_trait]
 impl WorkStateRepositoryPort for FakeWorkStateRepository {
-    async fn find_goal_ledger(
+    async fn find_objective_ledger(
         &self,
-        goal_id: &GoalId,
+        objective_id: &ObjectiveId,
     ) -> Result<Option<StoredLedger>, WorkStateError> {
         let state = self.state.lock().expect("lock");
         Self::check_available(&state)?;
@@ -308,7 +310,7 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
             .issues
             .values()
             .filter(|issue| {
-                &issue.goal_id == goal_id
+                &issue.objective_id == objective_id
                     && matches!(issue.body, FakeIssueBody::Ledger(_))
                     && issue.duplicate_of.is_none()
             })
@@ -317,7 +319,7 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
             .transpose()
     }
 
-    async fn list_goal_ledgers(&self) -> Result<Vec<StoredLedger>, WorkStateError> {
+    async fn list_objective_ledgers(&self) -> Result<Vec<StoredLedger>, WorkStateError> {
         let state = self.state.lock().expect("lock");
         Self::check_available(&state)?;
         state
@@ -330,9 +332,9 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
             .collect()
     }
 
-    async fn create_goal_ledger(
+    async fn create_objective_ledger(
         &self,
-        ledger: &GoalLedgerState,
+        ledger: &ObjectiveLedgerState,
     ) -> Result<StoredLedger, WorkStateError> {
         let now = self.now();
         let mut state = self.state.lock().expect("lock");
@@ -344,7 +346,7 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
         stored.revision = 1;
         let issue = FakeIssue {
             number,
-            goal_id: ledger.goal_id.clone(),
+            objective_id: ledger.objective_id.clone(),
             body: FakeIssueBody::Ledger(serde_json::to_string(&stored).expect("json")),
             human_notes: String::new(),
             observed_status: None,
@@ -358,11 +360,11 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
         result
     }
 
-    async fn save_goal_ledger(
+    async fn save_objective_ledger(
         &self,
         issue: &IssueRef,
         expected_revision: u64,
-        ledger: &GoalLedgerState,
+        ledger: &ObjectiveLedgerState,
     ) -> Result<StoredLedger, WorkStateError> {
         let now = self.now();
         let mut state = self.state.lock().expect("lock");
@@ -373,7 +375,7 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
             let FakeIssueBody::Ledger(json) = &stored.body else {
                 panic!("not a ledger");
             };
-            let mut current: GoalLedgerState = serde_json::from_str(json).expect("json");
+            let mut current: ObjectiveLedgerState = serde_json::from_str(json).expect("json");
             current.revision += 1;
             stored.body = FakeIssueBody::Ledger(serde_json::to_string(&current).expect("json"));
             return Err(WorkStateError::Conflict {
@@ -402,7 +404,7 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
 
     async fn list_work_items(
         &self,
-        goal_id: &GoalId,
+        objective_id: &ObjectiveId,
     ) -> Result<Vec<StoredWorkItem>, WorkStateError> {
         let state = self.state.lock().expect("lock");
         Self::check_available(&state)?;
@@ -410,7 +412,7 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
             .issues
             .values()
             .filter(|issue| {
-                &issue.goal_id == goal_id
+                &issue.objective_id == objective_id
                     && matches!(issue.body, FakeIssueBody::WorkItem(_))
                     && issue.duplicate_of.is_none()
             })
@@ -429,7 +431,7 @@ impl WorkStateRepositoryPort for FakeWorkStateRepository {
         stored.revision = 1;
         let make_issue = |number: u64| FakeIssue {
             number,
-            goal_id: item.goal_id.clone(),
+            objective_id: item.objective_id.clone(),
             body: FakeIssueBody::WorkItem(serde_json::to_string(&stored).expect("json")),
             human_notes: String::new(),
             observed_status: None,
@@ -663,23 +665,23 @@ fn execution() -> LlmExecutionMetadata {
 
 #[derive(Clone, Default)]
 pub(crate) struct RecordingReportPort {
-    pub posted: Arc<Mutex<Vec<GoalReportMessage>>>,
+    pub posted: Arc<Mutex<Vec<ObjectiveReportMessage>>>,
     pub fail_posts: Arc<Mutex<bool>>,
 }
 
 impl RecordingReportPort {
-    pub(crate) fn posted(&self) -> Vec<GoalReportMessage> {
+    pub(crate) fn posted(&self) -> Vec<ObjectiveReportMessage> {
         self.posted.lock().expect("lock").clone()
     }
 }
 
 #[async_trait]
-impl GoalReportPort for RecordingReportPort {
+impl ObjectiveReportPort for RecordingReportPort {
     async fn find_posted_report(
         &self,
         channel_id: &str,
         report_key: &str,
-    ) -> Result<Option<PostedGoalReport>, PortError> {
+    ) -> Result<Option<PostedObjectiveReport>, PortError> {
         Ok(self
             .posted
             .lock()
@@ -689,13 +691,16 @@ impl GoalReportPort for RecordingReportPort {
             .find(|(_, message)| {
                 message.channel_id == channel_id && message.report_key == report_key
             })
-            .map(|(index, message)| PostedGoalReport {
+            .map(|(index, message)| PostedObjectiveReport {
                 channel_id: message.channel_id.clone(),
                 ts: format!("1760000000.{index:06}"),
             }))
     }
 
-    async fn post_report(&self, message: GoalReportMessage) -> Result<PostedGoalReport, PortError> {
+    async fn post_report(
+        &self,
+        message: ObjectiveReportMessage,
+    ) -> Result<PostedObjectiveReport, PortError> {
         if *self.fail_posts.lock().expect("lock") {
             return Err(PortError::connection_failed("slack down"));
         }
@@ -703,7 +708,7 @@ impl GoalReportPort for RecordingReportPort {
         let ts = format!("1760000000.{:06}", posted.len());
         let channel_id = message.channel_id.clone();
         posted.push(message);
-        Ok(PostedGoalReport { channel_id, ts })
+        Ok(PostedObjectiveReport { channel_id, ts })
     }
 
     async fn permalink(&self, channel_id: &str, ts: &str) -> Result<Option<String>, PortError> {

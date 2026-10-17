@@ -1,13 +1,13 @@
 //! Report: compose a Slack message only for meaningful changes (new items, status changes,
-//! decisions needed), with per-goal rate limits and an
+//! decisions needed), with per-objective rate limits and an
 //! idempotency key so a crash between "posted" and "recorded" does not double-post.
 
 use std::fmt::Write as _;
 
 use chrono::{DateTime, Duration, Utc};
-use reili_core::goal::{GoalDefinition, stable_fingerprint};
+use reili_core::objective::{ObjectiveDefinition, stable_fingerprint};
 use reili_core::work::{
-    GoalLedgerState, Severity, StoredWorkItem, WorkItemStatus,
+    ObjectiveLedgerState, Severity, StoredWorkItem, WorkItemStatus,
     sanitize::{neutralize_slack_broadcasts, redact_sensitive, truncate_chars},
 };
 
@@ -43,8 +43,8 @@ pub enum ReportDecision {
 }
 
 pub struct ComposeReportInput<'a> {
-    pub goal: &'a GoalDefinition,
-    pub ledger: &'a GoalLedgerState,
+    pub objective: &'a ObjectiveDefinition,
+    pub ledger: &'a ObjectiveLedgerState,
     pub ledger_url: &'a str,
     pub items: &'a [StoredWorkItem],
     pub candidate_numbers: &'a [u64],
@@ -69,11 +69,11 @@ pub fn compose_report(input: &ComposeReportInput<'_>) -> ReportDecision {
     }
 
     let today = input.now.date_naive();
-    if input.ledger.reports_posted_on(today) >= input.goal.report.max_reports_per_day {
+    if input.ledger.reports_posted_on(today) >= input.objective.report.max_reports_per_day {
         return ReportDecision::Deferred {
             reason: format!(
                 "daily report limit ({}) reached",
-                input.goal.report.max_reports_per_day
+                input.objective.report.max_reports_per_day
             ),
         };
     }
@@ -82,12 +82,13 @@ pub fn compose_report(input: &ComposeReportInput<'_>) -> ReportDecision {
     });
     if !urgent
         && let Some(last) = input.ledger.reports.last_report_at
-        && input.now < last + Duration::minutes(i64::from(input.goal.report.min_interval_minutes))
+        && input.now
+            < last + Duration::minutes(i64::from(input.objective.report.min_interval_minutes))
     {
         return ReportDecision::Deferred {
             reason: format!(
                 "minimum report interval ({} min) not elapsed",
-                input.goal.report.min_interval_minutes
+                input.objective.report.min_interval_minutes
             ),
         };
     }
@@ -100,8 +101,8 @@ pub fn compose_report(input: &ComposeReportInput<'_>) -> ReportDecision {
 
 fn render_report(input: &ComposeReportInput<'_>, changed: &[&StoredWorkItem]) -> String {
     let mut text = format!(
-        "*Goal `{}`* — {}\n",
-        input.goal.id,
+        "*Objective `{}`* — {}\n",
+        input.objective.id,
         truncate_chars(input.summary.trim(), 600)
     );
     let decisions: Vec<&&StoredWorkItem> = changed
@@ -148,7 +149,7 @@ fn render_report(input: &ComposeReportInput<'_>, changed: &[&StoredWorkItem]) ->
     }
     let _ = write!(
         text,
-        "\nHypotheses are not conclusions. Details: <{}|goal ledger> · run `{}`",
+        "\nHypotheses are not conclusions. Details: <{}|objective ledger> · run `{}`",
         input.ledger_url, input.run_id
     );
     truncate_chars(
@@ -158,21 +159,21 @@ fn render_report(input: &ComposeReportInput<'_>, changed: &[&StoredWorkItem]) ->
 }
 
 #[must_use]
-pub fn report_key(goal_id: &str, run_id: &str) -> String {
-    format!("{goal_id}:{run_id}")
+pub fn report_key(objective_id: &str, run_id: &str) -> String {
+    format!("{objective_id}:{run_id}")
 }
 
 #[cfg(test)]
 mod tests {
     use chrono::Duration;
     use reili_core::work::{
-        GoalLedgerState, HumanDecisionRequest, IssueRef, StoredWorkItem, WorkItemStatus,
+        HumanDecisionRequest, IssueRef, ObjectiveLedgerState, StoredWorkItem, WorkItemStatus,
         test_support::sample_work_item,
     };
 
     use super::{ComposeReportInput, ReportDecision, compose_report, notification_digest};
-    use crate::goal::testing::at;
-    use crate::goal::tests_support::sample_goal;
+    use crate::objective::testing::at;
+    use crate::objective::tests_support::sample_objective;
 
     fn stored(number: u64, status: WorkItemStatus) -> StoredWorkItem {
         let mut state = sample_work_item(&format!("checkout:{number}"));
@@ -197,14 +198,14 @@ mod tests {
 
     #[test]
     fn posts_changed_items_and_skips_already_notified() {
-        let goal = sample_goal("checkout");
-        let ledger = GoalLedgerState::new(&goal, at("2026-10-15T00:00:00Z"));
+        let objective = sample_objective("checkout");
+        let ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
         let mut notified = stored(2, WorkItemStatus::Investigating);
         notified.state.notification.last_digest = Some(notification_digest(&notified));
         let items = vec![stored(1, WorkItemStatus::NeedsHuman), notified];
 
         let decision = compose_report(&ComposeReportInput {
-            goal: &goal,
+            objective: &objective,
             ledger: &ledger,
             ledger_url: "https://github.com/acme/work/issues/9",
             items: &items,
@@ -228,11 +229,11 @@ mod tests {
 
     #[test]
     fn stays_silent_without_changes() {
-        let goal = sample_goal("checkout");
-        let ledger = GoalLedgerState::new(&goal, at("2026-10-15T00:00:00Z"));
+        let objective = sample_objective("checkout");
+        let ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
 
         let decision = compose_report(&ComposeReportInput {
-            goal: &goal,
+            objective: &objective,
             ledger: &ledger,
             ledger_url: "",
             items: &[],
@@ -247,13 +248,13 @@ mod tests {
 
     #[test]
     fn rate_limits_non_urgent_reports() {
-        let goal = sample_goal("checkout");
-        let mut ledger = GoalLedgerState::new(&goal, at("2026-10-15T00:00:00Z"));
+        let objective = sample_objective("checkout");
+        let mut ledger = ObjectiveLedgerState::new(&objective, at("2026-10-15T00:00:00Z"));
         ledger.remember_report_key("k".to_string(), at("2026-10-15T00:30:00Z"));
         let items = vec![stored(1, WorkItemStatus::Investigating)];
 
         let decision = compose_report(&ComposeReportInput {
-            goal: &goal,
+            objective: &objective,
             ledger: &ledger,
             ledger_url: "",
             items: &items,

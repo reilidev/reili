@@ -1,4 +1,4 @@
-//! TOML schema for goal-driven autonomy: `[work_state.github]`, `[autonomy]`, and `[[goals]]`.
+//! TOML schema for objective-driven autonomy: `[work_state.github]`, `[autonomy]`, and `[[objectives]]`.
 
 use serde::Deserialize;
 
@@ -50,9 +50,9 @@ impl Default for AutonomyFileConfig {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct GoalFileConfig {
+pub(crate) struct ObjectiveFileConfig {
     pub id: String,
-    pub objective: String,
+    pub description: String,
     /// Services in scope (e.g. Datadog service names).
     #[serde(default)]
     pub scope: Vec<String>,
@@ -67,21 +67,21 @@ pub(crate) struct GoalFileConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
-    pub report: GoalReportFileConfig,
+    pub report: ObjectiveReportFileConfig,
     #[serde(default)]
-    pub budget: GoalBudgetFileConfig,
+    pub budget: ObjectiveBudgetFileConfig,
     #[serde(default)]
-    pub permissions: GoalPermissionsFileConfig,
+    pub permissions: ObjectivePermissionsFileConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct GoalReportFileConfig {
+pub(crate) struct ObjectiveReportFileConfig {
     pub min_interval_minutes: u32,
     pub max_reports_per_day: u32,
 }
 
-impl Default for GoalReportFileConfig {
+impl Default for ObjectiveReportFileConfig {
     fn default() -> Self {
         Self {
             min_interval_minutes: 60,
@@ -92,7 +92,7 @@ impl Default for GoalReportFileConfig {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct GoalBudgetFileConfig {
+pub(crate) struct ObjectiveBudgetFileConfig {
     pub max_cycle_minutes: Option<u64>,
     pub max_llm_tokens_per_cycle: Option<u64>,
     pub max_llm_tokens_per_day: Option<u64>,
@@ -106,12 +106,12 @@ pub(crate) struct GoalBudgetFileConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct GoalPermissionsFileConfig {
+pub(crate) struct ObjectivePermissionsFileConfig {
     pub save_knowledge: bool,
     pub post_reports: bool,
 }
 
-impl Default for GoalPermissionsFileConfig {
+impl Default for ObjectivePermissionsFileConfig {
     fn default() -> Self {
         Self {
             save_knowledge: true,

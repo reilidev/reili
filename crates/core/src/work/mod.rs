@@ -1,4 +1,4 @@
-//! Durable Work State: goal ledgers, work items, structured investigation records, and the
+//! Durable Work State: objective ledgers, work items, structured investigation records, and the
 //! repository port that persists them.
 
 pub mod feedback;
@@ -21,8 +21,8 @@ pub use item::{
     token_jaccard,
 };
 pub use ledger::{
-    ActiveCycle, CyclePhase, CycleRecord, CycleResult, DailyUsage, GOAL_LEDGER_SCHEMA_VERSION,
-    GoalLedgerState, GoalLifecycle, KnowledgeDraft, ReportState,
+    ActiveCycle, CyclePhase, CycleRecord, CycleResult, DailyUsage, KnowledgeDraft,
+    OBJECTIVE_LEDGER_SCHEMA_VERSION, ObjectiveLedgerState, ObjectiveLifecycle, ReportState,
 };
 pub use report::{InvestigationReport, KnowledgeCandidate, WorkItemProposal};
 #[cfg(any(test, feature = "test-support"))]

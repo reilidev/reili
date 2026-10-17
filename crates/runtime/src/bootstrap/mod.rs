@@ -1,4 +1,4 @@
-pub(crate) mod goals;
+pub(crate) mod objectives;
 
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ use reili_adapters::outbound::slack::{
     SlackWebApiClientConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
-use reili_application::goal::GoalScheduler;
+use reili_application::objective::ObjectiveScheduler;
 use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
     HandleSlackInteractionUseCaseDeps, InFlightJobRegistry, SlackAutoResponseGate,
@@ -77,8 +77,8 @@ pub struct RuntimeDeps {
     pub slack_file_shared_message_port: Arc<dyn SlackFileSharedMessagePort>,
     pub slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort>,
     pub worker_runner: StartTaskWorkerRunnerUseCase,
-    /// Present when `[[goals]]` are configured.
-    pub goal_scheduler: Option<Arc<GoalScheduler>>,
+    /// Present when `[[objectives]]` are configured.
+    pub objective_scheduler: Option<Arc<ObjectiveScheduler>>,
     pub logger: Arc<dyn TaskLogger>,
 }
 
@@ -92,7 +92,7 @@ pub enum RuntimeBootstrapError {
     ProviderClientInitialization { provider: String, message: String },
 }
 
-/// One provider runner serving both Slack tasks and goal investigations.
+/// One provider runner serving both Slack tasks and objective investigations.
 pub(crate) struct AgentRunners {
     pub(crate) task: Arc<dyn TaskRunnerPort>,
     pub(crate) investigation: Arc<dyn InvestigationRunnerPort>,
@@ -201,13 +201,14 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         web_search_port,
         canvas_memory_port,
     };
-    let goal_scheduler = goals::build_goal_scheduler(goals::BuildGoalSchedulerInput {
-        config,
-        investigation_runner: runners.investigation,
-        task_resources: task_resources.clone(),
-        report_port: goals::build_goal_report_port(Arc::clone(&slack_web_api_client)),
-        logger: Arc::clone(&logger),
-    })?;
+    let objective_scheduler =
+        objectives::build_objective_scheduler(objectives::BuildObjectiveSchedulerInput {
+            config,
+            investigation_runner: runners.investigation,
+            task_resources: task_resources.clone(),
+            report_port: objectives::build_objective_report_port(Arc::clone(&slack_web_api_client)),
+            logger: Arc::clone(&logger),
+        })?;
     let enqueue_slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
@@ -265,7 +266,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         slack_file_shared_message_port,
         slack_interaction_handler,
         worker_runner,
-        goal_scheduler,
+        objective_scheduler,
         logger,
     })
 }

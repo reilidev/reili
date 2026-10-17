@@ -1,12 +1,12 @@
-# Goal-driven autonomy
+# Objective-driven autonomy
 
-Reili can pursue long-term goals on its own: it periodically observes the services a goal covers,
+Reili can pursue long-term objectives on its own: it periodically observes the services an objective covers,
 decides what to investigate, records the work as GitHub Issues, reports what matters to Slack,
 and learns reusable facts into the Slack Canvas memory.
 
 The existing Slack-triggered, single-shot investigations keep working unchanged.
 
-- Goals live in `reili.toml` (the source of truth for *what* to pursue).
+- Objectives live in `reili.toml` (the source of truth for *what* to pursue).
 - Work State lives in GitHub Issues of one dedicated management repository (the source of truth
   for *what has been done, decided, and is pending*).
 - Knowledge lives in the Slack Canvas memory (reusable facts).
@@ -14,7 +14,7 @@ The existing Slack-triggered, single-shot investigations keep working unchanged.
 
 ## Contents
 
-- [Configuring goals](#configuring-goals)
+- [Configuring objectives](#configuring-objectives)
 - [The cycle](#the-cycle)
 - [Work State on GitHub Issues](#work-state-on-github-issues)
 - [Durability and what is not guaranteed](#durability-and-what-is-not-guaranteed)
@@ -25,10 +25,10 @@ The existing Slack-triggered, single-shot investigations keep working unchanged.
 - [Operations runbook](#operations-runbook)
 - [Known limitations](#known-limitations)
 
-## Configuring goals
+## Configuring objectives
 
 ```toml
-# Required when [[goals]] are configured. A dedicated repository for Reili's Work State.
+# Required when [[objectives]] are configured. A dedicated repository for Reili's Work State.
 [work_state.github]
 repository = "acme/reili-work"
 # Optional: App credentials default to [connector.github.app]. Tokens are always down-scoped to
@@ -41,13 +41,13 @@ repository = "acme/reili-work"
 
 # Optional: scheduler settings (defaults shown).
 [autonomy]
-tick_interval_seconds = 60   # how often goals are evaluated
-max_concurrent_cycles = 1    # cycles running at once across goals
+tick_interval_seconds = 60   # how often objectives are evaluated
+max_concurrent_cycles = 1    # cycles running at once across objectives
 lease_minutes = 15           # cycle lease; renewed while the agent runs
 
-[[goals]]
-id = "checkout-reliability"           # 1-39 chars: a-z 0-9 - _
-objective = """
+[[objectives]]
+id = "checkout-reliability"           # 1-34 chars: a-z 0-9 - _
+description = """
 Continuously improve checkout service reliability.
 Identify recurring failures, investigate root causes,
 and recommend measurable improvements.
@@ -60,11 +60,11 @@ timezone = "Asia/Tokyo"               # IANA name; defaults to UTC
 report_channel = "C0123456789"        # Slack channel ID (not name)
 enabled = true
 
-[goals.report]                        # optional
+[objectives.report]                        # optional
 min_interval_minutes = 60             # non-urgent reports are batched at least this far apart
 max_reports_per_day = 6
 
-[goals.budget]                        # optional; defaults shown
+[objectives.budget]                        # optional; defaults shown
 max_cycle_minutes = 30
 max_llm_tokens_per_cycle = 2000000
 max_llm_tokens_per_day = 8000000
@@ -75,28 +75,28 @@ max_new_work_items_per_cycle = 3
 max_open_work_items = 20
 max_cycle_attempts = 3
 
-[goals.permissions]                   # optional; can only narrow what is already allowed
+[objectives.permissions]                   # optional; can only narrow what is already allowed
 save_knowledge = true                 # write screened facts to the Canvas memory
 post_reports = true                   # post reports to report_channel
 
 ```
 
 Startup fails with a clear message for invalid cron expressions, unknown time zones, channel
-names instead of IDs, duplicate goal IDs, inconsistent budgets, or goals without
+names instead of IDs, duplicate objective IDs, inconsistent budgets, or objectives without
 `[work_state.github]`.
 
-### Changing, disabling, and removing goals
+### Changing, disabling, and removing objectives
 
-The ledger stores a fingerprint of each goal definition. On startup and hourly, Reili reconciles
+The ledger stores a fingerprint of each objective definition. On startup and hourly, Reili reconciles
 config with the ledgers:
 
 | Change in `reili.toml` | Effect on Work State |
 |---|---|
-| Definition changed (objective, scope, schedule, budget, …) | Ledger records the change and posts a notice; open work items are kept and the next cycle is told to re-check whether each is still in scope. |
+| Definition changed (description, scope, schedule, budget, …) | Ledger records the change and posts a notice; open work items are kept and the next cycle is told to re-check whether each is still in scope. |
 | `enabled = false` | Ledger lifecycle → `disabled`; no cycles, requests are refused, open work items are left untouched; an interrupted cycle is not resumed. |
-| Goal removed | Ledger lifecycle → `retired` with a notice; work items stay open for humans to close or keep. Re-adding the same `id` resumes the goal. |
+| Objective removed | Ledger lifecycle → `retired` with a notice; work items stay open for humans to close or keep. Re-adding the same `id` resumes the objective. |
 
-Goals cannot be created or edited from Slack.
+Objectives cannot be created or edited from Slack.
 
 ## The cycle
 
@@ -116,8 +116,8 @@ flowchart LR
 
 - **Observe** (no LLM): folds human label changes, closed issues, and comments into Work State and loads
   Canvas memories.
-- **Plan / Investigate** (LLM): the lead agent receives a brief (goal, open and
-  past work items with refuted hypotheses, human feedback, knowledge) and works the goal. It
+- **Plan / Investigate** (LLM): the lead agent receives a brief (objective, open and
+  past work items with refuted hypotheses, human feedback, knowledge) and works the objective. It
   composes sub-agents with `spawn_agent` from the connector catalog, keeps competing hypotheses,
   and ends by calling `submit_investigation_report` with a structured report.
 - **Decide** (no LLM): the report policy screens the report (below), proposals are matched
@@ -126,7 +126,7 @@ flowchart LR
   `needs-human` is not overridden).
 - **Report** (no LLM): posts to Slack only when something a human should know changed (new item,
   status change, decision needed), within the
-  goal's rate limits. Critical items and decision requests skip the minimum interval.
+  objective's rate limits. Critical items and decision requests skip the minimum interval.
 - **Learn** (no LLM): persists screened knowledge drafts to the Canvas with the ledger issue as
   source, at most five per cycle, never the same fact twice.
 
@@ -134,8 +134,8 @@ flowchart LR
 
 ## Work State on GitHub Issues
 
-One **goal ledger** issue per goal (`reili:goal`, `reili-goal:<id>`) and one **work item** issue
-per problem (`reili:work-item`, `reili-goal:<id>`, `reili-status:<status>`,
+One **objective ledger** issue per objective (`reili:objective`, `reili-objective:<id>`) and one **work item** issue
+per problem (`reili:work-item`, `reili-objective:<id>`, `reili-status:<status>`,
 `reili-severity:<sev>`, `reili-kind:<kind>`).
 
 | Part of the issue | Owner | Purpose |
@@ -210,8 +210,8 @@ The model's report is screened by application code before anything is stored:
 
 ## Working with Reili on GitHub
 
-Goals have no Slack commands; Slack mentions are ordinary investigations, as before. Humans steer
-goal work on the work item issues, and every change is picked up by the next scheduled cycle:
+Objectives have no Slack commands; Slack mentions are ordinary investigations, as before. Humans steer
+objective work on the work item issues, and every change is picked up by the next scheduled cycle:
 
 | On the issue | Effect |
 |---|---|
@@ -221,7 +221,7 @@ goal work on the work item issues, and every change is picked up by the next sch
 
 Edit the **Human notes** section freely; do not edit the machine
 state block: an unreadable block makes Reili skip that work item (warning log), and an unreadable
-goal ledger stops that goal until it is restored from the issue's edit history.
+objective ledger stops that objective until it is restored from the issue's edit history.
 
 ## Safety, permissions, and limits
 
@@ -231,7 +231,7 @@ goal ledger stops that goal until it is restored from the issue's edit history.
   repository with `issues: write` and `metadata: read`, and the adapter refuses any issue
   reference outside it before making a request. The investigation GitHub connector is unchanged
   and read-only. The model never chooses where to write; all writes are application code.
-- **Budgets.** Per goal: wall-clock time, LLM tokens per cycle and per day (persisted in the
+- **Budgets.** Per objective: wall-clock time, LLM tokens per cycle and per day (persisted in the
   ledger, so restarts do not reset it), tool calls, sub-agents, parallel tools, new and open work
   items, attempts, and Slack reports. Tool calls beyond the budget are refused with an instruction
   to submit what the agent has; a hard stop applies at twice the token budget.
@@ -252,24 +252,24 @@ goal ledger stops that goal until it is restored from the issue's edit history.
    investigation installation keeps its read-only permissions.
 3. Slack: invite Reili to each `report_channel`. `chat:write` posts reports; `channels:history`
    enables report idempotency checks.
-4. Add `[[goals]]` and restart. The first cycle of a new goal runs immediately as a baseline.
+4. Add `[[objectives]]` and restart. The first cycle of a new objective runs immediately as a baseline.
 
 **Day to day**
 
 - The ledger issue for history, usage, and audit comments.
 - Answer `needs-human` items on GitHub with a comment, a status label, or by closing the issue.
-- Logs: `goal_cycle_started`, `goal_cycle_finished`, `goal_cycle_skipped`,
-  `goal_cycle_interrupted`, `goal_cycle_aborted`, `goal_ledger_sync_failed`,
-  `goal_cycle_report_deferred`.
+- Logs: `objective_cycle_started`, `objective_cycle_finished`, `objective_cycle_skipped`,
+  `objective_cycle_interrupted`, `objective_cycle_aborted`, `objective_ledger_sync_failed`,
+  `objective_cycle_report_deferred`.
 
 **Troubleshooting**
 
 | Symptom | Check |
 |---|---|
-| No cycles run | `enabled`, lifecycle in the ledger, `goal_ledger_sync_failed` logs, failure back-off in recent cycles, daily token budget |
+| No cycles run | `enabled`, lifecycle in the ledger, `objective_ledger_sync_failed` logs, failure back-off in recent cycles, daily token budget |
 | "already running" for a long time | The lease holder crashed; it resumes after `lease_minutes`. |
 | Item ignored by Reili | Unreadable machine block (warning log): restore it from the issue history. |
-| Reports missing | `post_reports`, `max_reports_per_day`, `min_interval_minutes` (`goal_cycle_report_deferred` logs), bot not in channel |
+| Reports missing | `post_reports`, `max_reports_per_day`, `min_interval_minutes` (`objective_cycle_report_deferred` logs), bot not in channel |
 | Repeated budget notices | Raise `max_llm_tokens_per_day` or reduce schedule frequency |
 | Write refused (`Forbidden`) | Installation not on the management repository or missing Issues: write |
 
@@ -278,7 +278,7 @@ goal ledger stops that goal until it is restored from the issue's edit history.
 - GitHub Issues provide no transactions; see [Durability](#durability-and-what-is-not-guaranteed).
 - Reili does not independently check the agent's conclusions: hypothesis statuses and findings
   are the agent's assessment, backed only by the evidence it cites.
-- Reili does not measure progress toward the goal or the effect of implemented recommendations;
+- Reili does not measure progress toward the objective or the effect of implemented recommendations;
   humans judge both and close the issues themselves.
-- Goal cycles run only on their schedule; Slack messages, alerts, and issue comments never start
+- Objective cycles run only on their schedule; Slack messages, alerts, and issue comments never start
   one. Human comments and label changes are picked up by the next scheduled cycle.

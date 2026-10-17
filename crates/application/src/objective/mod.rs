@@ -1,4 +1,4 @@
-//! Goal-driven autonomous work: scheduling, the durable Observe → Investigate → Decide → Report →
+//! Objective-driven autonomous work: scheduling, the durable Observe → Investigate → Decide → Report →
 //! Learn cycle, and human collaboration.
 
 mod brief;
@@ -19,6 +19,6 @@ pub(crate) mod testing;
 pub(crate) mod tests_support;
 
 pub use clock::{Clock, SystemClock};
-pub use cycle::{GoalCycleDeps, GoalCycleRunner};
-pub use scheduler::{GoalScheduler, GoalSchedulerDeps};
+pub use cycle::{ObjectiveCycleDeps, ObjectiveCycleRunner};
+pub use scheduler::{ObjectiveScheduler, ObjectiveSchedulerDeps};
 pub use store::WorkStateStore;

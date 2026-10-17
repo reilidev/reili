@@ -9,24 +9,24 @@ pub use repository::{GitHubWorkStateConfig, GitHubWorkStateRepository};
 
 #[cfg(test)]
 pub(crate) mod tests_support {
-    use reili_core::goal::{
-        GoalBudget, GoalDefinition, GoalId, GoalPermissions, GoalReportPolicy, GoalSchedule,
-        GoalScope,
+    use reili_core::objective::{
+        ObjectiveBudget, ObjectiveDefinition, ObjectiveId, ObjectivePermissions,
+        ObjectiveReportPolicy, ObjectiveSchedule, ObjectiveScope,
     };
 
-    pub(crate) fn goal() -> GoalDefinition {
-        GoalDefinition {
-            id: GoalId::new("checkout").expect("id"),
-            objective: "Improve checkout reliability".to_string(),
-            scope: GoalScope::default(),
-            schedule: GoalSchedule::parse("0 * * * *", "UTC").expect("schedule"),
-            report: GoalReportPolicy {
+    pub(crate) fn objective() -> ObjectiveDefinition {
+        ObjectiveDefinition {
+            id: ObjectiveId::new("checkout").expect("id"),
+            description: "Improve checkout reliability".to_string(),
+            scope: ObjectiveScope::default(),
+            schedule: ObjectiveSchedule::parse("0 * * * *", "UTC").expect("schedule"),
+            report: ObjectiveReportPolicy {
                 channel_id: "C1".to_string(),
                 min_interval_minutes: 60,
                 max_reports_per_day: 4,
             },
-            budget: GoalBudget::default(),
-            permissions: GoalPermissions::default(),
+            budget: ObjectiveBudget::default(),
+            permissions: ObjectivePermissions::default(),
             enabled: true,
         }
     }

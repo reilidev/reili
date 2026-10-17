@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::investigation::{EvidenceRef, Finding, Hypothesis, Recommendation};
-use crate::goal::GoalId;
+use crate::objective::ObjectiveId;
 
 pub const WORK_ITEM_SCHEMA_VERSION: u32 = 1;
 const MAX_KEY_LENGTH: usize = 80;
@@ -18,7 +18,7 @@ const MAX_FEEDBACK: usize = 20;
 const MAX_HISTORY: usize = 30;
 const MAX_LIST_ENTRIES: usize = 10;
 
-/// Stable de-duplication key for a problem within a goal, e.g. `checkout-api:5xx-after-deploy`.
+/// Stable de-duplication key for a problem within an objective, e.g. `checkout-api:5xx-after-deploy`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct WorkItemKey(String);
@@ -247,7 +247,7 @@ pub struct NotificationState {
 pub struct WorkItemState {
     pub schema_version: u32,
     pub key: WorkItemKey,
-    pub goal_id: GoalId,
+    pub objective_id: ObjectiveId,
     pub title: String,
     pub kind: WorkItemKind,
     pub severity: Severity,

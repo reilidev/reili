@@ -81,8 +81,11 @@ pub async fn run_app_with_options(options: AppStartupOptions) -> Result<(), AppR
 
     let deps = build_runtime_deps(&config).await?;
     deps.worker_runner.start();
-    if let Some(scheduler) = &deps.goal_scheduler {
-        tracing::info!(goals = scheduler.goals().len(), "Goal scheduler started");
+    if let Some(scheduler) = &deps.objective_scheduler {
+        tracing::info!(
+            objectives = scheduler.objectives().len(),
+            "Objective scheduler started"
+        );
         scheduler.start();
     }
 
@@ -94,7 +97,7 @@ pub async fn run_app_with_options(options: AppStartupOptions) -> Result<(), AppR
     };
 
     deps.worker_runner.stop();
-    if let Some(scheduler) = &deps.goal_scheduler {
+    if let Some(scheduler) = &deps.objective_scheduler {
         // Running cycles are interrupted; their leases expire and they resume after restart.
         scheduler.stop();
     }

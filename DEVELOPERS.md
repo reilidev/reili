@@ -276,8 +276,8 @@ When adding behavior:
   Slack public-channel search, and web lookup integrations, and writes only Slack progress/control
   and result messages.
 
-- When `[[goals]]` are configured, a goal scheduler runs in the same process. Its durable state
-  is the goal ledger and work item issues in the Work State repository; see
+- When `[[objectives]]` are configured, an objective scheduler runs in the same process. Its durable state
+  is the objective ledger and work item issues in the Work State repository; see
   [docs/autonomy.md](./docs/autonomy.md). Stopping the process interrupts running cycles; they
   resume from their last checkpoint after the lease expires.
 
@@ -287,9 +287,9 @@ When adding behavior:
 - Prefer unit tests for application orchestration, config resolution, and adapter contract behavior.
 - Keep tests deterministic and independent from external APIs.
 - Do not add tests that only verify logging.
-- Goal behavior is covered by acceptance scenarios in `crates/application/src/goal/scenarios.rs`
-  (in-memory GitHub/Slack/Canvas fakes in `goal/testing.rs`) and by an HTTP integration
-  test against a fake GitHub API in `crates/runtime/src/bootstrap/goals_integration_tests.rs`.
+- Objective behavior is covered by acceptance scenarios in `crates/application/src/objective/scenarios.rs`
+  (in-memory GitHub/Slack/Canvas fakes in `objective/testing.rs`) and by an HTTP integration
+  test against a fake GitHub API in `crates/runtime/src/bootstrap/objectives_integration_tests.rs`.
 
 ## Release Notes
 

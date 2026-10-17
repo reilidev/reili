@@ -1,4 +1,4 @@
-//! The structured report a goal investigation submits. Reili's report policy screens it before
+//! The structured report an objective investigation submits. Reili's report policy screens it before
 //! anything is recorded.
 
 use serde::{Deserialize, Serialize};

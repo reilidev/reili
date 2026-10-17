@@ -13,10 +13,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reili_core::error::PortError;
-use reili_core::goal::GoalId;
+use reili_core::objective::ObjectiveId;
 use reili_core::secret::SecretString;
 use reili_core::work::{
-    GoalLedgerState, HumanComment, IssueRef, StoredLedger, StoredWorkItem, WorkItemState,
+    HumanComment, IssueRef, ObjectiveLedgerState, StoredLedger, StoredWorkItem, WorkItemState,
     WorkItemStatus, WorkStateComment, WorkStateError, WorkStateRepositoryPort,
     sanitize::truncate_chars,
 };
@@ -35,12 +35,12 @@ const PER_PAGE: usize = 100;
 const MAX_PAGES: usize = 20;
 const API_VERSION: &str = "2022-11-28";
 const USER_AGENT: &str = "reili-work-state";
-pub(super) const GOAL_LEDGER_LABEL: &str = "reili:goal";
+pub(super) const OBJECTIVE_LEDGER_LABEL: &str = "reili:objective";
 pub(super) const WORK_ITEM_LABEL: &str = "reili:work-item";
 const DUPLICATE_LABEL: &str = "reili:duplicate";
 const MANAGED_LABEL_PREFIXES: &[&str] = &[
     "reili:",
-    "reili-goal:",
+    "reili-objective:",
     "reili-status:",
     "reili-severity:",
     "reili-kind:",
@@ -177,8 +177,8 @@ struct ApiComment {
     html_url: String,
 }
 
-fn goal_label(goal_id: &str) -> String {
-    format!("reili-goal:{goal_id}")
+fn objective_label(objective_id: &str) -> String {
+    format!("reili-objective:{objective_id}")
 }
 
 fn status_label(status: WorkItemStatus) -> String {
@@ -217,17 +217,17 @@ fn observed_status(issue: &ApiIssue, recorded: WorkItemStatus) -> WorkItemStatus
 fn work_item_labels(state: &WorkItemState) -> Vec<String> {
     vec![
         WORK_ITEM_LABEL.to_string(),
-        goal_label(state.goal_id.as_str()),
+        objective_label(state.objective_id.as_str()),
         status_label(state.status),
         format!("reili-severity:{}", state.severity.as_str()),
         format!("reili-kind:{}", state.kind.as_str()),
     ]
 }
 
-fn ledger_labels(state: &GoalLedgerState) -> Vec<String> {
+fn ledger_labels(state: &ObjectiveLedgerState) -> Vec<String> {
     vec![
-        GOAL_LEDGER_LABEL.to_string(),
-        goal_label(state.goal_id.as_str()),
+        OBJECTIVE_LEDGER_LABEL.to_string(),
+        objective_label(state.objective_id.as_str()),
     ]
 }
 
@@ -247,9 +247,12 @@ fn work_item_title(state: &WorkItemState) -> String {
     truncate_chars(&format!("[Reili] {}", state.title.trim()), 200)
 }
 
-fn ledger_title(state: &GoalLedgerState) -> String {
-    let objective = state.objective.lines().next().unwrap_or_default().trim();
-    truncate_chars(&format!("[Reili goal] {}: {objective}", state.goal_id), 200)
+fn ledger_title(state: &ObjectiveLedgerState) -> String {
+    let description = state.description.lines().next().unwrap_or_default().trim();
+    truncate_chars(
+        &format!("[Reili objective] {}: {description}", state.objective_id),
+        200,
+    )
 }
 
 fn map_status_error(status: u16, body: &str, context: &str) -> WorkStateError {
@@ -535,12 +538,15 @@ fn corrupted_skip(error: &WorkStateError) -> bool {
 
 #[async_trait]
 impl WorkStateRepositoryPort for GitHubWorkStateRepository {
-    async fn find_goal_ledger(
+    async fn find_objective_ledger(
         &self,
-        goal_id: &GoalId,
+        objective_id: &ObjectiveId,
     ) -> Result<Option<StoredLedger>, WorkStateError> {
         let issues = self
-            .list_issues(&[GOAL_LEDGER_LABEL.to_string(), goal_label(goal_id.as_str())])
+            .list_issues(&[
+                OBJECTIVE_LEDGER_LABEL.to_string(),
+                objective_label(objective_id.as_str()),
+            ])
             .await?;
         issues
             .iter()
@@ -549,14 +555,16 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
             .transpose()
     }
 
-    async fn list_goal_ledgers(&self) -> Result<Vec<StoredLedger>, WorkStateError> {
-        let issues = self.list_issues(&[GOAL_LEDGER_LABEL.to_string()]).await?;
+    async fn list_objective_ledgers(&self) -> Result<Vec<StoredLedger>, WorkStateError> {
+        let issues = self
+            .list_issues(&[OBJECTIVE_LEDGER_LABEL.to_string()])
+            .await?;
         let mut ledgers = Vec::new();
         for issue in &issues {
             match Self::to_ledger(issue) {
                 Ok(ledger) => ledgers.push(ledger),
                 Err(error) if corrupted_skip(&error) => {
-                    tracing::warn!(issue = issue.number, error = %error, "Skipping unreadable goal ledger");
+                    tracing::warn!(issue = issue.number, error = %error, "Skipping unreadable objective ledger");
                 }
                 Err(error) => return Err(error),
             }
@@ -564,9 +572,9 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
         Ok(ledgers)
     }
 
-    async fn create_goal_ledger(
+    async fn create_objective_ledger(
         &self,
-        state: &GoalLedgerState,
+        state: &ObjectiveLedgerState,
     ) -> Result<StoredLedger, WorkStateError> {
         let mut state = state.clone();
         state.revision = 1;
@@ -579,17 +587,17 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
                 reqwest::Method::POST,
                 &format!("{}/issues", self.repo_url()),
                 Some(&json!({ "title": ledger_title(&state), "body": body, "labels": labels })),
-                "create goal ledger",
+                "create objective ledger",
             )
             .await?;
         Self::to_ledger(&issue)
     }
 
-    async fn save_goal_ledger(
+    async fn save_objective_ledger(
         &self,
         issue: &IssueRef,
         expected_revision: u64,
-        state: &GoalLedgerState,
+        state: &ObjectiveLedgerState,
     ) -> Result<StoredLedger, WorkStateError> {
         self.guard(issue)?;
         let current = self.get_issue(issue.number).await?;
@@ -611,7 +619,7 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
                 reqwest::Method::PATCH,
                 &format!("{}/issues/{}", self.repo_url(), issue.number),
                 Some(&json!({ "title": ledger_title(&next), "body": body, "labels": labels })),
-                "update goal ledger",
+                "update objective ledger",
             )
             .await?;
         Self::to_ledger(&updated)
@@ -619,10 +627,13 @@ impl WorkStateRepositoryPort for GitHubWorkStateRepository {
 
     async fn list_work_items(
         &self,
-        goal_id: &GoalId,
+        objective_id: &ObjectiveId,
     ) -> Result<Vec<StoredWorkItem>, WorkStateError> {
         let issues = self
-            .list_issues(&[WORK_ITEM_LABEL.to_string(), goal_label(goal_id.as_str())])
+            .list_issues(&[
+                WORK_ITEM_LABEL.to_string(),
+                objective_label(objective_id.as_str()),
+            ])
             .await?;
         let mut items = Vec::new();
         for issue in &issues {

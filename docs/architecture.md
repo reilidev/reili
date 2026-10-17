@@ -19,7 +19,7 @@ flowchart TB
         INGRESS["Ingress<br/>routing · authorization ·<br/>auto-response gate · enqueue"]
         EXEC["Execution<br/>worker loop · task run ·<br/>cancellation"]
         PROGRESS["Progress<br/>event stream projection"]
-        GOAL["Goals<br/>scheduler · leased cycle ·<br/>report policy · decide ·<br/>human signals · reports"]
+        OBJECTIVE["Objectives<br/>scheduler · leased cycle ·<br/>report policy · decide ·<br/>human signals · reports"]
     end
 
     subgraph adapters["crates/adapters — integrations"]
@@ -31,7 +31,7 @@ flowchart TB
     end
 
     subgraph core["crates/core — domain"]
-        DOMAIN["Domain types · typed errors ·<br/>trait-based ports ·<br/>goals · work state"]
+        DOMAIN["Domain types · typed errors ·<br/>trait-based ports ·<br/>objectives · work state"]
     end
 
     runtime --> application
@@ -43,12 +43,12 @@ flowchart TB
 ## Crate responsibilities
 
 - `crates/core`: domain types, typed errors, and trait-based ports. Independent from runtime
-  and adapter concerns. Includes goal definitions and schedules (`goal`), Work State and the
+  and adapter concerns. Includes objective definitions and schedules (`objective`), Work State and the
   structured investigation vocabulary (`work`), and the investigation-runner, work-state, and
-  goal-report ports.
+  objective-report ports.
 - `crates/application`: use cases and task orchestration — Slack ingress (routing,
   authorization, auto-response gating, enqueue), task execution (worker loop, cancellation),
-  progress projection, and goal autonomy (`goal`: scheduler, durable cycle, report policy,
+  progress projection, and objective autonomy (`objective`: scheduler, durable cycle, report policy,
   decide/dedupe, human-signal reconciliation, Slack reports and commands).
 - `crates/adapters`: inbound Slack parsing and signature verification, outbound Slack Web API
   adapters, the agent stack (lead agent, dynamically spawned sub-agents, connectors, LLM
@@ -71,8 +71,8 @@ flowchart TB
   spawning sub-agents.
 - **Cancellation**: the Slack `Cancel` button flows through the interaction handler to an
   in-flight job registry that cancels queued or running tasks.
-- **Goal autonomy**: one provider runner implements both `TaskRunnerPort` (Slack tasks) and
-  `InvestigationRunnerPort` (goal cycles). Durable state lives only in GitHub Issues and the
+- **Objective autonomy**: one provider runner implements both `TaskRunnerPort` (Slack tasks) and
+  `InvestigationRunnerPort` (objective cycles). Durable state lives only in GitHub Issues and the
   Slack Canvas; see [autonomy.md](./autonomy.md).
 
 For the runtime investigation flow, see the [Architecture section in README.md](../README.md#architecture).

@@ -1,9 +1,9 @@
 mod env;
 mod file;
-mod goal_file;
-mod goal_loader;
 mod loader;
 mod model;
+mod objective_file;
+mod objective_loader;
 
 use std::path::PathBuf;
 

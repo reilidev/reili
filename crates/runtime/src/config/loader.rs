@@ -7,7 +7,6 @@ use super::file::{
     AiBackendFileConfig, AiFileConfig, FileConfig, SlackAuthorizationFileConfig,
     SlackChannelFileConfig, SlackFileConfig, parse_file_config,
 };
-use super::goal_loader::{resolve_autonomy, resolve_goals, resolve_work_state};
 use super::model::{
     AnthropicLlmConfig, AppConfig, BedrockAwsConfig, BedrockLlmConfig, BedrockMantleAuthConfig,
     BedrockMantleLlmConfig, EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig, LlmConfig,
@@ -15,6 +14,7 @@ use super::model::{
     SlackAuthorizationConfig, SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode,
     VertexAiLlmConfig, WebSearchProviderConfig,
 };
+use super::objective_loader::{resolve_autonomy, resolve_objectives, resolve_work_state};
 use crate::config::SecretString;
 use reili_adapters::outbound::agents::BedrockMantleModelFamily;
 use reili_core::messaging::slack::SlackChannelNamePattern;
@@ -129,8 +129,8 @@ fn resolve_app_config(
     let jira = resolve_jira_config(&file_config, env)?;
     let memory = resolve_memory_config(&file_config);
     let otlp_tracing = resolve_otlp_tracing_config(&file_config);
-    let goals = resolve_goals(&file_config)?;
-    let work_state = resolve_work_state(&file_config, env, &goals)?;
+    let objectives = resolve_objectives(&file_config)?;
+    let work_state = resolve_work_state(&file_config, env, &objectives)?;
     let autonomy = resolve_autonomy(&file_config)?;
 
     Ok(AppConfig {
@@ -168,7 +168,7 @@ fn resolve_app_config(
             file_config.conversation.additional_system_prompt.as_deref(),
         ),
         otlp_tracing,
-        goals,
+        objectives,
         work_state,
         autonomy,
     })
@@ -2678,16 +2678,16 @@ api_key_env = "LLM_OPENAI_API_KEY"
         )
     }
 
-    const GOAL_TOML: &str = r#"
+    const OBJECTIVE_TOML: &str = r#"
 [work_state.github]
 repository = "example-org/reili-work"
 
 [autonomy]
 tick_interval_seconds = 30
 
-[[goals]]
+[[objectives]]
 id = "checkout-reliability"
-objective = """
+description = """
 Continuously improve checkout service reliability.
 """
 scope = ["checkout-api"]
@@ -2696,24 +2696,24 @@ timezone = "Asia/Tokyo"
 report_channel = "C0123456789"
 enabled = true
 
-[goals.budget]
+[objectives.budget]
 max_cycle_minutes = 20
 max_llm_tokens_per_day = 4000000
 "#;
 
     #[test]
-    fn resolves_goals_work_state_and_autonomy() {
+    fn resolves_objectives_work_state_and_autonomy() {
         let env = FixedEnvironment::with_overrides(&[]);
-        let toml = format!("{}\n{GOAL_TOML}", valid_openai_config());
+        let toml = format!("{}\n{OBJECTIVE_TOML}", valid_openai_config());
 
         let config = resolve_app_config(parse_runtime_config(&toml), &env).expect("resolve");
 
-        assert_eq!(config.goals.len(), 1);
-        let goal = &config.goals[0];
-        assert_eq!(goal.id.as_str(), "checkout-reliability");
-        assert_eq!(goal.schedule.timezone_name(), "Asia/Tokyo");
-        assert_eq!(goal.budget.max_cycle_duration_secs, 1_200);
-        assert_eq!(goal.budget.max_llm_tokens_per_day, 4_000_000);
+        assert_eq!(config.objectives.len(), 1);
+        let objective = &config.objectives[0];
+        assert_eq!(objective.id.as_str(), "checkout-reliability");
+        assert_eq!(objective.schedule.timezone_name(), "Asia/Tokyo");
+        assert_eq!(objective.budget.max_cycle_duration_secs, 1_200);
+        assert_eq!(objective.budget.max_llm_tokens_per_day, 4_000_000);
         let work_state = config.work_state.expect("work state");
         assert_eq!(work_state.repository, "example-org/reili-work");
         assert_eq!(work_state.app_id, "12345", "defaults to the connector App");
@@ -2722,12 +2722,12 @@ max_llm_tokens_per_day = 4000000
     }
 
     #[test]
-    fn goals_require_a_work_state_repository() {
+    fn objectives_require_a_work_state_repository() {
         let env = FixedEnvironment::with_overrides(&[]);
         let toml = format!(
             "{}\n{}",
             valid_openai_config(),
-            GOAL_TOML.replace(
+            OBJECTIVE_TOML.replace(
                 "[work_state.github]\nrepository = \"example-org/reili-work\"\n",
                 ""
             )
@@ -2739,7 +2739,7 @@ max_llm_tokens_per_day = 4000000
     }
 
     #[test]
-    fn rejects_invalid_goal_definitions() {
+    fn rejects_invalid_objective_definitions() {
         let env = FixedEnvironment::with_overrides(&[]);
         for (from, to, needle) in [
             ("0 */6 * * *", "0 */6 * *", "schedule"),
@@ -2750,28 +2750,28 @@ max_llm_tokens_per_day = 4000000
             let toml = format!(
                 "{}\n{}",
                 valid_openai_config(),
-                GOAL_TOML.replacen(from, to, 1)
+                OBJECTIVE_TOML.replacen(from, to, 1)
             );
 
             let error = resolve_app_config(parse_runtime_config(&toml), &env)
-                .expect_err("invalid goal must fail");
+                .expect_err("invalid objective must fail");
 
             assert!(error.to_string().contains(needle), "{needle}: {error}");
         }
     }
 
     #[test]
-    fn rejects_duplicate_goal_ids() {
+    fn rejects_duplicate_objective_ids() {
         let env = FixedEnvironment::with_overrides(&[]);
-        let duplicate = GOAL_TOML
-            .split("[[goals]]")
+        let duplicate = OBJECTIVE_TOML
+            .split("[[objectives]]")
             .nth(1)
-            .map(|goal| format!("[[goals]]{goal}"))
-            .expect("goal block");
-        let toml = format!("{}\n{GOAL_TOML}\n{duplicate}", valid_openai_config());
+            .map(|objective| format!("[[objectives]]{objective}"))
+            .expect("objective block");
+        let toml = format!("{}\n{OBJECTIVE_TOML}\n{duplicate}", valid_openai_config());
 
         let error = resolve_app_config(parse_runtime_config(&toml), &env).expect_err("duplicate");
 
-        assert!(error.to_string().contains("duplicate goal id"));
+        assert!(error.to_string().contains("duplicate objective id"));
     }
 }

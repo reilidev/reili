@@ -33,12 +33,12 @@ The runtime can expose only the following tool families:
 - JIRA MCP reads when `[connector.jira]` is configured: `searchJiraIssuesUsingJql`,
   `getJiraIssue`, `getJiraIssueRemoteIssueLinks`, `getTransitionsForJiraIssue`
 - External web lookup: `search_web`
-- Goal cycles only: `submit_investigation_report` (hands the structured report back to Reili;
+- Objective cycles only: `submit_investigation_report` (hands the structured report back to Reili;
   it writes nothing by itself)
 
 In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog
-mutations, esa writes, JIRA writes, remediation, or deployments. Goal Work State writes (see
-"Goal-driven autonomy" below) are performed by application code, not by agent tools.
+mutations, esa writes, JIRA writes, remediation, or deployments. Objective Work State writes (see
+"Objective-driven autonomy" below) are performed by application code, not by agent tools.
 
 ## Slack Permissions and API Usage
 
@@ -267,9 +267,9 @@ GitHub restrictions:
   allowlisted call, so queries must stay inside it and repository content, pull request, Actions,
   and Dependabot reads are rejected when the owner is outside it
 
-## Goal-driven Autonomy: Additional Access
+## Objective-driven Autonomy: Additional Access
 
-Everything in this section applies only when `[[goals]]` are configured (see
+Everything in this section applies only when `[[objectives]]` are configured (see
 [autonomy.md](./autonomy.md)).
 
 GitHub Work State (the one write exception):
@@ -290,16 +290,16 @@ GitHub Work State (the one write exception):
 
 Slack:
 
-- `chat:write`: goal reports in each goal's `report_channel` (the bot must be a member); report
+- `chat:write`: objective reports in each objective's `report_channel` (the bot must be a member); report
   messages carry
   [message metadata](https://api.slack.com/reference/metadata) with an idempotency key
 - `channels:history` (already required): `conversations.history` to detect an already-posted
   report after a crash; without it Reili still works but may repeat one report after a crash
-- `canvases:write` (already required for memory): screened facts learned by goal cycles
+- `canvases:write` (already required for memory): screened facts learned by objective cycles
 
 Restrictions:
 
-- Goals come only from `reili.toml`; Slack and GitHub cannot create, edit, enable, or widen them
+- Objectives come only from `reili.toml`; Slack and GitHub cannot create, edit, enable, or widen them
 - Budgets (time, tokens per cycle and per day, tool calls, sub-agents, parallelism, new/open
   work items, attempts, reports) are enforced in code
 - Human comments are feedback only; a work item's status changes only through its label or

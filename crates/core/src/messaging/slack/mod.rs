@@ -5,12 +5,12 @@ pub mod control_message;
 pub mod file;
 pub mod file_download;
 pub mod file_shared;
-pub mod goal_report;
 pub mod interaction;
 pub mod interaction_handler;
 pub mod legacy_attachment;
 pub mod message;
 pub mod message_handler;
+pub mod objective_report;
 pub mod reaction;
 pub mod search;
 pub mod thread_history;
@@ -28,7 +28,6 @@ pub use control_message::{
 pub use file::{SlackMessageFile, render_slack_message_files_text};
 pub use file_download::SlackFileDownloadPort;
 pub use file_shared::{SlackFileSharedEvent, SlackFileSharedMessagePort};
-pub use goal_report::{GoalReportMessage, GoalReportPort, PostedGoalReport};
 pub use interaction::{SlackCancelJobInteraction, SlackInteraction};
 pub use interaction_handler::SlackInteractionHandlerPort;
 pub use legacy_attachment::{
@@ -36,6 +35,7 @@ pub use legacy_attachment::{
 };
 pub use message::{SlackMessage, SlackTriggerType};
 pub use message_handler::SlackMessageHandlerPort;
+pub use objective_report::{ObjectiveReportMessage, ObjectiveReportPort, PostedObjectiveReport};
 pub use reaction::{AddSlackReactionInput, SlackReactionPort};
 pub use search::{
     SlackContextMessage, SlackMessageSearchContextMessages, SlackMessageSearchInput,
@@ -71,11 +71,11 @@ pub use file_download::MockSlackFileDownloadPort;
 #[cfg(any(test, feature = "test-support"))]
 pub use file_shared::MockSlackFileSharedMessagePort;
 #[cfg(any(test, feature = "test-support"))]
-pub use goal_report::MockGoalReportPort;
-#[cfg(any(test, feature = "test-support"))]
 pub use interaction_handler::MockSlackInteractionHandlerPort;
 #[cfg(any(test, feature = "test-support"))]
 pub use message_handler::MockSlackMessageHandlerPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use objective_report::MockObjectiveReportPort;
 #[cfg(any(test, feature = "test-support"))]
 pub use reaction::MockSlackReactionPort;
 #[cfg(any(test, feature = "test-support"))]

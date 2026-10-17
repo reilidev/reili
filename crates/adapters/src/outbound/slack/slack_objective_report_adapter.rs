@@ -1,4 +1,4 @@
-//! Posts goal reports to Slack with message metadata carrying an idempotency key, and finds
+//! Posts objective reports to Slack with message metadata carrying an idempotency key, and finds
 //! already-posted reports by scanning recent channel history for that key.
 //! Metadata: <https://api.slack.com/reference/metadata>,
 //! history: <https://api.slack.com/methods/conversations.history>.
@@ -7,22 +7,24 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use reili_core::error::PortError;
-use reili_core::messaging::slack::{GoalReportMessage, GoalReportPort, PostedGoalReport};
+use reili_core::messaging::slack::{
+    ObjectiveReportMessage, ObjectiveReportPort, PostedObjectiveReport,
+};
 use serde_json::{Value, json};
 
 use super::slack_web_api_client::SlackWebApiClient;
 
-const REPORT_EVENT_TYPE: &str = "reili_goal_report";
+const REPORT_EVENT_TYPE: &str = "reili_objective_report";
 const HISTORY_LOOKBACK_MESSAGES: u32 = 100;
 /// History lookup failures that mean "cannot check" rather than "Slack is down". In these cases
 /// posting proceeds (at-least-once) instead of blocking the cycle forever.
 const DEGRADED_LOOKUP_ERRORS: &[&str] = &["missing_scope", "not_in_channel", "channel_not_found"];
 
-pub struct SlackGoalReportAdapter {
+pub struct SlackObjectiveReportAdapter {
     client: Arc<SlackWebApiClient>,
 }
 
-impl SlackGoalReportAdapter {
+impl SlackObjectiveReportAdapter {
     pub fn new(client: Arc<SlackWebApiClient>) -> Self {
         Self { client }
     }
@@ -37,12 +39,12 @@ fn message_report_key(message: &Value) -> Option<&str> {
 }
 
 #[async_trait]
-impl GoalReportPort for SlackGoalReportAdapter {
+impl ObjectiveReportPort for SlackObjectiveReportAdapter {
     async fn find_posted_report(
         &self,
         channel_id: &str,
         report_key: &str,
-    ) -> Result<Option<PostedGoalReport>, PortError> {
+    ) -> Result<Option<PostedObjectiveReport>, PortError> {
         let response = self
             .client
             .get(
@@ -64,7 +66,7 @@ impl GoalReportPort for SlackGoalReportAdapter {
                 tracing::warn!(
                     channel_id,
                     error = error.message,
-                    "Cannot check for an already-posted goal report; posting may repeat after a crash"
+                    "Cannot check for an already-posted objective report; posting may repeat after a crash"
                 );
                 return Ok(None);
             }
@@ -79,13 +81,16 @@ impl GoalReportPort for SlackGoalReportAdapter {
                     .find(|message| message_report_key(message) == Some(report_key))
             })
             .and_then(|message| message.get("ts").and_then(Value::as_str))
-            .map(|ts| PostedGoalReport {
+            .map(|ts| PostedObjectiveReport {
                 channel_id: channel_id.to_string(),
                 ts: ts.to_string(),
             }))
     }
 
-    async fn post_report(&self, message: GoalReportMessage) -> Result<PostedGoalReport, PortError> {
+    async fn post_report(
+        &self,
+        message: ObjectiveReportMessage,
+    ) -> Result<PostedObjectiveReport, PortError> {
         let response = self
             .client
             .post(
@@ -98,7 +103,7 @@ impl GoalReportPort for SlackGoalReportAdapter {
                         "event_type": REPORT_EVENT_TYPE,
                         "event_payload": {
                             "report_key": message.report_key,
-                            "goal_id": message.goal_id,
+                            "objective_id": message.objective_id,
                         }
                     }
                 }),
@@ -108,7 +113,7 @@ impl GoalReportPort for SlackGoalReportAdapter {
             .get("ts")
             .and_then(Value::as_str)
             .ok_or_else(|| PortError::invalid_response("chat.postMessage response had no ts"))?;
-        Ok(PostedGoalReport {
+        Ok(PostedObjectiveReport {
             channel_id: message.channel_id,
             ts: ts.to_string(),
         })
@@ -133,19 +138,19 @@ impl GoalReportPort for SlackGoalReportAdapter {
 mod tests {
     use std::sync::Arc;
 
-    use reili_core::messaging::slack::{GoalReportMessage, GoalReportPort};
+    use reili_core::messaging::slack::{ObjectiveReportMessage, ObjectiveReportPort};
     use reili_core::secret::SecretString;
     use serde_json::json;
     use wiremock::matchers::{body_partial_json, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::SlackGoalReportAdapter;
+    use super::SlackObjectiveReportAdapter;
     use crate::outbound::slack::slack_web_api_client::{
         SlackWebApiClient, SlackWebApiClientConfig,
     };
 
-    fn adapter(server: &MockServer) -> SlackGoalReportAdapter {
-        SlackGoalReportAdapter::new(Arc::new(
+    fn adapter(server: &MockServer) -> SlackObjectiveReportAdapter {
+        SlackObjectiveReportAdapter::new(Arc::new(
             SlackWebApiClient::new(SlackWebApiClientConfig {
                 bot_token: SecretString::from("xoxb-test"),
                 base_url: Some(server.uri()),
@@ -162,8 +167,8 @@ mod tests {
             .and(body_partial_json(json!({
                 "channel": "C1",
                 "metadata": {
-                    "event_type": "reili_goal_report",
-                    "event_payload": { "report_key": "checkout:run-1", "goal_id": "checkout" }
+                    "event_type": "reili_objective_report",
+                    "event_payload": { "report_key": "checkout:run-1", "objective_id": "checkout" }
                 }
             })))
             .respond_with(
@@ -174,9 +179,9 @@ mod tests {
             .await;
 
         let posted = adapter(&server)
-            .post_report(GoalReportMessage {
+            .post_report(ObjectiveReportMessage {
                 channel_id: "C1".to_string(),
-                goal_id: "checkout".to_string(),
+                objective_id: "checkout".to_string(),
                 report_key: "checkout:run-1".to_string(),
                 text: "report".to_string(),
             })
@@ -196,7 +201,7 @@ mod tests {
                 "ok": true,
                 "messages": [
                     { "ts": "3.0", "text": "unrelated" },
-                    { "ts": "2.0", "metadata": { "event_type": "reili_goal_report", "event_payload": { "report_key": "checkout:run-1" } } }
+                    { "ts": "2.0", "metadata": { "event_type": "reili_objective_report", "event_payload": { "report_key": "checkout:run-1" } } }
                 ]
             })))
             .mount(&server)

@@ -28,7 +28,7 @@ action is needed. Reili takes that work off your plate.
 
 Core:
 
-- **Goal-driven**: give Reili long-term goals in `reili.toml` (for example "keep checkout
+- **Objective-driven**: give Reili long-term objectives in `reili.toml` (for example "keep checkout
   reliable"); it investigates on a schedule, tracks work in GitHub Issues, and reports to Slack
 - **Read-focused**: Reili reads and reports — it never changes your infrastructure
 - **Cross-service**: works across Datadog, GitHub, JIRA, Slack, and optional knowledge base search today, with additional services planned over time
@@ -74,7 +74,7 @@ flowchart TD
     style More stroke-dasharray: 5 5
 ```
 
-Goal cycles run in the same binary: a scheduler reads goal ledgers from GitHub Issues and runs
+Objective cycles run in the same binary: a scheduler reads objective ledgers from GitHub Issues and runs
 leased, checkpointed cycles with the same agent stack (see [docs/autonomy.md](./docs/autonomy.md)).
 
 A Slack mention is parsed, authorized, and enqueued as a task job into an in-memory queue
@@ -405,17 +405,17 @@ What happens:
 If you need to stop a queued or running task, click `Cancel` on that task's control
 message in the same Slack thread.
 
-## Autonomous Goals
+## Autonomous Objectives
 
-Besides answering mentions, Reili can pursue long-term goals defined in `reili.toml`:
+Besides answering mentions, Reili can pursue long-term objectives defined in `reili.toml`:
 
 ```toml
 [work_state.github]
 repository = "acme/reili-work"      # dedicated repository for Reili's Work State
 
-[[goals]]
+[[objectives]]
 id = "checkout-reliability"
-objective = "Continuously improve checkout service reliability."
+description = "Continuously improve checkout service reliability."
 scope = ["checkout-api"]
 schedule = "0 */6 * * *"
 timezone = "Asia/Tokyo"
@@ -423,7 +423,7 @@ report_channel = "C0123456789"
 enabled = true
 ```
 
-Each cycle observes the goal's services and prior work, investigates with dynamically
+Each cycle observes the objective's services and prior work, investigates with dynamically
 composed sub-agents, records the work as GitHub Issues that humans can read, comment on, and steer with labels, posts
 only meaningful changes to Slack, and
 saves screened reusable facts to the Canvas memory. Cycles survive restarts: state lives in GitHub
@@ -446,9 +446,9 @@ At a high level, the current runtime:
 - reads from Datadog, GitHub, optional esa posts, optional JIRA tickets, Slack thread history,
   Slack public-channel search, and web lookup integrations, and writes only Slack progress and
   result messages plus, when memory is configured, reusable notes in the shared memory Canvas
-- when goals are configured, additionally writes issues, comments, and labels in exactly one
+- when objectives are configured, additionally writes issues, comments, and labels in exactly one
   dedicated Work State repository, using a GitHub App token down-scoped to that repository with
-  `issues: write` and `metadata: read`, and posts goal reports to each goal's report channel
+  `issues: write` and `metadata: read`, and posts objective reports to each objective's report channel
 - exposes only read-only Datadog MCP tools, including dashboard detail retrieval and Synthetic
   test reads when Datadog returns them
 - exposes only read-only JIRA MCP tools; which projects are reachable is governed by the service
@@ -475,6 +475,6 @@ not part of the release flow.
 
 - Executing operational actions like auto-remediation or auto-deploy
 - Running its own database or durable job queue (Work State lives in GitHub Issues, knowledge in
-  the Slack Canvas, goals in `reili.toml`)
+  the Slack Canvas, objectives in `reili.toml`)
 
 This project is intentionally focused on read-only task execution and decision support.

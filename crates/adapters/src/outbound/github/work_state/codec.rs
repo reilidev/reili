@@ -3,7 +3,9 @@
 
 use std::fmt::Write as _;
 
-use reili_core::work::{GoalLedgerState, WorkItemState, WorkItemStatus, sanitize::truncate_chars};
+use reili_core::work::{
+    ObjectiveLedgerState, WorkItemState, WorkItemStatus, sanitize::truncate_chars,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -107,8 +109,8 @@ pub(super) fn render_work_item_body(
 
 fn render_work_item_sections(state: &WorkItemState, detailed: bool) -> String {
     let mut text = format!(
-        "> Maintained by Reili for goal `{}`. Edit only **Human notes** below. Steer with a comment (read by the next cycle), the `reili-status:*` label, or by closing the issue.\n\n**Status:** `{}` · **Severity:** {} · **Kind:** {} · **Key:** `{}`\n",
-        state.goal_id,
+        "> Maintained by Reili for objective `{}`. Edit only **Human notes** below. Steer with a comment (read by the next cycle), the `reili-status:*` label, or by closing the issue.\n\n**Status:** `{}` · **Severity:** {} · **Kind:** {} · **Key:** `{}`\n",
+        state.objective_id,
         state.status.as_str(),
         state.severity.as_str(),
         state.kind.as_str(),
@@ -220,15 +222,15 @@ fn render_work_item_sections(state: &WorkItemState, detailed: bool) -> String {
 }
 
 pub(super) fn render_ledger_body(
-    state: &GoalLedgerState,
+    state: &ObjectiveLedgerState,
     human_notes: &str,
 ) -> Result<String, String> {
     let state_json = encode_state(state)?;
     let mut text = format!(
-        "> Goal ledger maintained by Reili. The goal itself is defined in `reili.toml`; edit only **Human notes** below.\n\n**Goal:** `{}` · **Lifecycle:** `{}`\n\n### Objective\n{}\n",
-        state.goal_id,
+        "> Objective ledger maintained by Reili. The objective itself is defined in `reili.toml`; edit only **Human notes** below.\n\n**Objective:** `{}` · **Lifecycle:** `{}`\n\n### Objective\n{}\n",
+        state.objective_id,
         state.lifecycle.as_str(),
-        state.objective
+        state.description
     );
     if let Some(active) = &state.active_cycle {
         let _ = write!(
@@ -268,7 +270,7 @@ pub(super) fn render_ledger_body(
         notes_and_state(human_notes, &state_json)
     );
     if body.chars().count() > MAX_BODY_CHARS {
-        return Err("goal ledger body exceeds GitHub's limit".to_string());
+        return Err("objective ledger body exceeds GitHub's limit".to_string());
     }
     Ok(body)
 }
@@ -284,7 +286,7 @@ pub(super) fn render_comment(kind: &str, body: &str) -> String {
 mod tests {
     use chrono::{TimeZone, Utc};
     use reili_core::work::{
-        Finding, GoalLedgerState, Hypothesis, HypothesisStatus, WorkItemState,
+        Finding, Hypothesis, HypothesisStatus, ObjectiveLedgerState, WorkItemState,
         test_support::sample_work_item,
     };
 
@@ -350,14 +352,14 @@ mod tests {
 
     #[test]
     fn renders_ledger() {
-        let goal = crate::outbound::github::work_state::tests_support::goal();
-        let ledger = GoalLedgerState::new(
-            &goal,
+        let objective = crate::outbound::github::work_state::tests_support::objective();
+        let ledger = ObjectiveLedgerState::new(
+            &objective,
             Utc.timestamp_opt(1_760_000_000, 0).single().expect("time"),
         );
 
         let body = render_ledger_body(&ledger, "notes").expect("render");
-        let decoded: GoalLedgerState = decode_state(&body).expect("decode");
+        let decoded: ObjectiveLedgerState = decode_state(&body).expect("decode");
 
         assert_eq!(decoded, ledger);
         assert!(body.contains("**Lifecycle:** `active`"));

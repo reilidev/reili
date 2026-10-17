@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use reili_core::error::PortError;
-use reili_core::goal::GoalId;
+use reili_core::objective::ObjectiveId;
 use reili_core::secret::SecretString;
 use reili_core::work::{
     IssueRef, WorkItemStatus, WorkStateComment, WorkStateCommentKind, WorkStateError,
@@ -124,7 +124,7 @@ async fn lists_work_items_by_label_and_derives_observed_status() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/repos/acme/reili-work/issues"))
-        .and(query_param("labels", "reili:work-item,reili-goal:checkout"))
+        .and(query_param("labels", "reili:work-item,reili-objective:checkout"))
         .and(query_param("state", "all"))
         .and(header("authorization", "Bearer installation-token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
@@ -138,7 +138,7 @@ async fn lists_work_items_by_label_and_derives_observed_status() {
         .await;
 
     let items = repository(&server)
-        .list_work_items(&GoalId::new("checkout").expect("id"))
+        .list_work_items(&ObjectiveId::new("checkout").expect("id"))
         .await
         .expect("list");
 
@@ -276,7 +276,7 @@ async fn maps_server_errors_to_retryable_unavailability() {
         .await;
 
     let error = repository(&server)
-        .find_goal_ledger(&GoalId::new("checkout").expect("id"))
+        .find_objective_ledger(&ObjectiveId::new("checkout").expect("id"))
         .await
         .expect_err("unavailable");
 

@@ -1,4 +1,4 @@
-//! Port for goal-driven investigations run by the agent stack, plus the shared run budget the
+//! Port for objective-driven investigations run by the agent stack, plus the shared run budget the
 //! agent tools report into.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -32,7 +32,7 @@ pub struct BriefSection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InvestigationBrief {
     pub run_id: String,
-    pub goal_id: String,
+    pub objective_id: String,
     pub sections: Vec<BriefSection>,
     pub now: DateTime<Utc>,
     pub deadline: DateTime<Utc>,

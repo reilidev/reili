@@ -37,7 +37,7 @@ impl CronField {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct GoalSchedule {
+pub struct ObjectiveSchedule {
     expression: String,
     timezone: Tz,
     minutes: CronField,
@@ -47,13 +47,17 @@ pub struct GoalSchedule {
     days_of_week: CronField,
 }
 
-impl fmt::Debug for GoalSchedule {
+impl fmt::Debug for ObjectiveSchedule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "GoalSchedule({} @ {})", self.expression, self.timezone)
+        write!(
+            f,
+            "ObjectiveSchedule({} @ {})",
+            self.expression, self.timezone
+        )
     }
 }
 
-impl GoalSchedule {
+impl ObjectiveSchedule {
     pub fn parse(expression: &str, timezone: &str) -> Result<Self, ScheduleError> {
         let timezone: Tz = timezone
             .trim()
@@ -163,13 +167,13 @@ impl GoalSchedule {
     }
 }
 
-impl Serialize for GoalSchedule {
+impl Serialize for ObjectiveSchedule {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&format!("{} @ {}", self.expression, self.timezone.name()))
     }
 }
 
-impl<'de> Deserialize<'de> for GoalSchedule {
+impl<'de> Deserialize<'de> for ObjectiveSchedule {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = String::deserialize(deserializer)?;
         let (expression, timezone) = raw
@@ -291,7 +295,7 @@ pub fn truncate_to_minute(value: DateTime<Utc>) -> DateTime<Utc> {
 mod tests {
     use chrono::{DateTime, Utc};
 
-    use super::{GoalSchedule, ScheduleError};
+    use super::{ObjectiveSchedule, ScheduleError};
 
     fn at(value: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(value)
@@ -301,7 +305,7 @@ mod tests {
 
     #[test]
     fn next_fire_every_six_hours_in_tokyo() {
-        let schedule = GoalSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("parse");
+        let schedule = ObjectiveSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("parse");
 
         // 2026-10-15T01:30Z is 10:30 JST → next is 12:00 JST = 03:00Z
         assert_eq!(
@@ -317,20 +321,20 @@ mod tests {
 
     #[test]
     fn supports_lists_ranges_names_and_aliases() {
-        let weekdays = GoalSchedule::parse("30 9 * * mon-fri", "UTC").expect("parse");
+        let weekdays = ObjectiveSchedule::parse("30 9 * * mon-fri", "UTC").expect("parse");
         // 2026-10-17 is a Saturday
         assert_eq!(
             weekdays.next_after(at("2026-10-16T10:00:00Z")),
             Some(at("2026-10-19T09:30:00Z"))
         );
 
-        let daily = GoalSchedule::parse("@daily", "UTC").expect("parse");
+        let daily = ObjectiveSchedule::parse("@daily", "UTC").expect("parse");
         assert_eq!(
             daily.next_after(at("2026-10-15T10:00:00Z")),
             Some(at("2026-10-16T00:00:00Z"))
         );
 
-        let list = GoalSchedule::parse("0,15 1 * * 7", "UTC").expect("parse");
+        let list = ObjectiveSchedule::parse("0,15 1 * * 7", "UTC").expect("parse");
         // 2026-10-18 is a Sunday; 7 means Sunday too
         assert_eq!(
             list.next_after(at("2026-10-18T01:00:00Z")),
@@ -340,7 +344,7 @@ mod tests {
 
     #[test]
     fn dom_and_dow_use_or_semantics_when_both_restricted() {
-        let schedule = GoalSchedule::parse("0 0 1 * mon", "UTC").expect("parse");
+        let schedule = ObjectiveSchedule::parse("0 0 1 * mon", "UTC").expect("parse");
 
         // From Thu 2026-10-15: next Monday 2026-10-19 comes before Nov 1
         assert_eq!(
@@ -351,7 +355,7 @@ mod tests {
 
     #[test]
     fn latest_at_or_before_coalesces_missed_runs() {
-        let schedule = GoalSchedule::parse("0 * * * *", "UTC").expect("parse");
+        let schedule = ObjectiveSchedule::parse("0 * * * *", "UTC").expect("parse");
 
         assert_eq!(
             schedule.latest_at_or_before(at("2026-10-15T05:30:00Z"), at("2026-10-15T01:00:00Z")),
@@ -366,29 +370,29 @@ mod tests {
     #[test]
     fn rejects_invalid_expressions() {
         assert_eq!(
-            GoalSchedule::parse("* * *", "UTC"),
+            ObjectiveSchedule::parse("* * *", "UTC"),
             Err(ScheduleError::FieldCount(3))
         );
         assert!(matches!(
-            GoalSchedule::parse("61 * * * *", "UTC"),
+            ObjectiveSchedule::parse("61 * * * *", "UTC"),
             Err(ScheduleError::InvalidField { .. })
         ));
         assert!(matches!(
-            GoalSchedule::parse("*/0 * * * *", "UTC"),
+            ObjectiveSchedule::parse("*/0 * * * *", "UTC"),
             Err(ScheduleError::InvalidField { .. })
         ));
         assert_eq!(
-            GoalSchedule::parse("* * * * *", "Mars/Olympus"),
+            ObjectiveSchedule::parse("* * * * *", "Mars/Olympus"),
             Err(ScheduleError::UnknownTimezone("Mars/Olympus".to_string()))
         );
     }
 
     #[test]
     fn round_trips_through_serde() {
-        let schedule = GoalSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("parse");
+        let schedule = ObjectiveSchedule::parse("0 */6 * * *", "Asia/Tokyo").expect("parse");
 
         let json = serde_json::to_string(&schedule).expect("serialize");
-        let restored: GoalSchedule = serde_json::from_str(&json).expect("deserialize");
+        let restored: ObjectiveSchedule = serde_json::from_str(&json).expect("deserialize");
 
         assert_eq!(json, "\"0 */6 * * * @ Asia/Tokyo\"");
         assert_eq!(restored, schedule);

@@ -5,7 +5,7 @@ use serde::de::{Error as DeError, Unexpected};
 use serde::{Deserialize, Deserializer};
 
 use super::ConfigError;
-use super::goal_file::{AutonomyFileConfig, GoalFileConfig, WorkStateFileConfig};
+use super::objective_file::{AutonomyFileConfig, ObjectiveFileConfig, WorkStateFileConfig};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct FileConfig {
@@ -25,7 +25,7 @@ pub(crate) struct FileConfig {
     #[serde(default)]
     pub autonomy: AutonomyFileConfig,
     #[serde(default)]
-    pub goals: Vec<GoalFileConfig>,
+    pub objectives: Vec<ObjectiveFileConfig>,
 }
 
 /// Optional top-level `[memory]` block. Memory is a cross-channel concern, so it lives at the top

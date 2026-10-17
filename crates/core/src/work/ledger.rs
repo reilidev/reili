@@ -1,20 +1,20 @@
-//! The Goal Ledger is the per-goal durable state (one GitHub Issue per goal): cycle checkpoints and
+//! The Objective Ledger is the per-objective durable state (one GitHub Issue per objective): cycle checkpoints and
 //! lease, budget usage, and report de-duplication state.
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::item::keep_last;
-use crate::goal::{GoalDefinition, GoalId};
+use crate::objective::{ObjectiveDefinition, ObjectiveId};
 
-pub const GOAL_LEDGER_SCHEMA_VERSION: u32 = 1;
+pub const OBJECTIVE_LEDGER_SCHEMA_VERSION: u32 = 1;
 const MAX_CYCLE_RECORDS: usize = 20;
 const MAX_REPORT_KEYS: usize = 50;
 const MAX_LEARNED_FINGERPRINTS: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GoalLifecycle {
+pub enum ObjectiveLifecycle {
     Active,
     /// `enabled = false` in config: no cycles run; existing work items are kept untouched.
     Disabled,
@@ -22,7 +22,7 @@ pub enum GoalLifecycle {
     Retired,
 }
 
-impl GoalLifecycle {
+impl ObjectiveLifecycle {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -149,12 +149,12 @@ pub struct ReportState {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GoalLedgerState {
+pub struct ObjectiveLedgerState {
     pub schema_version: u32,
-    pub goal_id: GoalId,
+    pub objective_id: ObjectiveId,
     pub definition_fingerprint: String,
-    pub objective: String,
-    pub lifecycle: GoalLifecycle,
+    pub description: String,
+    pub lifecycle: ObjectiveLifecycle,
     #[serde(default)]
     pub active_cycle: Option<ActiveCycle>,
     #[serde(default)]
@@ -175,18 +175,18 @@ pub struct GoalLedgerState {
     pub revision: u64,
 }
 
-impl GoalLedgerState {
+impl ObjectiveLedgerState {
     #[must_use]
-    pub fn new(goal: &GoalDefinition, now: DateTime<Utc>) -> Self {
+    pub fn new(objective: &ObjectiveDefinition, now: DateTime<Utc>) -> Self {
         Self {
-            schema_version: GOAL_LEDGER_SCHEMA_VERSION,
-            goal_id: goal.id.clone(),
-            definition_fingerprint: goal.fingerprint(),
-            objective: goal.objective.clone(),
-            lifecycle: if goal.enabled {
-                GoalLifecycle::Active
+            schema_version: OBJECTIVE_LEDGER_SCHEMA_VERSION,
+            objective_id: objective.id.clone(),
+            definition_fingerprint: objective.fingerprint(),
+            description: objective.description.clone(),
+            lifecycle: if objective.enabled {
+                ObjectiveLifecycle::Active
             } else {
-                GoalLifecycle::Disabled
+                ObjectiveLifecycle::Disabled
             },
             active_cycle: None,
             last_scheduled_for: None,
@@ -300,8 +300,8 @@ impl GoalLedgerState {
 mod tests {
     use chrono::{Duration, NaiveDate, TimeZone, Utc};
 
-    use super::{CycleRecord, CycleResult, GoalLedgerState, GoalLifecycle};
-    use crate::goal::test_support::sample_goal;
+    use super::{CycleRecord, CycleResult, ObjectiveLedgerState, ObjectiveLifecycle};
+    use crate::objective::test_support::sample_objective;
 
     fn record(result: CycleResult, minutes: i64) -> CycleRecord {
         let at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("time")
@@ -321,21 +321,21 @@ mod tests {
 
     #[test]
     fn new_ledger_reflects_enabled_flag() {
-        let mut goal = sample_goal("checkout");
-        goal.enabled = false;
+        let mut objective = sample_objective("checkout");
+        objective.enabled = false;
         let now = Utc.timestamp_opt(1_700_000_000, 0).single().expect("time");
 
-        let ledger = GoalLedgerState::new(&goal, now);
+        let ledger = ObjectiveLedgerState::new(&objective, now);
 
-        assert_eq!(ledger.lifecycle, GoalLifecycle::Disabled);
-        assert_eq!(ledger.definition_fingerprint, goal.fingerprint());
+        assert_eq!(ledger.lifecycle, ObjectiveLifecycle::Disabled);
+        assert_eq!(ledger.definition_fingerprint, objective.fingerprint());
     }
 
     #[test]
     fn usage_resets_on_new_day() {
-        let goal = sample_goal("checkout");
+        let objective = sample_objective("checkout");
         let now = Utc.timestamp_opt(1_700_000_000, 0).single().expect("time");
-        let mut ledger = GoalLedgerState::new(&goal, now);
+        let mut ledger = ObjectiveLedgerState::new(&objective, now);
         let day1 = NaiveDate::from_ymd_opt(2026, 10, 15).expect("date");
         let day2 = NaiveDate::from_ymd_opt(2026, 10, 16).expect("date");
 
@@ -348,9 +348,9 @@ mod tests {
 
     #[test]
     fn backs_off_exponentially_after_failures() {
-        let goal = sample_goal("checkout");
+        let objective = sample_objective("checkout");
         let now = Utc.timestamp_opt(1_700_000_000, 0).single().expect("time");
-        let mut ledger = GoalLedgerState::new(&goal, now);
+        let mut ledger = ObjectiveLedgerState::new(&objective, now);
         ledger.record_cycle(record(CycleResult::Completed, 0));
         assert!(ledger.failure_backoff_until().is_none());
 

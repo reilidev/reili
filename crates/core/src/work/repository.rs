@@ -8,9 +8,9 @@ use thiserror::Error;
 
 use super::feedback::HumanComment;
 use super::item::{WorkItemState, WorkItemStatus};
-use super::ledger::GoalLedgerState;
+use super::ledger::ObjectiveLedgerState;
 use crate::error::PortError;
-use crate::goal::GoalId;
+use crate::objective::ObjectiveId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueRef {
@@ -21,7 +21,7 @@ pub struct IssueRef {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredLedger {
     pub issue: IssueRef,
-    pub state: GoalLedgerState,
+    pub state: ObjectiveLedgerState,
     /// Free-form human notes preserved verbatim across Reili re-renders.
     pub human_notes: String,
 }
@@ -88,32 +88,32 @@ pub struct WorkStateComment {
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 #[async_trait]
 pub trait WorkStateRepositoryPort: Send + Sync {
-    /// Reads the ledger for a goal directly (no search index), or `None` if not created yet.
-    async fn find_goal_ledger(
+    /// Reads the ledger for an objective directly (no search index), or `None` if not created yet.
+    async fn find_objective_ledger(
         &self,
-        goal_id: &GoalId,
+        objective_id: &ObjectiveId,
     ) -> Result<Option<StoredLedger>, WorkStateError>;
 
-    async fn list_goal_ledgers(&self) -> Result<Vec<StoredLedger>, WorkStateError>;
+    async fn list_objective_ledgers(&self) -> Result<Vec<StoredLedger>, WorkStateError>;
 
-    async fn create_goal_ledger(
+    async fn create_objective_ledger(
         &self,
-        state: &GoalLedgerState,
+        state: &ObjectiveLedgerState,
     ) -> Result<StoredLedger, WorkStateError>;
 
     /// Re-reads the record and writes `state` with `revision = expected_revision + 1` only if the
     /// stored revision still equals `expected_revision`. This narrows, but cannot eliminate, the
     /// race window: GitHub offers no conditional writes.
-    async fn save_goal_ledger(
+    async fn save_objective_ledger(
         &self,
         issue: &IssueRef,
         expected_revision: u64,
-        state: &GoalLedgerState,
+        state: &ObjectiveLedgerState,
     ) -> Result<StoredLedger, WorkStateError>;
 
     async fn list_work_items(
         &self,
-        goal_id: &GoalId,
+        objective_id: &ObjectiveId,
     ) -> Result<Vec<StoredWorkItem>, WorkStateError>;
 
     async fn create_work_item(

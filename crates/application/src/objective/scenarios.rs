@@ -4,8 +4,8 @@
 use std::sync::Arc;
 
 use chrono::Duration;
-use reili_core::goal::GoalDefinition;
 use reili_core::messaging::slack::{SlackFileDownloadPort, SlackMessageSearchPort};
+use reili_core::objective::ObjectiveDefinition;
 use reili_core::task::TaskResources;
 use reili_core::work::{
     CycleResult, EvidenceRef, EvidenceSource, Finding, Hypothesis, HypothesisStatus,
@@ -13,14 +13,14 @@ use reili_core::work::{
     WorkItemProposal, WorkItemStatus,
 };
 
-use super::cycle::{GoalCycleDeps, GoalCycleRunner};
-use super::scheduler::{GoalScheduler, GoalSchedulerDeps};
+use super::cycle::{ObjectiveCycleDeps, ObjectiveCycleRunner};
+use super::scheduler::{ObjectiveScheduler, ObjectiveSchedulerDeps};
 use super::store::WorkStateStore;
 use super::testing::{
     FakeWorkStateRepository, ManualClock, NoopLogger, RecordingCanvasMemory, RecordingReportPort,
     ScriptedInvestigationRunner, ScriptedResponse, at,
 };
-use super::tests_support::sample_goal;
+use super::tests_support::sample_objective;
 
 const START: &str = "2026-10-15T00:00:00Z";
 
@@ -46,7 +46,11 @@ impl Harness {
 
     /// A fresh "process": new scheduler, runner wiring, and lease holder id, sharing only the
     /// durable fakes (GitHub, Slack, Canvas).
-    fn process(&self, goals: Vec<GoalDefinition>, instance_id: &str) -> Arc<GoalScheduler> {
+    fn process(
+        &self,
+        objectives: Vec<ObjectiveDefinition>,
+        instance_id: &str,
+    ) -> Arc<ObjectiveScheduler> {
         let store = WorkStateStore::new(Arc::new(self.repository.clone()));
         let resources = TaskResources {
             slack_message_search_port: Arc::new(
@@ -58,7 +62,7 @@ impl Harness {
             web_search_port: None,
             canvas_memory_port: Some(Arc::new(self.canvas.clone())),
         };
-        let runner = Arc::new(GoalCycleRunner::new(GoalCycleDeps {
+        let runner = Arc::new(ObjectiveCycleRunner::new(ObjectiveCycleDeps {
             store: store.clone(),
             investigation_runner: Arc::new(self.runner.clone()),
             report_port: Arc::new(self.reports.clone()),
@@ -68,8 +72,8 @@ impl Harness {
             instance_id: instance_id.to_string(),
             lease_duration: Duration::minutes(15),
         }));
-        GoalScheduler::new(GoalSchedulerDeps {
-            goals,
+        ObjectiveScheduler::new(ObjectiveSchedulerDeps {
+            objectives,
             cycle_runner: runner,
             store,
             clock: Arc::new(self.clock.clone()),
@@ -80,7 +84,7 @@ impl Harness {
     }
 }
 
-async fn tick(scheduler: &Arc<GoalScheduler>) -> usize {
+async fn tick(scheduler: &Arc<ObjectiveScheduler>) -> usize {
     let handles = scheduler.tick().await;
     let count = handles.len();
     for handle in handles {
@@ -158,13 +162,13 @@ fn push_report(harness: &Harness, report: InvestigationReport) {
     harness.runner.push_report(report, 1_000);
 }
 
-// A. Continuous reliability goal --------------------------------------------------------------
+// A. Continuous reliability objective --------------------------------------------------------------
 
 #[tokio::test]
-async fn scenario_a_continuous_goal_persists_reports_and_continues_from_work_state() {
+async fn scenario_a_continuous_objective_persists_reports_and_continues_from_work_state() {
     let harness = Harness::new();
-    let goal = sample_goal("checkout-reliability");
-    let scheduler = harness.process(vec![goal.clone()], "instance-a");
+    let objective = sample_objective("checkout-reliability");
+    let scheduler = harness.process(vec![objective.clone()], "instance-a");
     push_report(
         &harness,
         report(vec![proposal(
@@ -254,7 +258,7 @@ async fn scenario_a_continuous_goal_persists_reports_and_continues_from_work_sta
 #[tokio::test]
 async fn scenario_a_no_new_findings_completes_quietly() {
     let harness = Harness::new();
-    let scheduler = harness.process(vec![sample_goal("checkout")], "instance-a");
+    let scheduler = harness.process(vec![sample_objective("checkout")], "instance-a");
 
     assert_eq!(tick(&scheduler).await, 1);
 
@@ -272,7 +276,7 @@ async fn scenario_a_no_new_findings_completes_quietly() {
 #[tokio::test]
 async fn scenario_b_competing_hypotheses_are_kept_separately_with_their_evidence() {
     let harness = Harness::new();
-    let scheduler = harness.process(vec![sample_goal("checkout")], "instance-a");
+    let scheduler = harness.process(vec![sample_objective("checkout")], "instance-a");
 
     let mut incident = proposal("checkout:incident-2026-10-15", WorkItemStatus::Resolved);
     incident.hypotheses = vec![
@@ -351,9 +355,9 @@ async fn scenario_b_competing_hypotheses_are_kept_separately_with_their_evidence
 #[tokio::test]
 async fn scenario_c_crash_during_investigation_resumes_after_lease_expiry() {
     let harness = Harness::new();
-    let goal = sample_goal("checkout");
+    let objective = sample_objective("checkout");
     harness.runner.push(ScriptedResponse::Hang);
-    let first = harness.process(vec![goal.clone()], "instance-1");
+    let first = harness.process(vec![objective.clone()], "instance-1");
 
     let handles = first.tick().await;
     assert_eq!(handles.len(), 1);
@@ -376,7 +380,7 @@ async fn scenario_c_crash_during_investigation_resumes_after_lease_expiry() {
     assert_eq!(active.lease_holder, "instance-1");
 
     // Restarted process: the old lease is still live, so it must not start a second cycle.
-    let second = harness.process(vec![goal.clone()], "instance-2");
+    let second = harness.process(vec![objective.clone()], "instance-2");
     assert_eq!(tick(&second).await, 0);
 
     // After the lease expires, the interrupted cycle is resumed (not restarted as a new slot).
@@ -403,7 +407,7 @@ async fn scenario_c_crash_during_investigation_resumes_after_lease_expiry() {
 #[tokio::test]
 async fn scenario_c_resume_after_decide_does_not_repeat_the_investigation() {
     let harness = Harness::new();
-    let goal = sample_goal("checkout");
+    let objective = sample_objective("checkout");
     *harness.reports.fail_posts.lock().expect("lock") = true;
     push_report(
         &harness,
@@ -412,7 +416,7 @@ async fn scenario_c_resume_after_decide_does_not_repeat_the_investigation() {
             WorkItemStatus::NeedsHuman,
         )]),
     );
-    let first = harness.process(vec![goal.clone()], "instance-1");
+    let first = harness.process(vec![objective.clone()], "instance-1");
     tick(&first).await;
 
     let ledger = harness.repository.ledger("checkout").expect("ledger");
@@ -425,7 +429,7 @@ async fn scenario_c_resume_after_decide_does_not_repeat_the_investigation() {
 
     *harness.reports.fail_posts.lock().expect("lock") = false;
     harness.clock.advance(Duration::minutes(16));
-    let second = harness.process(vec![goal], "instance-2");
+    let second = harness.process(vec![objective], "instance-2");
     tick(&second).await;
 
     assert_eq!(harness.runner.calls(), 1, "investigation is not re-run");
@@ -442,7 +446,7 @@ async fn scenario_c_resume_after_decide_does_not_repeat_the_investigation() {
 #[tokio::test]
 async fn scenario_c_create_races_and_write_conflicts_do_not_duplicate_items() {
     let harness = Harness::new();
-    let goal = sample_goal("checkout");
+    let objective = sample_objective("checkout");
     harness.repository.race_next_create();
     harness.repository.inject_conflicts(1);
     push_report(
@@ -452,7 +456,7 @@ async fn scenario_c_create_races_and_write_conflicts_do_not_duplicate_items() {
             WorkItemStatus::NeedsHuman,
         )]),
     );
-    let scheduler = harness.process(vec![goal], "instance-1");
+    let scheduler = harness.process(vec![objective], "instance-1");
 
     tick(&scheduler).await;
 
@@ -471,8 +475,8 @@ async fn scenario_c_create_races_and_write_conflicts_do_not_duplicate_items() {
 #[tokio::test]
 async fn scenario_c_github_outage_stops_safely_and_retries() {
     let harness = Harness::new();
-    let goal = sample_goal("checkout");
-    let scheduler = harness.process(vec![goal], "instance-1");
+    let objective = sample_objective("checkout");
+    let scheduler = harness.process(vec![objective], "instance-1");
     harness.repository.set_unavailable(true);
 
     assert_eq!(
@@ -493,8 +497,8 @@ async fn scenario_c_github_outage_stops_safely_and_retries() {
 #[tokio::test]
 async fn scenario_d_feedback_and_human_decisions_shape_the_next_cycle() {
     let harness = Harness::new();
-    let goal = sample_goal("checkout");
-    let scheduler = harness.process(vec![goal.clone()], "instance-1");
+    let objective = sample_objective("checkout");
+    let scheduler = harness.process(vec![objective.clone()], "instance-1");
     push_report(
         &harness,
         report(vec![proposal(
@@ -554,18 +558,21 @@ async fn scenario_d_feedback_and_human_decisions_shape_the_next_cycle() {
 // E. Safety ----------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn scenario_e_disabled_goals_never_run() {
+async fn scenario_e_disabled_objectives_never_run() {
     let harness = Harness::new();
-    let mut goal = sample_goal("checkout");
-    goal.enabled = false;
-    let scheduler = harness.process(vec![goal], "instance-1");
+    let mut objective = sample_objective("checkout");
+    objective.enabled = false;
+    let scheduler = harness.process(vec![objective], "instance-1");
 
     assert_eq!(tick(&scheduler).await, 0);
     let ledger = harness
         .repository
         .ledger("checkout")
         .expect("ledger synced");
-    assert_eq!(ledger.lifecycle, reili_core::work::GoalLifecycle::Disabled);
+    assert_eq!(
+        ledger.lifecycle,
+        reili_core::work::ObjectiveLifecycle::Disabled
+    );
     harness.clock.advance(Duration::days(1));
     assert_eq!(tick(&scheduler).await, 0);
     assert_eq!(harness.runner.calls(), 0);
@@ -574,10 +581,10 @@ async fn scenario_e_disabled_goals_never_run() {
 #[tokio::test]
 async fn scenario_e_daily_budget_exhaustion_skips_cycles_and_notifies_once() {
     let harness = Harness::new();
-    let mut goal = sample_goal("checkout");
-    goal.budget.max_llm_tokens_per_cycle = 1_000;
-    goal.budget.max_llm_tokens_per_day = 1_000;
-    let scheduler = harness.process(vec![goal], "instance-1");
+    let mut objective = sample_objective("checkout");
+    objective.budget.max_llm_tokens_per_cycle = 1_000;
+    objective.budget.max_llm_tokens_per_day = 1_000;
+    let scheduler = harness.process(vec![objective], "instance-1");
     harness.runner.push_report(
         InvestigationReport {
             summary: "No new findings.".to_string(),
@@ -618,10 +625,10 @@ async fn scenario_e_daily_budget_exhaustion_skips_cycles_and_notifies_once() {
 #[tokio::test(start_paused = true)]
 async fn scenario_e_time_limit_stops_runaway_investigations() {
     let harness = Harness::new();
-    let mut goal = sample_goal("checkout");
-    goal.budget.max_cycle_duration_secs = 120;
+    let mut objective = sample_objective("checkout");
+    objective.budget.max_cycle_duration_secs = 120;
     harness.runner.push(ScriptedResponse::Hang);
-    let scheduler = harness.process(vec![goal], "instance-1");
+    let scheduler = harness.process(vec![objective], "instance-1");
 
     tick(&scheduler).await;
 
@@ -637,8 +644,8 @@ async fn scenario_e_time_limit_stops_runaway_investigations() {
 #[tokio::test]
 async fn scenario_e_untrusted_instructions_are_not_obeyed() {
     let harness = Harness::new();
-    let goal = sample_goal("checkout");
-    let scheduler = harness.process(vec![goal], "instance-1");
+    let objective = sample_objective("checkout");
+    let scheduler = harness.process(vec![objective], "instance-1");
     let mut injected = report(vec![proposal(
         "checkout:5xx-after-deploy",
         WorkItemStatus::NeedsHuman,
@@ -688,14 +695,14 @@ async fn scenario_e_untrusted_instructions_are_not_obeyed() {
 #[tokio::test]
 async fn scenario_c_failed_investigations_back_off_then_give_up_on_the_slot() {
     let harness = Harness::new();
-    let mut goal = sample_goal("checkout");
-    goal.budget.max_cycle_attempts = 3;
+    let mut objective = sample_objective("checkout");
+    objective.budget.max_cycle_attempts = 3;
     for _ in 0..3 {
         harness
             .runner
             .push(ScriptedResponse::Fail("provider overloaded".to_string()));
     }
-    let scheduler = harness.process(vec![goal], "instance-1");
+    let scheduler = harness.process(vec![objective], "instance-1");
 
     assert_eq!(tick(&scheduler).await, 1);
     assert_eq!(tick(&scheduler).await, 0, "backoff after a failure");

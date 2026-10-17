@@ -1,7 +1,7 @@
 use std::fmt;
 
-use reili_core::goal::GoalDefinition;
 use reili_core::messaging::slack::SlackChannelNamePattern;
+use reili_core::objective::ObjectiveDefinition;
 use reili_core::secret::SecretString;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -218,7 +218,7 @@ pub struct OtlpTracingConfig {
     pub service_name: String,
 }
 
-/// Dedicated GitHub repository for goal Work State, written with a down-scoped App token.
+/// Dedicated GitHub repository for objective Work State, written with a down-scoped App token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkStateConfig {
     pub repository: String,
@@ -267,9 +267,9 @@ pub struct AppConfig {
     pub additional_system_prompt: Option<String>,
     /// OTLP trace export destination; `None` disables tracing entirely.
     pub otlp_tracing: Option<OtlpTracingConfig>,
-    /// Long-term goals; empty disables autonomous goal execution.
-    pub goals: Vec<GoalDefinition>,
-    /// Required when goals are configured.
+    /// Long-term objectives; empty disables autonomous objective execution.
+    pub objectives: Vec<ObjectiveDefinition>,
+    /// Required when objectives are configured.
     pub work_state: Option<WorkStateConfig>,
     pub autonomy: AutonomyConfig,
 }
@@ -354,7 +354,7 @@ mod tests {
             language: "English".to_string(),
             additional_system_prompt: None,
             otlp_tracing: None,
-            goals: Vec::new(),
+            objectives: Vec::new(),
             work_state: None,
             autonomy: super::AutonomyConfig {
                 tick_interval_seconds: 60,
@@ -435,7 +435,7 @@ mod tests {
             language: "English".to_string(),
             additional_system_prompt: None,
             otlp_tracing: None,
-            goals: Vec::new(),
+            objectives: Vec::new(),
             work_state: None,
             autonomy: super::AutonomyConfig {
                 tick_interval_seconds: 60,

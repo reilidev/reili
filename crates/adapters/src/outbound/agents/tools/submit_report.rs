@@ -1,4 +1,4 @@
-//! The lead agent's only way to hand results back in goal mode: a schema-validated structured
+//! The lead agent's only way to hand results back in objective mode: a schema-validated structured
 //! report. Validation errors are returned to the model so it can fix and resubmit.
 
 use std::collections::BTreeSet;
@@ -91,7 +91,7 @@ impl Tool for SubmitInvestigationReportTool {
     type Output = String;
 
     fn description(&self) -> String {
-        "Submit the final structured report for this goal cycle. Call exactly once, at the end. Reili screens it with its report policy and persists it to GitHub Issues: cited evidence ids must exist in `evidence`, and `dismissed` is set only by humans.".to_string()
+        "Submit the final structured report for this objective cycle. Call exactly once, at the end. Reili screens it with its report policy and persists it to GitHub Issues: cited evidence ids must exist in `evidence`, and `dismissed` is set only by humans.".to_string()
     }
 
     fn parameters(&self) -> Value {
