@@ -276,12 +276,20 @@ When adding behavior:
   Slack public-channel search, and web lookup integrations, and writes only Slack progress/control
   and result messages.
 
+- When `[[objectives]]` are configured, an objective scheduler runs in the same process. Its only
+  state is the work items on the team's tracker (GitHub Issues in the Work State repository).
+  Stopping the process cancels running cycles, and the next scheduled time picks the work up from
+  the tracker.
+
 ## Testing Conventions
 
 - Add Rust tests alongside implementation code with `#[cfg(test)]` or sibling test modules.
 - Prefer unit tests for application orchestration, config resolution, and adapter contract behavior.
 - Keep tests deterministic and independent from external APIs.
 - Do not add tests that only verify logging.
+- Objective behavior is covered by acceptance scenarios in `crates/application/src/objective/scenarios.rs`
+  (in-memory GitHub/Slack/Canvas fakes in `objective/testing.rs`). The GitHub Issues adapter runs
+  the Work State contract against a fake GitHub API in `crates/adapters/src/outbound/github/work_state/`.
 
 ## Release Notes
 

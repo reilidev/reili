@@ -72,6 +72,7 @@ impl GitHubAppInstallationAuth {
             &config.private_key,
             config.installation_id,
             GITHUB_API_BASE_URL,
+            None,
             &build_user_agent(),
         )?))
     }
@@ -243,6 +244,7 @@ mod tests {
                 &test_app_private_key(),
                 7,
                 &server.uri(),
+                None,
                 "reili-test",
             )
             .expect("provider"),

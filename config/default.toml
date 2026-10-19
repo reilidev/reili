@@ -218,3 +218,43 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
 #endpoint = "http://localhost:4317"
 # Optional when configured: service name attached to exported spans/traces. Defaults to `reili`.
 #service_name = "reili"
+
+# Optional: long-term objectives Reili pursues autonomously.
+# Objectives persist their Work State as GitHub Issues in one dedicated repository.
+#[work_state.github]
+# Required when any [[objectives]] entry exists: `owner/name` of the dedicated Work State repository.
+#repository = "example-org/reili-work"
+# Optional: App credentials default to [connector.github.app]. Install the App on this repository
+# with Issues (read & write) and Metadata (read). Tokens are always down-scoped to this repository.
+#app_id = "123456"
+#installation_id = "12345678"
+#private_key_env = "GITHUB_WORK_STATE_APP_PRIVATE_KEY"
+# Optional: GitHub Enterprise Server endpoints.
+#api_base_url = "https://api.github.com"
+#web_base_url = "https://github.com"
+
+#[[objectives]]
+# Required: 1-34 characters of a-z, 0-9, `-`, `_`. Used in GitHub labels.
+#id = "checkout-reliability"
+# Required: what to pursue. Name the services, repositories, and environments in scope here.
+#description = """
+#Continuously improve checkout service reliability.
+#Identify recurring failures, investigate root causes,
+#and recommend measurable improvements.
+#Scope: the checkout-api service in production (repository example-org/checkout).
+#"""
+# Required: 5-field cron (or @hourly/@daily/@weekly/@monthly) evaluated in `timezone`.
+#schedule = "0 */6 * * *"
+#timezone = "Asia/Tokyo"
+# Required: Slack channel ID for objective reports (invite the bot).
+#report_channel = "C0123456789"
+#enabled = true
+# Optional: takes items assigned to Reili (`reili:assignee`) that carry no objective label. At most one
+# objective can set it; when none does, the only enabled objective is the default.
+#default = false
+
+#[objectives.budget]
+#max_cycle_minutes = 30
+#max_llm_tokens_per_cycle = 2000000
+#max_tool_calls_per_cycle = 200
+#max_new_work_items_per_cycle = 3

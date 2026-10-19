@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use reili_core::cycle_agent::{BudgetDecision, RunBudget};
 use reili_core::task::{TaskProgressEvent, TaskProgressEventInput, TaskProgressEventPort};
 use rig::agent::Agent;
 use rig::completion::{Prompt, PromptError};
@@ -59,6 +60,7 @@ pub struct SpawnAgentToolInput {
     pub on_progress_event: Arc<dyn TaskProgressEventPort>,
     pub tool_concurrency: usize,
     pub shared_prompt_context: Option<String>,
+    pub budget: RunBudget,
 }
 
 #[derive(Clone)]
@@ -68,6 +70,7 @@ pub struct SpawnAgentTool {
     on_progress_event: Arc<dyn TaskProgressEventPort>,
     tool_concurrency: usize,
     shared_prompt_context: Option<String>,
+    budget: RunBudget,
 }
 
 impl SpawnAgentTool {
@@ -81,6 +84,7 @@ impl SpawnAgentTool {
                 .shared_prompt_context
                 .map(|context| context.trim().to_string())
                 .filter(|context| !context.is_empty()),
+            budget: input.budget,
         }
     }
 
@@ -208,6 +212,9 @@ impl Tool for SpawnAgentTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let spec = self.validate_args(&args)?;
+        if let BudgetDecision::Deny(reason) = self.budget.on_spawn_sub_agent() {
+            return Err(SpawnAgentToolError::InvalidSpec(reason));
+        }
         let owner_id = spec.owner_id.clone();
         let agent = (self.agent_factory)(spec);
         let prompt = self.build_prompt(args.prompt);
@@ -251,6 +258,7 @@ fn sanitize_agent_name(name: &str) -> Option<String> {
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use reili_core::cycle_agent::RunBudget;
     use reili_core::task::{MockTaskProgressEventPort, TaskProgressEvent, TaskProgressEventInput};
     use rig::agent::AgentBuilder;
     use rig::completion::message::{AssistantContent, Message, Text, UserContent};
@@ -374,6 +382,7 @@ mod tests {
             on_progress_event: Arc::new(progress_event_port),
             tool_concurrency: 4,
             shared_prompt_context,
+            budget: RunBudget::unlimited(),
         });
 
         SpawnToolHarness {

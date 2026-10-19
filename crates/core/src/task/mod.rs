@@ -9,7 +9,7 @@ pub mod task_runner;
 pub mod telemetry;
 
 pub use cancellation::TaskCancellation;
-pub use context::{TaskContext, TaskResources, TaskRuntime};
+pub use context::{ObjectiveCycleRuntimeInput, TaskContext, TaskResources, TaskRuntime};
 pub use job::{TaskJob, TaskJobPayload};
 pub use memory::TaskMemoryItem;
 pub use progress_event::{

@@ -15,6 +15,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
 tokio = { version = "1.50.0", features = ["sync"] }
+chrono-tz = "0.10"
 
 [dev-dependencies]
 serde_json = "1.0.149"

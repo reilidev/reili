@@ -1,3 +1,4 @@
+pub(crate) mod cycle_agent;
 pub(crate) mod environment;
 pub(crate) mod execution_hook;
 pub(crate) mod llm_runner;
