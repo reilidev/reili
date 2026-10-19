@@ -4,11 +4,11 @@ use reili_core::task::TaskResources;
 use rig::agent::Agent;
 use rig::prelude::{AgentClientExt, CompletionClient};
 
+use super::factory::{TaskAgentExecutionContext, TaskAgentRunContext, with_max_tokens};
 use super::spawn::{
     ComposeSpawnedPreambleInput, ResolveSpawnSelectionInput, compose_spawned_sub_agent_preamble,
     resolve_spawn_selection,
 };
-use super::{TaskAgentExecutionContext, TaskAgentRunContext, with_max_tokens};
 use crate::outbound::agents::connector::PreparedConnector;
 use crate::outbound::agents::runner::execution_hook::AgentExecutionHook;
 use crate::outbound::agents::runner::provider_settings::LlmProviderSettings;
