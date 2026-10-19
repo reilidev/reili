@@ -1,70 +1,31 @@
-use async_trait::async_trait;
-use reili_core::error::AgentRunFailedError;
+use reili_core::error::PortError;
 use reili_core::secret::SecretString;
-use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig::{client::ProviderClient, providers::openai};
 
+use super::super::llm_runner::{AgentClients, LlmBackend, LlmClients};
 use super::super::provider_settings::{
-    CreateOpenAiProviderSettingsInput, LlmProviderSettings, create_openai_provider_settings,
+    CreateOpenAiProviderSettingsInput, create_openai_provider_settings,
 };
-use super::super::task_runner::{RunLlmTaskRunnerInput, run_task};
-use crate::outbound::agents::connector::ConnectorSet;
 
-pub struct OpenAiTaskRunnerInput {
+pub struct OpenAiBackendInput {
     pub api_key: SecretString,
     pub model: String,
     pub sub_agent_model: String,
     pub reasoning_effort: String,
-    pub connectors: ConnectorSet,
-    pub language: String,
-    pub additional_system_prompt: Option<String>,
 }
 
-pub struct OpenAiTaskRunner {
-    api_key: SecretString,
-    provider_settings: LlmProviderSettings,
-    connectors: ConnectorSet,
-    language: String,
-    additional_system_prompt: Option<String>,
-}
-
-impl OpenAiTaskRunner {
-    pub fn new(input: OpenAiTaskRunnerInput) -> Self {
-        Self {
-            api_key: input.api_key,
-            provider_settings: create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
-                model: input.model,
-                sub_agent_model: input.sub_agent_model,
-                reasoning_effort: input.reasoning_effort,
-            }),
-            connectors: input.connectors,
-            language: input.language,
-            additional_system_prompt: input.additional_system_prompt,
-        }
-    }
-}
-
-#[async_trait]
-impl TaskRunnerPort for OpenAiTaskRunner {
-    async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
-        let client = openai::Client::from_val(self.api_key.expose().to_string().into()).map_err(
-            |error| {
-                AgentRunFailedError::new_permanent(
-                    reili_core::task::LlmUsageSnapshot::default(),
-                    format!("Failed to build OpenAI client: {error}"),
-                )
-            },
-        )?;
-
-        run_task(RunLlmTaskRunnerInput {
-            client: client.clone(),
-            sub_agent_client: client,
-            settings: self.provider_settings.clone(),
-            connectors: self.connectors.clone(),
-            language: self.language.clone(),
-            additional_system_prompt: self.additional_system_prompt.clone(),
-            run: input,
-        })
-        .await
-    }
+pub fn openai_backend(input: OpenAiBackendInput) -> Result<LlmBackend, PortError> {
+    let client = openai::Client::from_val(input.api_key.expose().to_string().into())
+        .map_err(|error| PortError::new(format!("Failed to build OpenAI client: {error}")))?;
+    Ok(LlmBackend {
+        clients: LlmClients::OpenAi(AgentClients {
+            lead: client.clone(),
+            sub_agent: client,
+        }),
+        settings: create_openai_provider_settings(CreateOpenAiProviderSettingsInput {
+            model: input.model,
+            sub_agent_model: input.sub_agent_model,
+            reasoning_effort: input.reasoning_effort,
+        }),
+    })
 }

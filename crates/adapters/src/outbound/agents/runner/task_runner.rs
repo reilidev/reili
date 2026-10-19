@@ -17,28 +17,16 @@ use rig::completion::message::{
 use rig::completion::{Prompt, PromptError};
 use rig::prelude::CompletionClient;
 
+use super::environment::{AgentEnvironment, prompt_facts};
 use super::execution_hook::AgentExecutionHook;
-use super::provider_settings::LlmProviderSettings;
 use super::usage_collector::LlmUsageCollector;
-use crate::outbound::agents::connector::{
-    ConnectorPrepareError, ConnectorPromptFact, ConnectorSet,
-};
 use crate::outbound::agents::task_agent::{
-    AgentInstructionsConfig, BuildTaskAgentInput, BuildTaskPromptInput,
-    CreateTaskAgentFactoryInput, TaskAgentConfig, TaskAgentExecutionContext, TaskAgentFactory,
-    TaskAgentRunContext, build_task_prompt,
+    BuildTaskAgentInput, BuildTaskPromptInput, TaskAgentExecutionContext, TaskAgentRunContext,
+    build_task_prompt,
 };
 
-pub struct RunLlmTaskRunnerInput<C>
-where
-    C: CompletionClient,
-{
-    pub client: C,
-    pub sub_agent_client: C,
-    pub settings: LlmProviderSettings,
-    pub connectors: ConnectorSet,
-    pub language: String,
-    pub additional_system_prompt: Option<String>,
+pub struct RunLlmTaskRunnerInput<C> {
+    pub environment: AgentEnvironment<C>,
     pub run: RunTaskInput,
 }
 
@@ -55,31 +43,10 @@ where
 
     let usage_collector = LlmUsageCollector::new();
     let runtime = input.run.context.runtime.clone();
-    let task_runner_prompt_hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
-        cancellation: input.run.context.cancellation.clone(),
-        logger: Arc::clone(&input.run.logger),
-        on_progress_event: Arc::clone(&input.run.on_progress_event),
-        runtime: runtime.clone(),
-        usage_collector: usage_collector.clone(),
-    });
-    let prepared_connectors = input.connectors.prepare_all().await.map_err(|error| {
-        let usage = usage_collector.snapshot();
-        match error {
-            ConnectorPrepareError::ConnectionFailed { message } => {
-                AgentRunFailedError::new_permanent(usage, message)
-            }
-            ConnectorPrepareError::Other(port_error) => {
-                create_failed_error(CreateTaskRunnerFailedErrorInput {
-                    usage,
-                    cause_message: port_error.message,
-                })
-            }
-        }
-    })?;
-    let prompt_facts: Vec<ConnectorPromptFact> = prepared_connectors
-        .iter()
-        .flat_map(|connector| connector.prompt_facts())
-        .collect();
+    let prepared_connectors = input
+        .environment
+        .prepare_connectors(&usage_collector)
+        .await?;
     let memory_items = input.run.request.memory_items.clone();
     let slack_action_token = input.run.request.trigger_message.action_token.clone();
     let pdf_files: Vec<SlackMessageFile> = input
@@ -97,35 +64,35 @@ where
         request: input.run.request,
         now: Utc::now(),
         runtime: runtime.clone(),
-        language: input.language.clone(),
-        prompt_facts,
+        language: input.environment.language.clone(),
+        prompt_facts: prompt_facts(&prepared_connectors),
     });
-    let task_agent_factory = TaskAgentFactory::new(CreateTaskAgentFactoryInput {
-        client: input.client,
-        sub_agent_client: input.sub_agent_client,
-        config: TaskAgentConfig {
-            settings: input.settings.clone(),
-            instructions: AgentInstructionsConfig {
-                language: input.language,
-                additional_system_prompt: input.additional_system_prompt,
+    let task_runner_prompt_hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
+        cancellation: input.run.context.cancellation.clone(),
+        logger: Arc::clone(&input.run.logger),
+        on_progress_event: Arc::clone(&input.run.on_progress_event),
+        runtime: runtime.clone(),
+        usage_collector: usage_collector.clone(),
+    });
+    let execution = TaskAgentExecutionContext {
+        logger: Arc::clone(&input.run.logger),
+        runtime,
+        cancellation: input.run.context.cancellation.clone(),
+        on_progress_event: Arc::clone(&input.run.on_progress_event),
+        usage_collector: usage_collector.clone(),
+    };
+    let task_agent = input
+        .environment
+        .agent_factory()
+        .build(BuildTaskAgentInput {
+            run_context: TaskAgentRunContext {
+                resources: Arc::new(input.run.context.resources),
+                execution,
+                slack_action_token,
+                memory_items,
             },
-        },
-    });
-    let task_agent = task_agent_factory.build(BuildTaskAgentInput {
-        run_context: TaskAgentRunContext {
-            resources: Arc::new(input.run.context.resources),
-            execution: TaskAgentExecutionContext {
-                logger: Arc::clone(&input.run.logger),
-                runtime,
-                cancellation: input.run.context.cancellation.clone(),
-                on_progress_event: Arc::clone(&input.run.on_progress_event),
-                usage_collector: usage_collector.clone(),
-            },
-            slack_action_token,
-            memory_items,
-        },
-        prepared_connectors,
-    });
+            prepared_connectors,
+        });
 
     let prompt_message = build_prompt_message(BuildPromptMessageInput {
         task_prompt,
@@ -136,8 +103,8 @@ where
 
     let prompt_response_result = task_agent
         .prompt(prompt_message)
-        .max_turns(input.settings.task_runner_max_turns)
-        .tool_concurrency(input.settings.tool_concurrency)
+        .max_turns(input.environment.settings.task_runner_max_turns)
+        .tool_concurrency(input.environment.settings.tool_concurrency)
         .add_hook(task_runner_prompt_hook)
         .extended_details()
         .await;
@@ -146,10 +113,10 @@ where
         Ok(response) => response,
         Err(PromptError::PromptCancelled { .. }) => return Ok(TaskRunOutcome::Cancelled),
         Err(error) => {
-            return Err(create_failed_error(CreateTaskRunnerFailedErrorInput {
-                usage: usage_collector.snapshot(),
-                cause_message: error.to_string(),
-            }));
+            return Err(AgentRunFailedError::new(
+                usage_collector.snapshot(),
+                error.to_string(),
+            ));
         }
     };
 
@@ -167,8 +134,8 @@ where
         result_text: prompt_response.output().to_string(),
         usage: usage_collector.snapshot(),
         execution: LlmExecutionMetadata {
-            provider: input.settings.provider,
-            model: input.settings.task_runner_model,
+            provider: input.environment.settings.provider,
+            model: input.environment.settings.task_runner_model,
         },
     }))
 }
@@ -253,22 +220,13 @@ async fn publish_message_output_created_event(
         })
         .await
         .map_err(|error| {
-            create_failed_error(CreateTaskRunnerFailedErrorInput {
-                usage: input.usage,
-                cause_message: format!("Failed to publish progress event: {error}"),
-            })
+            AgentRunFailedError::new(
+                input.usage,
+                format!("Failed to publish progress event: {error}"),
+            )
         })?;
 
     Ok(())
-}
-
-struct CreateTaskRunnerFailedErrorInput {
-    usage: LlmUsageSnapshot,
-    cause_message: String,
-}
-
-fn create_failed_error(input: CreateTaskRunnerFailedErrorInput) -> AgentRunFailedError {
-    AgentRunFailedError::new(input.usage, input.cause_message)
 }
 
 #[cfg(test)]
@@ -289,6 +247,7 @@ mod tests {
         BuildPromptMessageInput, CreateTaskRunnerPromptHookInput, MAX_PDF_BYTES,
         SlackFileDownloadPort, build_prompt_message, create_task_runner_prompt_hook,
     };
+    use crate::outbound::agents::runner::execution_hook::AgentExecutionHook;
     use crate::outbound::agents::runner::usage_collector::LlmUsageCollector;
 
     fn pdf_file(name: &str, url: &str) -> SlackMessageFile {
@@ -427,6 +386,19 @@ mod tests {
         }
     }
 
+    fn lead_hook(
+        logger: Arc<dyn Logger>,
+        on_progress_event: Arc<dyn reili_core::task::TaskProgressEventPort>,
+    ) -> AgentExecutionHook {
+        create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
+            cancellation: TaskCancellation::new(),
+            logger,
+            on_progress_event,
+            runtime: sample_runtime(),
+            usage_collector: LlmUsageCollector::new(),
+        })
+    }
+
     fn sample_runtime() -> TaskRuntime {
         TaskRuntime {
             started_at_iso: "2026-03-28T00:00:00.000Z".to_string(),
@@ -454,13 +426,7 @@ mod tests {
                 publish_calls.lock().expect("lock calls").push(input);
                 Ok(())
             });
-        let hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
-            cancellation: TaskCancellation::new(),
-            logger: logger_with_log_count(1),
-            on_progress_event: Arc::new(progress_event_port),
-            runtime: sample_runtime(),
-            usage_collector: LlmUsageCollector::new(),
-        });
+        let hook = lead_hook(logger_with_log_count(1), Arc::new(progress_event_port));
 
         let action = hook
             .handle_tool_call("search_datadog_services", Some("task-1"), "internal-1")
@@ -483,13 +449,7 @@ mod tests {
     async fn task_runner_prompt_hook_ignores_report_progress_tool_calls() {
         let mut progress_event_port = MockTaskProgressEventPort::new();
         progress_event_port.expect_publish().times(0);
-        let hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
-            cancellation: TaskCancellation::new(),
-            logger: logger_with_log_count(1),
-            on_progress_event: Arc::new(progress_event_port),
-            runtime: sample_runtime(),
-            usage_collector: LlmUsageCollector::new(),
-        });
+        let hook = lead_hook(logger_with_log_count(1), Arc::new(progress_event_port));
 
         let action = hook
             .handle_tool_call("report_progress", Some("task-1"), "internal-1")

@@ -58,9 +58,10 @@ flowchart TB
   logic is testable without external services.
 - **Two Slack transports**: the same handlers serve Socket Mode (WebSocket) and HTTP mode
   (`/slack/events`, `/slack/interactions` with signature verification).
-- **Multi-provider LLM backends**: OpenAI, Anthropic, Amazon Bedrock, and Vertex AI are
-  pluggable providers behind one task-runner port; the lead and sub-agents can run on
-  different models of the same provider.
+- **Multi-provider LLM backends**: OpenAI, Anthropic, Amazon Bedrock, Bedrock Mantle, and
+  Vertex AI are pluggable providers. Each provider only builds its rig clients and settings
+  (`LlmBackend`); one `LlmRunner` runs the task-runner port on any of them. The lead and
+  sub-agents can run on different models of the same provider.
 - **Connector model**: Datadog, GitHub, JIRA (via MCP servers), and esa each contribute an
   allowlisted, read-only tool group to the catalog that the lead agent draws from when
   spawning sub-agents.
