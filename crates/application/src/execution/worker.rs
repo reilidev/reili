@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use reili_core::error::PortError;
 use reili_core::messaging::slack::{
-    SlackTaskControlMessagePort, SlackTaskControlState, SlackThreadReplyInput,
-    SlackThreadReplyPort, UpdateTaskControlMessageInput,
+    SlackPostMessageInput, SlackPostMessagePort, SlackTaskControlMessagePort,
+    SlackTaskControlState, UpdateTaskControlMessageInput,
 };
 use reili_core::queue::{CompleteJobInput, FailJobInput, JobFailStatus, TaskJobQueuePort};
 use reili_core::task::{TaskCancellation, TaskJob};
@@ -546,7 +546,7 @@ async fn read_worker_queue_depth(input: ReadWorkerQueueDepthInput) -> String {
 }
 
 struct PostDeadLetterFailureMessageInput {
-    slack_reply_port: Arc<dyn SlackThreadReplyPort>,
+    slack_reply_port: Arc<dyn SlackPostMessagePort>,
     job: TaskJob,
     error_message: String,
     exhausted_retries: bool,
@@ -557,9 +557,9 @@ async fn post_dead_letter_failure_message(
 ) -> Result<(), PortError> {
     input
         .slack_reply_port
-        .post_thread_reply(SlackThreadReplyInput {
+        .post_message(SlackPostMessageInput {
             channel: input.job.payload.message.channel.clone(),
-            thread_ts: input.job.payload.message.thread_ts_or_ts().to_string(),
+            thread_ts: Some(input.job.payload.message.thread_ts_or_ts().to_string()),
             text: if input.exhausted_retries {
                 format!("Task failed after retries: {}", input.error_message)
             } else {
@@ -579,17 +579,17 @@ fn job_fail_status_to_string(value: &JobFailStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Arc, JobFailStatus, PortError, ProcessClaimedJobInput, SlackThreadReplyInput,
-        SlackThreadReplyPort, StartTaskWorkerRunnerUseCaseDeps, TaskExecutionDeps, TaskJob,
+        Arc, JobFailStatus, PortError, ProcessClaimedJobInput, SlackPostMessageInput,
+        SlackPostMessagePort, StartTaskWorkerRunnerUseCaseDeps, TaskExecutionDeps, TaskJob,
         TaskJobQueuePort, handle_failed_claimed_job, process_claimed_job,
     };
     use crate::TaskLogMeta;
     use reili_core::knowledge::{MockWebSearchPort, WebSearchPort};
     use reili_core::logger::{LogEntry as CoreLogEntry, LogLevel};
     use reili_core::messaging::slack::{
-        MockSlackFileDownloadPort, MockSlackMessageSearchPort, MockSlackTaskControlMessagePort,
-        MockSlackThreadHistoryPort, MockSlackThreadReplyPort, SlackFileDownloadPort, SlackMessage,
-        SlackMessageSearchPort, SlackTaskControlMessagePort, SlackThreadHistoryPort,
+        MockSlackFileDownloadPort, MockSlackMessageSearchPort, MockSlackPostMessagePort,
+        MockSlackTaskControlMessagePort, MockSlackThreadHistoryPort, SlackFileDownloadPort,
+        SlackMessage, SlackMessageSearchPort, SlackTaskControlMessagePort, SlackThreadHistoryPort,
         SlackTriggerType,
     };
     use reili_core::queue::{CompleteJobInput, FailJobInput, JobFailResult, MockJobQueuePort};
@@ -683,7 +683,7 @@ mod tests {
         deps: Arc<StartTaskWorkerRunnerUseCaseDeps>,
         complete_inputs: Arc<Mutex<Vec<CompleteJobInput>>>,
         fail_inputs: Arc<Mutex<Vec<FailJobInput>>>,
-        posted_replies: Arc<Mutex<Vec<SlackThreadReplyInput>>>,
+        posted_replies: Arc<Mutex<Vec<SlackPostMessageInput>>>,
         logger: Arc<MockLogger>,
     }
 
@@ -707,15 +707,14 @@ mod tests {
         job_queue.expect_fail().times(0);
         job_queue.expect_get_depth().times(1).return_const(Ok(3));
 
-        let mut slack_reply_port = MockSlackThreadReplyPort::new();
+        let mut slack_reply_port = MockSlackPostMessagePort::new();
         let reply_calls = Arc::clone(&posted_replies);
-        slack_reply_port
-            .expect_post_thread_reply()
-            .times(1)
-            .returning(move |input: SlackThreadReplyInput| {
+        slack_reply_port.expect_post_message().times(1).returning(
+            move |input: SlackPostMessageInput| {
                 reply_calls.lock().expect("lock posted replies").push(input);
                 Ok(())
-            });
+            },
+        );
 
         let mut slack_thread_history_port = MockSlackThreadHistoryPort::new();
         slack_thread_history_port
@@ -752,7 +751,7 @@ mod tests {
             slack_task_control_message_port: Arc::new(slack_task_control_message_port)
                 as Arc<dyn SlackTaskControlMessagePort>,
             task_execution_deps: TaskExecutionDeps {
-                slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
+                slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackPostMessagePort>,
                 task_progress_session_factory_port: create_progress_session_factory_for_execution(),
                 slack_thread_history_port: Arc::new(slack_thread_history_port)
                     as Arc<dyn SlackThreadHistoryPort>,
@@ -800,15 +799,15 @@ mod tests {
             .times(1)
             .return_const(queue_depth_result.clone());
 
-        let mut slack_reply_port = MockSlackThreadReplyPort::new();
+        let mut slack_reply_port = MockSlackPostMessagePort::new();
         if expected_reply_calls == 0 {
-            slack_reply_port.expect_post_thread_reply().times(0);
+            slack_reply_port.expect_post_message().times(0);
         } else {
             let reply_calls = Arc::clone(&posted_replies);
             slack_reply_port
-                .expect_post_thread_reply()
+                .expect_post_message()
                 .times(expected_reply_calls)
-                .returning(move |input: SlackThreadReplyInput| {
+                .returning(move |input: SlackPostMessageInput| {
                     reply_calls.lock().expect("lock posted replies").push(input);
                     Ok(())
                 });
@@ -829,7 +828,7 @@ mod tests {
             slack_task_control_message_port: Arc::new(slack_task_control_message_port)
                 as Arc<dyn SlackTaskControlMessagePort>,
             task_execution_deps: TaskExecutionDeps {
-                slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
+                slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackPostMessagePort>,
                 task_progress_session_factory_port: Arc::new(
                     MockTaskProgressSessionFactoryPort::new(),
                 )
@@ -1038,7 +1037,10 @@ mod tests {
             posted_replies[0].text,
             "Task failed after retries: fatal failure"
         );
-        assert_eq!(posted_replies[0].thread_ts, "1710000000.000001");
+        assert_eq!(
+            posted_replies[0].thread_ts.as_deref(),
+            Some("1710000000.000001")
+        );
     }
 
     #[tokio::test]
