@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rig::tool::DynamicTool;
+use tokio::sync::OnceCell;
 
 use crate::outbound::agents::connector::{
     ConnectorFactory, ConnectorPrepareError, ConnectorPromptFact, PreparedConnector,
@@ -9,24 +10,36 @@ use crate::outbound::agents::connector::{
 };
 use crate::outbound::agents::mcp::github::tools::{GitHubMcpToolset, connect_github_mcp_toolset};
 use crate::outbound::github::GitHubMcpConfig;
+use crate::outbound::github::github_mcp_client::GitHubAppInstallationAuth;
 
 /// Connector for GitHub repository context, exposed over the GitHub MCP server.
 pub struct GitHubConnector {
     config: GitHubMcpConfig,
     scope_org: String,
+    auth: OnceCell<GitHubAppInstallationAuth>,
 }
 
 impl GitHubConnector {
     #[must_use]
     pub fn new(config: GitHubMcpConfig, scope_org: String) -> Self {
-        Self { config, scope_org }
+        Self {
+            config,
+            scope_org,
+            auth: OnceCell::new(),
+        }
     }
 }
 
 #[async_trait]
 impl ConnectorFactory for GitHubConnector {
     async fn prepare(&self) -> Result<Arc<dyn PreparedConnector>, ConnectorPrepareError> {
-        let toolset = connect_github_mcp_toolset(&self.config, self.scope_org.clone())
+        let auth = self
+            .auth
+            .get_or_try_init(|| async { GitHubAppInstallationAuth::new(&self.config) })
+            .await
+            .map_err(ConnectorPrepareError::from_port_error)?
+            .clone();
+        let toolset = connect_github_mcp_toolset(&self.config.url, auth, self.scope_org.clone())
             .await
             .map_err(ConnectorPrepareError::from_port_error)?;
 
