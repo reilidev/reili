@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use reili_core::error::PortError;
 use reili_core::messaging::slack::{
-    SlackThreadHistoryPort, SlackThreadReplyInput, SlackThreadReplyPort,
+    SlackPostMessageInput, SlackPostMessagePort, SlackThreadHistoryPort,
 };
 use reili_core::task::{
     LlmExecutionMetadata, LlmUsageSnapshot, RunTaskInput, TaskCancellation, TaskContext,
@@ -33,7 +33,7 @@ const FALLBACK_REPORT_TEXT: &str = "Task completed but failed to generate a repo
 
 #[derive(Clone)]
 pub struct TaskExecutionDeps {
-    pub slack_reply_port: Arc<dyn SlackThreadReplyPort>,
+    pub slack_reply_port: Arc<dyn SlackPostMessagePort>,
     pub task_progress_session_factory_port: Arc<dyn TaskProgressSessionFactoryPort>,
     pub slack_thread_history_port: Arc<dyn SlackThreadHistoryPort>,
     pub task_resources: TaskResources,
@@ -325,16 +325,16 @@ fn build_llm_execution_log_meta(execution: &LlmExecutionMetadata) -> TaskLogMeta
 }
 
 async fn post_slack_reply_stage(
-    slack_reply_port: Arc<dyn SlackThreadReplyPort>,
+    slack_reply_port: Arc<dyn SlackPostMessagePort>,
     channel: String,
     thread_ts: String,
     report_text: String,
     llm_usage: LlmUsageSnapshot,
 ) -> Result<(), ExecuteTaskJobError> {
     slack_reply_port
-        .post_thread_reply(SlackThreadReplyInput {
+        .post_message(SlackPostMessageInput {
             channel,
-            thread_ts,
+            thread_ts: Some(thread_ts),
             text: report_text,
         })
         .await
@@ -405,10 +405,10 @@ mod tests {
     use reili_core::logger::LogEntry;
     use reili_core::messaging::slack::{
         FetchSlackThreadHistoryInput, ListSlackCanvasMemoriesInput, MockSlackCanvasMemoryPort,
-        MockSlackFileDownloadPort, MockSlackMessageSearchPort, MockSlackThreadHistoryPort,
-        MockSlackThreadReplyPort, SlackCanvasMemoryPort, SlackCanvasMemoryRecord,
+        MockSlackFileDownloadPort, MockSlackMessageSearchPort, MockSlackPostMessagePort,
+        MockSlackThreadHistoryPort, SlackCanvasMemoryPort, SlackCanvasMemoryRecord,
         SlackCanvasMemoryVisibility, SlackFileDownloadPort, SlackMessage, SlackMessageSearchPort,
-        SlackThreadHistoryPort, SlackThreadMessage, SlackThreadReplyInput, SlackThreadReplyPort,
+        SlackPostMessageInput, SlackPostMessagePort, SlackThreadHistoryPort, SlackThreadMessage,
         SlackTriggerType,
     };
     use reili_core::task::{
@@ -493,7 +493,7 @@ mod tests {
 
     struct ExecutionFixtures {
         deps: TaskExecutionDeps,
-        slack_reply_calls: Arc<Mutex<Vec<SlackThreadReplyInput>>>,
+        slack_reply_calls: Arc<Mutex<Vec<SlackPostMessageInput>>>,
         slack_thread_history_calls: Arc<Mutex<Vec<FetchSlackThreadHistoryInput>>>,
         canvas_memory_calls: Arc<Mutex<Vec<ListSlackCanvasMemoriesInput>>>,
         task_runs: Arc<Mutex<Vec<CapturedTaskRunInput>>>,
@@ -514,15 +514,14 @@ mod tests {
         let canvas_memory_calls = Arc::new(Mutex::new(Vec::new()));
         let task_runs = Arc::new(Mutex::new(Vec::new()));
 
-        let mut slack_reply_port = MockSlackThreadReplyPort::new();
+        let mut slack_reply_port = MockSlackPostMessagePort::new();
         let reply_calls = Arc::clone(&slack_reply_calls);
-        slack_reply_port
-            .expect_post_thread_reply()
-            .times(1)
-            .returning(move |input: SlackThreadReplyInput| {
+        slack_reply_port.expect_post_message().times(1).returning(
+            move |input: SlackPostMessageInput| {
                 reply_calls.lock().expect("lock reply calls").push(input);
                 Ok(())
-            });
+            },
+        );
 
         let mut slack_thread_history_port = MockSlackThreadHistoryPort::new();
         match thread_history_response {
@@ -588,7 +587,7 @@ mod tests {
             };
 
         let deps = TaskExecutionDeps {
-            slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
+            slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackPostMessagePort>,
             task_progress_session_factory_port: create_progress_session_factory(),
             slack_thread_history_port: Arc::new(slack_thread_history_port)
                 as Arc<dyn SlackThreadHistoryPort>,
@@ -676,9 +675,9 @@ mod tests {
         );
         assert_eq!(
             slack_reply_calls.lock().expect("lock reply calls").clone(),
-            vec![SlackThreadReplyInput {
+            vec![SlackPostMessageInput {
                 channel: "C001".to_string(),
-                thread_ts: "1710000000.000001".to_string(),
+                thread_ts: Some("1710000000.000001".to_string()),
                 text: "task_runner result".to_string(),
             }]
         );

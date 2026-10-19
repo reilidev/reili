@@ -7,9 +7,9 @@ use reili_core::error::PortError;
 use reili_core::messaging::slack::SlackMessage;
 use reili_core::messaging::slack::SlackMessageHandlerPort;
 use reili_core::messaging::slack::{
-    AddSlackReactionInput, PostTaskControlMessageInput, SlackReactionPort,
-    SlackTaskControlMessagePort, SlackTaskControlState, SlackThreadReplyInput,
-    SlackThreadReplyPort, UpdateTaskControlMessageInput,
+    AddSlackReactionInput, PostTaskControlMessageInput, SlackPostMessageInput,
+    SlackPostMessagePort, SlackReactionPort, SlackTaskControlMessagePort, SlackTaskControlState,
+    UpdateTaskControlMessageInput,
 };
 use reili_core::queue::TaskJobQueuePort;
 use reili_core::task::{TaskJob, TaskJobPayload};
@@ -24,7 +24,7 @@ pub struct EnqueueSlackEventUseCaseDeps {
     pub job_queue: Arc<TaskJobQueuePort>,
     pub slack_reaction_port: Arc<dyn SlackReactionPort>,
     pub slack_task_control_message_port: Arc<dyn SlackTaskControlMessagePort>,
-    pub slack_reply_port: Arc<dyn SlackThreadReplyPort>,
+    pub slack_reply_port: Arc<dyn SlackPostMessagePort>,
     pub logger: Arc<dyn TaskLogger>,
 }
 
@@ -73,9 +73,9 @@ impl SlackMessageHandlerPort for EnqueueSlackEventUseCase {
                 return self
                     .deps
                     .slack_reply_port
-                    .post_thread_reply(SlackThreadReplyInput {
+                    .post_message(SlackPostMessageInput {
                         channel: message.channel,
-                        thread_ts,
+                        thread_ts: Some(thread_ts),
                         text: format!("Failed to start task: {}", error.message),
                     })
                     .await;
@@ -312,12 +312,12 @@ fn build_task_job(input: BuildTaskJobInput) -> TaskJob {
 mod tests {
     use super::{
         EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, PortError, SlackMessage,
-        SlackMessageHandlerPort, SlackThreadReplyInput, SlackThreadReplyPort, TaskLogger,
+        SlackMessageHandlerPort, SlackPostMessageInput, SlackPostMessagePort, TaskLogger,
     };
     use reili_core::logger::LogEntry;
     use reili_core::messaging::slack::{
-        AddSlackReactionInput, MockSlackReactionPort, MockSlackTaskControlMessagePort,
-        MockSlackThreadReplyPort, PostTaskControlMessageOutput, SlackReactionPort,
+        AddSlackReactionInput, MockSlackPostMessagePort, MockSlackReactionPort,
+        MockSlackTaskControlMessagePort, PostTaskControlMessageOutput, SlackReactionPort,
         SlackTaskControlMessagePort, SlackTriggerType,
     };
     use reili_core::queue::{MockJobQueuePort, TaskJobQueuePort};
@@ -335,7 +335,7 @@ mod tests {
         use_case: EnqueueSlackEventUseCase,
         enqueued_jobs: Arc<Mutex<Vec<TaskJob>>>,
         added_reactions: Arc<Mutex<Vec<AddSlackReactionInput>>>,
-        posted_replies: Arc<Mutex<Vec<SlackThreadReplyInput>>>,
+        posted_replies: Arc<Mutex<Vec<SlackPostMessageInput>>>,
     }
 
     fn create_use_case(input: CreateUseCaseInput) -> TestContext {
@@ -383,8 +383,8 @@ mod tests {
             slack_reaction_port.expect_add_reaction().times(0);
         }
 
-        let mut slack_reply_port = MockSlackThreadReplyPort::new();
-        slack_reply_port.expect_post_thread_reply().times(0);
+        let mut slack_reply_port = MockSlackPostMessagePort::new();
+        slack_reply_port.expect_post_message().times(0);
 
         let mut slack_task_control_message_port = MockSlackTaskControlMessagePort::new();
         slack_task_control_message_port
@@ -407,7 +407,7 @@ mod tests {
             slack_reaction_port: Arc::new(slack_reaction_port) as Arc<dyn SlackReactionPort>,
             slack_task_control_message_port: Arc::new(slack_task_control_message_port)
                 as Arc<dyn SlackTaskControlMessagePort>,
-            slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackThreadReplyPort>,
+            slack_reply_port: Arc::new(slack_reply_port) as Arc<dyn SlackPostMessagePort>,
             logger: Arc::clone(&logger) as Arc<dyn TaskLogger>,
         });
 

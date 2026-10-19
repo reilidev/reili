@@ -28,9 +28,9 @@ use reili_adapters::outbound::openai::{OpenAiWebSearchAdapter, OpenAiWebSearchAd
 use reili_adapters::outbound::slack::{
     SlackCanvasMemoryAdapter, SlackCanvasMemoryAdapterConfig, SlackChannelLookupAdapter,
     SlackEphemeralMessageAdapter, SlackFileDownloadAdapter, SlackFileSharedMessageAdapter,
-    SlackMessageSearchAdapter, SlackProgressReporter, SlackProgressReporterInput,
-    SlackReactionAdapter, SlackTaskControlMessageAdapter, SlackThreadHistoryAdapter,
-    SlackThreadReplyAdapter, SlackUserGroupMembershipAdapter, SlackWebApiClient,
+    SlackMessageSearchAdapter, SlackPostMessageAdapter, SlackProgressReporter,
+    SlackProgressReporterInput, SlackReactionAdapter, SlackTaskControlMessageAdapter,
+    SlackThreadHistoryAdapter, SlackUserGroupMembershipAdapter, SlackWebApiClient,
     SlackWebApiClientConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
@@ -50,8 +50,8 @@ use reili_core::messaging::slack::{
     SlackUserGroupMembershipPort,
 };
 use reili_core::messaging::slack::{
-    SlackCanvasMemoryPort, SlackMessageSearchPort, SlackReactionPort, SlackThreadHistoryPort,
-    SlackThreadReplyPort,
+    SlackCanvasMemoryPort, SlackMessageSearchPort, SlackPostMessagePort, SlackReactionPort,
+    SlackThreadHistoryPort,
 };
 use reili_core::queue::TaskJobQueuePort;
 use reili_core::task::TaskJob;
@@ -107,7 +107,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         base_url: None,
     })?);
     let bot_user_id = resolve_slack_bot_user_id(&slack_web_api_client).await?;
-    let slack_reply_port: Arc<dyn SlackThreadReplyPort> = Arc::new(SlackThreadReplyAdapter::new(
+    let slack_reply_port: Arc<dyn SlackPostMessagePort> = Arc::new(SlackPostMessageAdapter::new(
         Arc::clone(&slack_web_api_client),
     ));
     let slack_reaction_port: Arc<dyn SlackReactionPort> =

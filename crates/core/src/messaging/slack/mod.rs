@@ -10,11 +10,11 @@ pub mod interaction_handler;
 pub mod legacy_attachment;
 pub mod message;
 pub mod message_handler;
+pub mod post_message;
 pub mod reaction;
 pub mod search;
 pub mod thread_history;
 pub mod thread_message;
-pub mod thread_reply;
 
 pub use canvas_memory::{
     AppendSlackCanvasMemoryInput, ListSlackCanvasMemoriesInput, SlackCanvasMemoryPort,
@@ -34,6 +34,7 @@ pub use legacy_attachment::{
 };
 pub use message::{SlackMessage, SlackTriggerType};
 pub use message_handler::SlackMessageHandlerPort;
+pub use post_message::{SlackPostMessageInput, SlackPostMessagePort};
 pub use reaction::{AddSlackReactionInput, SlackReactionPort};
 pub use search::{
     SlackContextMessage, SlackMessageSearchContextMessages, SlackMessageSearchInput,
@@ -42,7 +43,6 @@ pub use search::{
 };
 pub use thread_history::{FetchSlackThreadHistoryInput, SlackThreadHistoryPort};
 pub use thread_message::{SlackMessageMetadata, SlackThreadMessage};
-pub use thread_reply::{SlackThreadReplyInput, SlackThreadReplyPort};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use authorization::{
@@ -73,10 +73,10 @@ pub use interaction_handler::MockSlackInteractionHandlerPort;
 #[cfg(any(test, feature = "test-support"))]
 pub use message_handler::MockSlackMessageHandlerPort;
 #[cfg(any(test, feature = "test-support"))]
+pub use post_message::MockSlackPostMessagePort;
+#[cfg(any(test, feature = "test-support"))]
 pub use reaction::MockSlackReactionPort;
 #[cfg(any(test, feature = "test-support"))]
 pub use search::MockSlackMessageSearchPort;
 #[cfg(any(test, feature = "test-support"))]
 pub use thread_history::MockSlackThreadHistoryPort;
-#[cfg(any(test, feature = "test-support"))]
-pub use thread_reply::MockSlackThreadReplyPort;
