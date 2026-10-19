@@ -9,7 +9,9 @@ use serde_json::{Map, Value};
 use super::read_file::github_read_file_tool;
 use crate::outbound::agents::connector::ToolCatalogEntry;
 use crate::outbound::agents::mcp::support;
-use crate::outbound::github::github_mcp_client::{self, GitHubMcpConfig, GitHubMcpHttpClient};
+use crate::outbound::github::github_mcp_client::{
+    self, GitHubAppInstallationAuth, GitHubMcpHttpClient,
+};
 
 const GITHUB_MCP_SOURCE_LABEL: &str = "GitHub";
 
@@ -163,11 +165,12 @@ fn build_sub_agent_catalog_entries(tools: &[Tool]) -> Vec<ToolCatalogEntry> {
     entries
 }
 
-pub async fn connect_github_mcp_toolset(
-    config: &GitHubMcpConfig,
+pub(crate) async fn connect_github_mcp_toolset(
+    url: &str,
+    auth: GitHubAppInstallationAuth,
     github_scope_org: String,
 ) -> Result<GitHubMcpToolset, PortError> {
-    let (client, tools) = github_mcp_client::connect(config).await?;
+    let (client, tools) = github_mcp_client::connect(url, auth).await?;
     let scope_policy = GithubScopePolicy::new(github_scope_org)?;
 
     validate_required_tools(&tools)?;
