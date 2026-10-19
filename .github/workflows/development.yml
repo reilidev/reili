@@ -8,8 +8,6 @@ on:
       - reopened
     branches:
       - main
-    paths:
-      - "crates/**"
   push:
     branches:
       - main
