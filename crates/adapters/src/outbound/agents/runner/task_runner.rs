@@ -3,8 +3,8 @@ use std::sync::Arc;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use chrono::Utc;
+use reili_core::cycle_agent::RunBudget;
 use reili_core::error::AgentRunFailedError;
-use reili_core::logger::Logger;
 use reili_core::messaging::slack::{SlackFileDownloadPort, SlackMessageFile};
 use reili_core::task::{
     LlmExecutionMetadata, LlmUsageSnapshot, RunTaskInput, TASK_RUNNER_PROGRESS_OWNER_ID,
@@ -18,7 +18,6 @@ use rig::completion::{Prompt, PromptError};
 use rig::prelude::CompletionClient;
 
 use super::environment::{AgentEnvironment, prompt_facts};
-use super::execution_hook::AgentExecutionHook;
 use super::usage_collector::LlmUsageCollector;
 use crate::outbound::agents::task_agent::{
     BuildTaskAgentInput, BuildTaskPromptInput, TaskAgentExecutionContext, TaskAgentRunContext,
@@ -67,20 +66,15 @@ where
         language: input.environment.language.clone(),
         prompt_facts: prompt_facts(&prepared_connectors),
     });
-    let task_runner_prompt_hook = create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
-        cancellation: input.run.context.cancellation.clone(),
-        logger: Arc::clone(&input.run.logger),
-        on_progress_event: Arc::clone(&input.run.on_progress_event),
-        runtime: runtime.clone(),
-        usage_collector: usage_collector.clone(),
-    });
     let execution = TaskAgentExecutionContext {
         logger: Arc::clone(&input.run.logger),
         runtime,
         cancellation: input.run.context.cancellation.clone(),
         on_progress_event: Arc::clone(&input.run.on_progress_event),
         usage_collector: usage_collector.clone(),
+        budget: RunBudget::unlimited(),
     };
+    let task_runner_prompt_hook = execution.hook(TASK_RUNNER_PROGRESS_OWNER_ID.to_string());
     let task_agent = input
         .environment
         .agent_factory()
@@ -190,25 +184,6 @@ struct PublishMessageOutputCreatedEventInput {
     usage: LlmUsageSnapshot,
 }
 
-struct CreateTaskRunnerPromptHookInput {
-    cancellation: reili_core::task::TaskCancellation,
-    logger: Arc<dyn Logger>,
-    on_progress_event: Arc<dyn TaskProgressEventPort>,
-    runtime: reili_core::task::TaskRuntime,
-    usage_collector: LlmUsageCollector,
-}
-
-fn create_task_runner_prompt_hook(input: CreateTaskRunnerPromptHookInput) -> AgentExecutionHook {
-    AgentExecutionHook::new(
-        TASK_RUNNER_PROGRESS_OWNER_ID.to_string(),
-        input.runtime,
-        input.cancellation,
-        input.logger,
-        input.on_progress_event,
-        input.usage_collector,
-    )
-}
-
 async fn publish_message_output_created_event(
     input: PublishMessageOutputCreatedEventInput,
 ) -> Result<(), AgentRunFailedError> {
@@ -244,11 +219,12 @@ mod tests {
     use rig::completion::message::{DocumentMediaType, DocumentSourceKind, Message, UserContent};
 
     use super::{
-        BuildPromptMessageInput, CreateTaskRunnerPromptHookInput, MAX_PDF_BYTES,
-        SlackFileDownloadPort, build_prompt_message, create_task_runner_prompt_hook,
+        BuildPromptMessageInput, MAX_PDF_BYTES, SlackFileDownloadPort, build_prompt_message,
     };
     use crate::outbound::agents::runner::execution_hook::AgentExecutionHook;
     use crate::outbound::agents::runner::usage_collector::LlmUsageCollector;
+    use crate::outbound::agents::task_agent::TaskAgentExecutionContext;
+    use reili_core::cycle_agent::RunBudget;
 
     fn pdf_file(name: &str, url: &str) -> SlackMessageFile {
         SlackMessageFile {
@@ -390,13 +366,15 @@ mod tests {
         logger: Arc<dyn Logger>,
         on_progress_event: Arc<dyn reili_core::task::TaskProgressEventPort>,
     ) -> AgentExecutionHook {
-        create_task_runner_prompt_hook(CreateTaskRunnerPromptHookInput {
-            cancellation: TaskCancellation::new(),
+        TaskAgentExecutionContext {
             logger,
-            on_progress_event,
             runtime: sample_runtime(),
+            cancellation: TaskCancellation::new(),
+            on_progress_event,
             usage_collector: LlmUsageCollector::new(),
-        })
+            budget: RunBudget::unlimited(),
+        }
+        .hook(TASK_RUNNER_PROGRESS_OWNER_ID.to_string())
     }
 
     fn sample_runtime() -> TaskRuntime {

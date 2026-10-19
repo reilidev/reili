@@ -28,6 +28,8 @@ action is needed. Reili takes that work off your plate.
 
 Core:
 
+- **Objective-driven**: give Reili long-term objectives in `reili.toml` (for example "keep checkout
+  reliable"); it works toward them on a schedule on the team's issues, like a teammate, and reports to Slack
 - **Read-focused**: Reili reads and reports — it never changes your infrastructure
 - **Cross-service**: works across Datadog, GitHub, JIRA, Slack, and optional knowledge base search today, with additional services planned over time
 - **Chat-based**: currently works in Slack
@@ -71,6 +73,9 @@ flowchart TD
 
     style More stroke-dasharray: 5 5
 ```
+
+Objective cycles run in the same binary: a scheduler runs each objective at its scheduled times with
+the same agent stack, working on the team's GitHub issues (see [Autonomous Objectives](#autonomous-objectives)).
 
 A Slack mention is parsed, authorized, and enqueued as a task job into an in-memory queue
 (jobs are not durable across restarts). Worker tasks in the same process claim jobs and run
@@ -400,6 +405,42 @@ What happens:
 If you need to stop a queued or running task, click `Cancel` on that task's control
 message in the same Slack thread.
 
+## Autonomous Objectives
+
+Besides answering mentions, Reili can pursue long-term objectives defined in `reili.toml`:
+
+```toml
+[work_state.github]                 # Work State backend (GitHub Issues is supported today)
+repository = "acme/platform"        # the repository the team tracks its work in
+
+[[objectives]]
+id = "checkout-reliability"
+description = "Continuously improve checkout-api reliability in production."
+schedule = "0 */6 * * *"
+timezone = "Asia/Tokyo"
+report_channel = "C0123456789"
+enabled = true
+```
+
+Reili works on the team's issues like a teammate. The team hands it work by adding the
+`reili:assignee` label and takes it back by removing it. Items for an objective carry the
+`reili-objective:<id>` label; an assigned item without one goes to the default objective (the only
+enabled one, or the one with `default = true`), which adds its label. Each cycle reads the discussion on its
+items, does the read-only work that moves the objective forward (investigating, reviewing changes,
+following up) with dynamically composed sub-agents, writes progress as comments, opens new items for
+new work, adds `reili:needs-decision` when it needs the team, posts its own message to Slack when
+the team should know something, and saves reusable facts to the Canvas memory. There is no state of its own: the
+issues are the record.
+Replies from repository owners, members, and collaborators steer the next scheduled cycle. Reili
+highlights the latest team reply separately from progress history, carries decisions forward, and
+removes `reili:needs-decision` when it resumes work; the team does not need to remove it manually.
+No extra secret is needed by default: Work State reuses the `[connector.github.app]` credentials
+(install the App on that repository with Issues read & write), unless `[work_state.github]` names a
+separate App.
+Work State sits behind a backend-neutral port, so other trackers (for example JIRA) can be added
+as backends without changing the objective cycle.
+See [`config/default.toml`](./config/default.toml) for every objective setting.
+
 ## Permissions and Tool Transparency
 
 Reili is intentionally scoped around task execution and decision support. The current runtime is
@@ -411,12 +452,15 @@ At a high level, the current runtime:
 - reads from Datadog, GitHub, optional esa posts, optional JIRA tickets, Slack thread history,
   Slack public-channel search, and web lookup integrations, and writes only Slack progress and
   result messages plus, when memory is configured, reusable notes in the shared memory Canvas
+- when objectives are configured, additionally writes issues, comments, and labels in exactly one
+  configured repository, using a GitHub App token down-scoped to that repository with
+  `issues: write` and `metadata: read`, and posts objective reports to each objective's report channel
 - exposes only read-only Datadog MCP tools, including dashboard detail retrieval and Synthetic
   test reads when Datadog returns them
 - exposes only read-only JIRA MCP tools; which projects are reachable is governed by the service
   account token's Atlassian permissions
 - does not register tools for Datadog mutations, GitHub writes, esa writes, JIRA writes,
-  remediation, or deployments
+  remediation, or deployments (Work State writes are application code, never agent tools)
 - is designed to analyze and report, not to change infrastructure, Datadog state, or repository
   state
 
@@ -436,6 +480,7 @@ not part of the release flow.
 ## Non-Goals
 
 - Executing operational actions like auto-remediation or auto-deploy
-- Heavy stateful workflow orchestration
+- Running its own database or durable job queue (Work State lives in the configured tracker, today GitHub Issues; knowledge in
+  the Slack Canvas, objectives in `reili.toml`)
 
 This project is intentionally focused on read-only task execution and decision support.

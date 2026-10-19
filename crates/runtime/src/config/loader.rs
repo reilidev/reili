@@ -14,6 +14,7 @@ use super::model::{
     SlackAuthorizationConfig, SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode,
     VertexAiLlmConfig, WebSearchProviderConfig,
 };
+use super::objective_loader::{resolve_objectives, resolve_work_state};
 use crate::config::SecretString;
 use reili_adapters::outbound::agents::BedrockMantleModelFamily;
 use reili_core::messaging::slack::SlackChannelNamePattern;
@@ -128,6 +129,8 @@ fn resolve_app_config(
     let jira = resolve_jira_config(&file_config, env)?;
     let memory = resolve_memory_config(&file_config);
     let otlp_tracing = resolve_otlp_tracing_config(&file_config);
+    let objectives = resolve_objectives(&file_config)?;
+    let work_state = resolve_work_state(&file_config, env, &objectives)?;
 
     Ok(AppConfig {
         slack_bot_token,
@@ -164,6 +167,8 @@ fn resolve_app_config(
             file_config.conversation.additional_system_prompt.as_deref(),
         ),
         otlp_tracing,
+        objectives,
+        work_state,
     })
 }
 
@@ -778,7 +783,8 @@ mod tests {
     use crate::config::env::EnvironmentReader;
     use crate::config::file::parse_file_config;
     use crate::config::model::{
-        JudgeProviderConfig, LlmProviderConfig, SlackConnectionMode, WebSearchProviderConfig,
+        AppConfig, JudgeProviderConfig, LlmProviderConfig, SlackConnectionMode,
+        WebSearchProviderConfig, WorkStateConfig,
     };
 
     const TEST_PATH: &str = "/test/reili.toml";
@@ -2669,5 +2675,195 @@ api_key_env = "LLM_OPENAI_API_KEY"
 
 "#,
         )
+    }
+
+    const OBJECTIVE_TOML: &str = r#"
+[work_state.github]
+repository = "example-org/reili-work"
+
+[[objectives]]
+id = "checkout-reliability"
+description = """
+Continuously improve checkout service reliability.
+"""
+schedule = "0 */6 * * *"
+timezone = "Asia/Tokyo"
+report_channel = "C0123456789"
+enabled = true
+
+[objectives.budget]
+max_cycle_minutes = 20
+max_llm_tokens_per_cycle = 400000
+"#;
+
+    #[test]
+    fn resolves_objectives_work_state_and_autonomy() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml = format!("{}\n{OBJECTIVE_TOML}", valid_openai_config());
+
+        let config = resolve_app_config(parse_runtime_config(&toml), &env).expect("resolve");
+
+        assert_eq!(config.objectives.len(), 1);
+        let objective = &config.objectives[0];
+        assert_eq!(objective.id.as_str(), "checkout-reliability");
+        assert_eq!(objective.budget.max_cycle_duration_secs, 1_200);
+        assert_eq!(objective.budget.max_llm_tokens_per_cycle, 400_000);
+        let Some(WorkStateConfig::GitHub(work_state)) = config.work_state else {
+            panic!("expected the GitHub work state backend");
+        };
+        assert_eq!(work_state.repository.to_string(), "example-org/reili-work");
+        assert_eq!(work_state.app_id, "12345", "defaults to the connector App");
+        assert!(work_state.private_key.expose().contains('\n'));
+    }
+
+    #[test]
+    fn rejects_a_malformed_work_state_repository() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml = format!(
+            "{}\n{}",
+            valid_openai_config(),
+            OBJECTIVE_TOML.replace("example-org/reili-work", "reili-work")
+        );
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &env).expect_err("malformed");
+
+        assert!(error.to_string().contains("work_state.github.repository"));
+    }
+
+    #[test]
+    fn objectives_require_a_work_state_repository() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml = format!(
+            "{}\n{}",
+            valid_openai_config(),
+            OBJECTIVE_TOML.replace(
+                "[work_state.github]\nrepository = \"example-org/reili-work\"\n",
+                ""
+            )
+        );
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &env).expect_err("missing");
+
+        assert!(error.to_string().contains("work_state.github"));
+    }
+
+    #[test]
+    fn rejects_invalid_objective_definitions() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        for (from, to, needle) in [
+            ("0 */6 * * *", "0 */6 * *", "schedule"),
+            ("Asia/Tokyo", "Asia/Nowhere", "timezone"),
+            ("C0123456789", "alerts", "report_channel"),
+            ("checkout-reliability", "Checkout Reliability", "id"),
+        ] {
+            let toml = format!(
+                "{}\n{}",
+                valid_openai_config(),
+                OBJECTIVE_TOML.replacen(from, to, 1)
+            );
+
+            let error = resolve_app_config(parse_runtime_config(&toml), &env)
+                .expect_err("invalid objective must fail");
+
+            assert!(error.to_string().contains(needle), "{needle}: {error}");
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_objective_ids() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let duplicate = OBJECTIVE_TOML
+            .split("[[objectives]]")
+            .nth(1)
+            .map(|objective| format!("[[objectives]]{objective}"))
+            .expect("objective block");
+        let toml = format!("{}\n{OBJECTIVE_TOML}\n{duplicate}", valid_openai_config());
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &env).expect_err("duplicate");
+
+        assert!(error.to_string().contains("duplicate objective id"));
+    }
+    fn objective_block(id: &str, extra: &str) -> String {
+        let block = OBJECTIVE_TOML
+            .split("[[objectives]]")
+            .nth(1)
+            .expect("objective block")
+            .replace("checkout-reliability", id)
+            .replace("enabled = true\n", &format!("enabled = true\n{extra}"));
+        format!("[[objectives]]{block}")
+    }
+
+    fn resolve_with_objectives(blocks: &[String]) -> Result<AppConfig, ConfigError> {
+        let work_state = OBJECTIVE_TOML
+            .split("[[objectives]]")
+            .next()
+            .expect("work state block");
+        let toml = format!(
+            "{}\n{work_state}\n{}",
+            valid_openai_config(),
+            blocks.join("\n")
+        );
+        resolve_app_config(
+            parse_runtime_config(&toml),
+            &FixedEnvironment::with_overrides(&[]),
+        )
+    }
+
+    fn unlinked_work_takers(config: &AppConfig) -> Vec<&str> {
+        config
+            .objectives
+            .iter()
+            .filter(|objective| objective.takes_unlinked_work)
+            .map(|objective| objective.id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn the_only_enabled_objective_is_the_default() {
+        let single = resolve_with_objectives(&[objective_block("checkout", "")]).expect("single");
+        let one_enabled = resolve_with_objectives(&[
+            objective_block("checkout", ""),
+            objective_block("billing", "").replace("enabled = true", "enabled = false"),
+        ])
+        .expect("one enabled");
+        let two_enabled = resolve_with_objectives(&[
+            objective_block("checkout", ""),
+            objective_block("billing", ""),
+        ])
+        .expect("two enabled");
+
+        assert_eq!(unlinked_work_takers(&single), vec!["checkout"]);
+        assert_eq!(unlinked_work_takers(&one_enabled), vec!["checkout"]);
+        assert!(
+            unlinked_work_takers(&two_enabled).is_empty(),
+            "no default is chosen among several enabled objectives"
+        );
+    }
+
+    #[test]
+    fn an_explicit_default_takes_unlinked_work() {
+        let config = resolve_with_objectives(&[
+            objective_block("checkout", ""),
+            objective_block("billing", "default = true\n"),
+        ])
+        .expect("explicit default");
+
+        assert_eq!(unlinked_work_takers(&config), vec!["billing"]);
+    }
+
+    #[test]
+    fn rejects_invalid_default_objectives() {
+        let two_defaults = resolve_with_objectives(&[
+            objective_block("checkout", "default = true\n"),
+            objective_block("billing", "default = true\n"),
+        ])
+        .expect_err("two defaults");
+        let disabled_default =
+            resolve_with_objectives(&[objective_block("checkout", "default = true\n")
+                .replace("enabled = true", "enabled = false")])
+            .expect_err("disabled default");
+
+        assert!(two_defaults.to_string().contains("only one objective"));
+        assert!(disabled_default.to_string().contains("must be enabled"));
     }
 }

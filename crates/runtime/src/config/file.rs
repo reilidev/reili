@@ -5,8 +5,9 @@ use serde::de::{Error as DeError, Unexpected};
 use serde::{Deserialize, Deserializer};
 
 use super::ConfigError;
+use super::objective_file::{ObjectiveFileConfig, WorkStateFileConfig};
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub(crate) struct FileConfig {
     pub version: u32,
     #[serde(default)]
@@ -19,6 +20,10 @@ pub(crate) struct FileConfig {
     pub memory: MemoryFileConfig,
     #[serde(default)]
     pub tracing: TracingFileConfig,
+    #[serde(default)]
+    pub work_state: WorkStateFileConfig,
+    #[serde(default)]
+    pub objectives: Vec<ObjectiveFileConfig>,
 }
 
 /// Optional top-level `[memory]` block. Memory is a cross-channel concern, so it lives at the top

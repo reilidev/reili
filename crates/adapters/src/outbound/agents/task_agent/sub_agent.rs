@@ -10,7 +10,6 @@ use super::spawn::{
     resolve_spawn_selection,
 };
 use crate::outbound::agents::connector::PreparedConnector;
-use crate::outbound::agents::runner::execution_hook::AgentExecutionHook;
 use crate::outbound::agents::runner::provider_settings::LlmProviderSettings;
 use crate::outbound::agents::tools::{
     ReportProgressTool, ReportProgressToolInput, SpawnedSubAgentSpec,
@@ -91,14 +90,6 @@ where
             language,
             additional_system_prompt,
         } = config;
-        let TaskAgentExecutionContext {
-            logger,
-            runtime,
-            cancellation,
-            on_progress_event,
-            usage_collector,
-        } = execution;
-
         let selection = resolve_spawn_selection(&ResolveSpawnSelectionInput {
             prepared_connectors: &input.prepared_connectors,
             web_search_port: resources.web_search_port.as_ref(),
@@ -121,16 +112,9 @@ where
         let builder = with_max_tokens(builder, settings.sub_agent_max_tokens);
 
         builder
-            .add_hook(AgentExecutionHook::new(
-                owner_id.clone(),
-                runtime,
-                cancellation,
-                logger,
-                Arc::clone(&on_progress_event),
-                usage_collector,
-            ))
+            .add_hook(execution.hook(owner_id.clone()))
             .tool(ReportProgressTool::new(ReportProgressToolInput {
-                on_progress_event: Arc::clone(&on_progress_event),
+                on_progress_event: Arc::clone(&execution.on_progress_event),
                 owner_id,
             }))
             .dynamic_tools(selection.tools)

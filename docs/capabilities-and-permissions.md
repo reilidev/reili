@@ -33,9 +33,12 @@ The runtime can expose only the following tool families:
 - JIRA MCP reads when `[connector.jira]` is configured: `searchJiraIssuesUsingJql`,
   `getJiraIssue`, `getJiraIssueRemoteIssueLinks`, `getTransitionsForJiraIssue`
 - External web lookup: `search_web`
+- Objective cycles only: `submit_cycle_report` (hands the structured report back to Reili;
+  it writes nothing by itself)
 
 In the current runtime, no tool is registered for GitHub writes, Slack admin actions, Datadog
-mutations, esa writes, JIRA writes, remediation, or deployments.
+mutations, esa writes, JIRA writes, remediation, or deployments. Objective Work State writes (see
+"Objective-driven autonomy" below) are performed by application code, not by agent tools.
 
 ## Slack Permissions and API Usage
 
@@ -263,6 +266,46 @@ GitHub restrictions:
 - All GitHub search and reads are scoped to `GITHUB_SEARCH_SCOPE_ORG`: Reili enforces it before every
   allowlisted call, so queries must stay inside it and repository content, pull request, Actions,
   and Dependabot reads are rejected when the owner is outside it
+
+## Objective-driven Autonomy: Additional Access
+
+Everything in this section applies only when `[[objectives]]` are configured (see
+[Autonomous Objectives](../README.md#autonomous-objectives)).
+
+Work State writes are the one write exception. Exactly one backend is configured
+(`[work_state.<backend>]`); GitHub Issues is the only backend today. Any future backend is held
+to the same rule: writes confined to one configured project, nothing else.
+
+GitHub Work State (`[work_state.github]`):
+
+- Reili writes issues, comments, and labels only in the repository named by
+  `[work_state.github].repository`
+- The installation token is requested with `repositories: [<that repository>]` and
+  `permissions: { issues: write, metadata: read }`, so it cannot write anywhere else even if the
+  App installation is broader
+  ([create an installation access token](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app))
+- Required App permissions on that repository: **Issues** (read & write) and **Metadata** (read)
+- Endpoints: `GET/POST /repos/{owner}/{repo}/issues`, `PATCH /repos/{owner}/{repo}/issues/{n}`
+  (closing items Reili opened), `GET/POST /repos/{owner}/{repo}/issues/{n}/comments`,
+  `POST /repos/{owner}/{repo}/issues/{n}/labels`, `DELETE /repos/{owner}/{repo}/issues/{n}/labels/{name}`
+  (only `reili:needs-decision`), `POST /repos/{owner}/{repo}/labels`
+  ([Issues REST API](https://docs.github.com/en/rest/issues))
+- The adapter refuses issue references outside the repository before sending any request
+- Only comments from repository owners, members, and collaborators are treated as human input
+- No pushes, no pull requests, no repository settings, no other repositories
+
+Slack:
+
+- `chat:write`: objective reports in each objective's `report_channel` (the bot must be a member)
+- `canvases:write` (already required for memory): facts learned by objective cycles
+
+Restrictions:
+
+- Objectives come only from `reili.toml`; Slack and GitHub cannot create, edit, enable, or widen them
+- Budgets (time, tokens per cycle and per day, tool calls, sub-agents, parallelism, new/open
+  work items, attempts, reports) are enforced in code
+- Human comments are feedback only; a work item's status changes only through its label or
+  open/closed state
 
 ## esa Permissions and Scope
 

@@ -81,6 +81,13 @@ pub async fn run_app_with_options(options: AppStartupOptions) -> Result<(), AppR
 
     let deps = build_runtime_deps(&config).await?;
     deps.worker_runner.start();
+    if let Some(scheduler) = &deps.objective_scheduler {
+        tracing::info!(
+            objectives = scheduler.objectives().len(),
+            "Objective scheduler started"
+        );
+        scheduler.start();
+    }
 
     let serve_result = match &config.slack_connection_mode {
         SlackConnectionMode::Http => run_http_server(&config, &deps).await,
@@ -90,6 +97,10 @@ pub async fn run_app_with_options(options: AppStartupOptions) -> Result<(), AppR
     };
 
     deps.worker_runner.stop();
+    if let Some(scheduler) = &deps.objective_scheduler {
+        // Running cycles are cancelled; the next scheduled time picks the work up from the tracker.
+        scheduler.stop();
+    }
     tracing_shutdown.shutdown();
     serve_result
 }

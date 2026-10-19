@@ -1,5 +1,6 @@
 pub mod execution;
 pub mod ingress;
+pub mod objective;
 pub mod progress;
 
 pub use execution::{

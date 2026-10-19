@@ -1,8 +1,10 @@
 use async_trait::async_trait;
+use reili_core::cycle_agent::{CycleAgentOutcome, CycleAgentPort, RunCycleAgentInput};
 use reili_core::error::AgentRunFailedError;
 use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig::providers::{anthropic, openai};
 
+use super::cycle_agent::{RunCycleAgentLlmInput, run_cycle_agent};
 use super::environment::AgentEnvironment;
 use super::provider_settings::LlmProviderSettings;
 use super::providers::bedrock_mantle::BedrockMantleHttpClient;
@@ -51,7 +53,7 @@ pub struct LlmRunnerInput {
     pub additional_system_prompt: Option<String>,
 }
 
-/// Runs Slack tasks on any configured provider.
+/// Runs Slack tasks and objective cycles on any configured provider.
 pub struct LlmRunner {
     backend: LlmBackend,
     connectors: ConnectorSet,
@@ -87,6 +89,22 @@ impl TaskRunnerPort for LlmRunner {
     async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
         with_clients!(&self.backend.clients, clients => {
             run_task(RunLlmTaskRunnerInput {
+                environment: self.environment(clients),
+                run: input,
+            })
+            .await
+        })
+    }
+}
+
+#[async_trait]
+impl CycleAgentPort for LlmRunner {
+    async fn run(
+        &self,
+        input: RunCycleAgentInput,
+    ) -> Result<CycleAgentOutcome, AgentRunFailedError> {
+        with_clients!(&self.backend.clients, clients => {
+            run_cycle_agent(RunCycleAgentLlmInput {
                 environment: self.environment(clients),
                 run: input,
             })

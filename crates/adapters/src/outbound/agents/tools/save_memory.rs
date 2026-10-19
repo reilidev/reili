@@ -11,6 +11,7 @@ use serde_json::json;
 use super::support::json::to_json_string;
 use super::support::slack_soft_error::to_slack_tool_soft_error;
 
+#[derive(Clone)]
 pub struct SaveMemoryToolInput {
     pub canvas_memory_port: Arc<dyn SlackCanvasMemoryPort>,
     pub channel_id: String,

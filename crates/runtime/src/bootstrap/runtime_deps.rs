@@ -34,6 +34,7 @@ use reili_adapters::outbound::slack::{
     SlackWebApiClientConfig,
 };
 use reili_adapters::queue::InMemoryJobQueue;
+use reili_application::objective::ObjectiveScheduler;
 use reili_application::{
     EnqueueSlackEventUseCase, EnqueueSlackEventUseCaseDeps, HandleSlackInteractionUseCase,
     HandleSlackInteractionUseCaseDeps, InFlightJobRegistry, SlackAutoResponseGate,
@@ -41,6 +42,7 @@ use reili_application::{
     SlackMentionAuthorizationGate, SlackMentionAuthorizationService, StartTaskWorkerRunnerUseCase,
     StartTaskWorkerRunnerUseCaseDeps, TaskExecutionDeps, TaskLogger,
 };
+use reili_core::cycle_agent::CycleAgentPort;
 use reili_core::error::PortError;
 use reili_core::knowledge::WebSearchPort;
 use reili_core::messaging::slack::{
@@ -55,7 +57,7 @@ use reili_core::messaging::slack::{
 };
 use reili_core::queue::TaskJobQueuePort;
 use reili_core::task::TaskJob;
-use reili_core::task::{TaskProgressSessionFactoryPort, TaskResources, TaskRunnerPort};
+use reili_core::task::{TaskProgressSessionFactoryPort, TaskResources};
 use serde_json::{Value, json};
 use thiserror::Error;
 
@@ -72,6 +74,8 @@ pub struct RuntimeDeps {
     pub slack_file_shared_message_port: Arc<dyn SlackFileSharedMessagePort>,
     pub slack_interaction_handler: Arc<dyn SlackInteractionHandlerPort>,
     pub worker_runner: StartTaskWorkerRunnerUseCase,
+    /// Present when `[[objectives]]` are configured.
+    pub objective_scheduler: Option<Arc<ObjectiveScheduler>>,
     pub logger: Arc<dyn TaskLogger>,
 }
 
@@ -85,7 +89,7 @@ pub enum RuntimeBootstrapError {
     ProviderClientInitialization { provider: String, message: String },
 }
 
-struct CreateTaskRunnerInput<'a> {
+struct CreateLlmRunnerInput<'a> {
     llm_provider: &'a LlmProviderConfig,
     connectors: ConnectorSet,
     language: String,
@@ -101,7 +105,7 @@ struct BuildConnectorSetInput {
 }
 
 pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, RuntimeBootstrapError> {
-    let logger = create_task_logger();
+    let logger: Arc<dyn TaskLogger> = Arc::new(TracingLogger);
     let slack_web_api_client = Arc::new(SlackWebApiClient::new(SlackWebApiClientConfig {
         bot_token: config.slack_bot_token.clone(),
         base_url: None,
@@ -160,7 +164,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
     })?;
     let job_queue: Arc<TaskJobQueuePort> = Arc::new(InMemoryJobQueue::<TaskJob>::new());
     let in_flight_job_registry = InFlightJobRegistry::new();
-    let task_runner = create_task_runner(CreateTaskRunnerInput {
+    let llm_runner = create_llm_runner(CreateLlmRunnerInput {
         llm_provider: &config.llm.provider,
         connectors,
         language: config.language.clone(),
@@ -175,6 +179,15 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         web_search_port,
         canvas_memory_port,
     };
+    let objective_scheduler = super::objectives::build_objective_scheduler(
+        super::objectives::BuildObjectiveSchedulerInput {
+            config,
+            cycle_agent: Arc::clone(&llm_runner) as Arc<dyn CycleAgentPort>,
+            task_resources: task_resources.clone(),
+            report_port: Arc::clone(&slack_reply_port),
+            logger: Arc::clone(&logger),
+        },
+    )?;
     let enqueue_slack_message_handler: Arc<dyn SlackMessageHandlerPort> = Arc::new(
         EnqueueSlackEventUseCase::new(EnqueueSlackEventUseCaseDeps {
             job_queue: Arc::clone(&job_queue),
@@ -209,7 +222,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
             task_progress_session_factory_port,
             slack_thread_history_port,
             task_resources,
-            task_runner,
+            task_runner: llm_runner,
             logger: Arc::clone(&logger),
             slack_bot_user_id: bot_user_id.clone(),
         },
@@ -232,6 +245,7 @@ pub async fn build_runtime_deps(config: &AppConfig) -> Result<RuntimeDeps, Runti
         slack_file_shared_message_port,
         slack_interaction_handler,
         worker_runner,
+        objective_scheduler,
         logger,
     })
 }
@@ -244,12 +258,6 @@ struct BuildSlackMessageHandlerInput<'a> {
     logger: Arc<dyn TaskLogger>,
 }
 
-struct SlackActorAuthorization {
-    user_ids: Option<Vec<String>>,
-    user_group_ids: Option<Vec<String>>,
-    allow_bot: bool,
-}
-
 async fn build_slack_message_handler(
     input: BuildSlackMessageHandlerInput<'_>,
 ) -> Result<Arc<dyn SlackMessageHandlerPort>, RuntimeBootstrapError> {
@@ -259,10 +267,8 @@ async fn build_slack_message_handler(
     let user_group_membership_port: Arc<dyn SlackUserGroupMembershipPort> = Arc::new(
         SlackUserGroupMembershipAdapter::new(Arc::clone(&input.slack_web_api_client)),
     );
-    let actors = resolve_slack_actor_authorization(input.config);
-
     let mention_service = SlackMentionAuthorizationService::new(
-        build_mention_authorization_policy(input.config, &actors),
+        build_mention_authorization_policy(input.config),
         Arc::clone(&channel_lookup_port),
         Arc::clone(&user_group_membership_port),
         Arc::new(SlackEphemeralMessageAdapter::new(Arc::clone(
@@ -276,7 +282,6 @@ async fn build_slack_message_handler(
 
     let auto_response_gate = build_slack_auto_response_gate(BuildSlackAutoResponseGateInput {
         config: input.config,
-        actors: &actors,
         channel_lookup_port,
         user_group_membership_port,
         thread_history_port: input.slack_thread_history_port,
@@ -291,43 +296,34 @@ async fn build_slack_message_handler(
     )))
 }
 
-fn resolve_slack_actor_authorization(config: &AppConfig) -> SlackActorAuthorization {
+fn build_mention_authorization_policy(config: &AppConfig) -> SlackAuthorizationPolicy {
+    // An empty pattern list denies every mention, keeping the channels table opt-in.
+    let channel_name_patterns = config
+        .mention_channel_patterns()
+        .iter()
+        .map(|pattern| pattern.as_str().to_string())
+        .collect::<Vec<_>>();
+    build_authorization_policy(config, Some(channel_name_patterns))
+}
+
+fn build_authorization_policy(
+    config: &AppConfig,
+    channel_name_patterns: Option<Vec<String>>,
+) -> SlackAuthorizationPolicy {
     let actors = config
         .slack_authorization
         .as_ref()
         .and_then(|authorization| authorization.actors.as_ref());
-
-    SlackActorAuthorization {
-        user_ids: actors.and_then(|actors| actors.user_ids.clone()),
-        user_group_ids: actors.and_then(|actors| actors.user_group_ids.clone()),
-        allow_bot: actors.is_some_and(|actors| actors.allow_bot),
-    }
-}
-
-fn build_mention_authorization_policy(
-    config: &AppConfig,
-    actors: &SlackActorAuthorization,
-) -> SlackAuthorizationPolicy {
-    // An empty pattern list denies every mention, keeping the channels table opt-in.
-    let channel_name_patterns = Some(
-        config
-            .mention_channel_patterns()
-            .iter()
-            .map(|pattern| pattern.as_str().to_string())
-            .collect::<Vec<_>>(),
-    );
-
     SlackAuthorizationPolicy::new(
         channel_name_patterns,
-        actors.user_ids.clone(),
-        actors.user_group_ids.clone(),
-        actors.allow_bot,
+        actors.and_then(|actors| actors.user_ids.clone()),
+        actors.and_then(|actors| actors.user_group_ids.clone()),
+        actors.is_some_and(|actors| actors.allow_bot),
     )
 }
 
 struct BuildSlackAutoResponseGateInput<'a> {
     config: &'a AppConfig,
-    actors: &'a SlackActorAuthorization,
     channel_lookup_port: Arc<dyn SlackChannelLookupPort>,
     user_group_membership_port: Arc<dyn SlackUserGroupMembershipPort>,
     thread_history_port: Arc<dyn SlackThreadHistoryPort>,
@@ -353,17 +349,10 @@ async fn build_slack_auto_response_gate(
         return Ok(None);
     }
 
-    let actor_policy = SlackAuthorizationPolicy::new(
-        None,
-        input.actors.user_ids.clone(),
-        input.actors.user_group_ids.clone(),
-        input.actors.allow_bot,
-    );
-
     Ok(Some(Arc::new(SlackAutoResponseGate::new(
         SlackAutoResponseGateDeps {
             channels,
-            actor_policy,
+            actor_policy: build_authorization_policy(input.config, None),
             channel_lookup_port: input.channel_lookup_port,
             user_group_membership_port: input.user_group_membership_port,
             thread_history_port: input.thread_history_port,
@@ -381,11 +370,11 @@ async fn create_auto_response_judge_port(
     match judge_llm {
         JudgeProviderConfig::OpenAi { api_key, model } => {
             create_openai_auto_response_judge_port(api_key.clone(), model.clone())
-                .map_err(openai_client_initialization_error)
+                .map_err(client_initialization_error("openai"))
         }
         JudgeProviderConfig::Anthropic { api_key, model } => {
             create_anthropic_auto_response_judge_port(api_key.clone(), model.clone())
-                .map_err(anthropic_client_initialization_error)
+                .map_err(client_initialization_error("anthropic"))
         }
         JudgeProviderConfig::Bedrock { model_id, aws } => {
             create_bedrock_auto_response_judge_port(CreateBedrockAutoResponseJudgePortInput {
@@ -393,7 +382,7 @@ async fn create_auto_response_judge_port(
                 aws: to_adapters_bedrock_aws_config(aws),
             })
             .await
-            .map_err(bedrock_client_initialization_error)
+            .map_err(client_initialization_error("bedrock"))
         }
         JudgeProviderConfig::BedrockMantle {
             model_id,
@@ -407,7 +396,7 @@ async fn create_auto_response_judge_port(
             },
         )
         .await
-        .map_err(bedrock_mantle_client_initialization_error),
+        .map_err(client_initialization_error("bedrock_mantle")),
         JudgeProviderConfig::VertexAi {
             project_id,
             location,
@@ -476,9 +465,9 @@ fn build_jira_connector(config: JiraConfig) -> JiraConnector {
     })
 }
 
-async fn create_task_runner(
-    input: CreateTaskRunnerInput<'_>,
-) -> Result<Arc<dyn TaskRunnerPort>, RuntimeBootstrapError> {
+async fn create_llm_runner(
+    input: CreateLlmRunnerInput<'_>,
+) -> Result<Arc<LlmRunner>, RuntimeBootstrapError> {
     Ok(Arc::new(LlmRunner::new(LlmRunnerInput {
         backend: create_llm_backend(input.llm_provider).await?,
         connectors: input.connectors,
@@ -497,13 +486,13 @@ async fn create_llm_backend(
             sub_agent_model: config.sub_agent_model.clone(),
             reasoning_effort: config.reasoning_effort.clone(),
         })
-        .map_err(openai_client_initialization_error),
+        .map_err(client_initialization_error("openai")),
         LlmProviderConfig::Anthropic(config) => anthropic_backend(AnthropicBackendInput {
             api_key: config.api_key.clone(),
             model: config.model.clone(),
             sub_agent_model: config.sub_agent_model.clone(),
         })
-        .map_err(anthropic_client_initialization_error),
+        .map_err(client_initialization_error("anthropic")),
         LlmProviderConfig::Bedrock(config) => bedrock_backend(BedrockBackendInput {
             model_id: config.model_id.clone(),
             sub_agent_model_id: config.sub_agent_model_id.clone(),
@@ -511,7 +500,7 @@ async fn create_llm_backend(
             sub_agent_aws: to_adapters_bedrock_aws_config(&config.sub_agent_aws),
         })
         .await
-        .map_err(bedrock_client_initialization_error),
+        .map_err(client_initialization_error("bedrock")),
         LlmProviderConfig::BedrockMantle(config) => {
             bedrock_mantle_backend(BedrockMantleBackendInput {
                 model_id: config.model_id.clone(),
@@ -522,7 +511,7 @@ async fn create_llm_backend(
                 sub_agent_auth: to_adapters_bedrock_mantle_auth(&config.sub_agent_auth),
             })
             .await
-            .map_err(bedrock_mantle_client_initialization_error)
+            .map_err(client_initialization_error("bedrock_mantle"))
         }
         LlmProviderConfig::VertexAi(config) => Ok(vertex_ai_backend(VertexAiBackendInput {
             client: build_vertex_ai_client(&config.project_id, &config.location)?,
@@ -555,30 +544,11 @@ fn to_adapters_bedrock_mantle_auth(auth: &BedrockMantleAuthConfig) -> AdaptersBe
     }
 }
 
-fn openai_client_initialization_error(error: PortError) -> RuntimeBootstrapError {
-    RuntimeBootstrapError::ProviderClientInitialization {
-        provider: "openai".to_string(),
-        message: error.to_string(),
-    }
-}
-
-fn anthropic_client_initialization_error(error: PortError) -> RuntimeBootstrapError {
-    RuntimeBootstrapError::ProviderClientInitialization {
-        provider: "anthropic".to_string(),
-        message: error.to_string(),
-    }
-}
-
-fn bedrock_client_initialization_error(error: PortError) -> RuntimeBootstrapError {
-    RuntimeBootstrapError::ProviderClientInitialization {
-        provider: "bedrock".to_string(),
-        message: error.to_string(),
-    }
-}
-
-fn bedrock_mantle_client_initialization_error(error: PortError) -> RuntimeBootstrapError {
-    RuntimeBootstrapError::ProviderClientInitialization {
-        provider: "bedrock_mantle".to_string(),
+fn client_initialization_error<E: std::fmt::Display>(
+    provider: &str,
+) -> impl Fn(E) -> RuntimeBootstrapError {
+    move |error| RuntimeBootstrapError::ProviderClientInitialization {
+        provider: provider.to_string(),
         message: error.to_string(),
     }
 }
@@ -611,16 +581,7 @@ fn build_vertex_ai_client(
         .with_project(project_id)
         .with_location(location)
         .build()
-        .map_err(
-            |error| RuntimeBootstrapError::ProviderClientInitialization {
-                provider: "vertexai".to_string(),
-                message: error.to_string(),
-            },
-        )
-}
-
-pub fn create_task_logger() -> Arc<dyn TaskLogger> {
-    Arc::new(TracingLogger)
+        .map_err(client_initialization_error("vertexai"))
 }
 
 async fn resolve_slack_bot_user_id(

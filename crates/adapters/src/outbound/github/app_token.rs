@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Duration, Utc};
@@ -6,17 +7,38 @@ use octocrab::models::{AppId, InstallationToken};
 use reili_core::error::PortError;
 use reili_core::secret::SecretString;
 use reqwest::header::{ACCEPT, AUTHORIZATION};
+use serde::Serialize;
 use tokio::sync::Mutex;
 
 use super::github_mcp_client::{build_bearer_auth_header, parse_github_app_id, truncate_for_error};
 
 const REFRESH_SKEW_MINUTES: i64 = 5;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct InstallationTokenScope {
+    pub repositories: Vec<String>,
+    pub permissions: BTreeMap<String, String>,
+}
+
+impl InstallationTokenScope {
+    /// Least privilege for Work State: issues and labels in one repository.
+    pub(crate) fn work_state(repository_name: &str) -> Self {
+        Self {
+            repositories: vec![repository_name.to_string()],
+            permissions: BTreeMap::from([
+                ("issues".to_string(), "write".to_string()),
+                ("metadata".to_string(), "read".to_string()),
+            ]),
+        }
+    }
+}
+
 pub(crate) struct GitHubAppTokenProvider {
     app_id: AppId,
     installation_id: u32,
     key: Arc<jsonwebtoken::EncodingKey>,
     api_base_url: String,
+    scope: Option<InstallationTokenScope>,
     http: reqwest::Client,
     cached: Mutex<Option<(SecretString, DateTime<Utc>)>>,
 }
@@ -27,6 +49,7 @@ impl GitHubAppTokenProvider {
         private_key: &SecretString,
         installation_id: u32,
         api_base_url: &str,
+        scope: Option<InstallationTokenScope>,
         user_agent: &str,
     ) -> Result<Self, PortError> {
         let key =
@@ -44,6 +67,7 @@ impl GitHubAppTokenProvider {
             installation_id,
             key: Arc::new(key),
             api_base_url: api_base_url.trim_end_matches('/').to_string(),
+            scope,
             http,
             cached: Mutex::new(None),
         })
@@ -76,7 +100,12 @@ impl GitHubAppTokenProvider {
             ))
             .header(AUTHORIZATION, build_bearer_auth_header(&jwt)?)
             .header(ACCEPT, "application/vnd.github+json")
-            .json(&serde_json::json!({}))
+            .json(
+                &self
+                    .scope
+                    .as_ref()
+                    .map_or_else(|| serde_json::json!({}), |scope| serde_json::json!(scope)),
+            )
             .send()
             .await
             .map_err(|error| {
@@ -137,7 +166,7 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::{GitHubAppTokenProvider, test_app_private_key};
+    use super::{GitHubAppTokenProvider, InstallationTokenScope, test_app_private_key};
 
     async fn provider_issuing(
         expires_in: Duration,
@@ -159,6 +188,7 @@ mod tests {
             &test_app_private_key(),
             7,
             &server.uri(),
+            None,
             "reili-test",
         )
         .expect("provider");
@@ -184,5 +214,18 @@ mod tests {
         provider.token().await.expect("second token");
 
         server.verify().await;
+    }
+
+    #[test]
+    fn work_state_scope_is_least_privilege() {
+        let scope = InstallationTokenScope::work_state("reili-work");
+
+        assert_eq!(
+            serde_json::to_value(&scope).expect("json"),
+            json!({
+                "repositories": ["reili-work"],
+                "permissions": { "issues": "write", "metadata": "read" }
+            })
+        );
     }
 }

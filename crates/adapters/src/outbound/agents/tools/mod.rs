@@ -5,6 +5,7 @@ mod search_posts;
 mod search_slack_messages;
 mod search_web;
 mod spawn_agent;
+mod submit_report;
 mod support;
 
 pub use get_post::GetPostTool;
@@ -17,3 +18,4 @@ pub use spawn_agent::{
     SpawnAgentTool, SpawnAgentToolArgs, SpawnAgentToolError, SpawnAgentToolInput,
     SpawnedSubAgentSpec,
 };
+pub use submit_report::SubmitCycleReportTool;

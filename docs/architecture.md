@@ -19,6 +19,7 @@ flowchart TB
         INGRESS["Ingress<br/>routing · authorization ·<br/>auto-response gate · enqueue"]
         EXEC["Execution<br/>worker loop · task run ·<br/>cancellation"]
         PROGRESS["Progress<br/>event stream projection"]
+        OBJECTIVE["Objectives<br/>scheduler · leased cycle ·<br/>decide ·<br/>human signals · reports"]
     end
 
     subgraph adapters["crates/adapters — integrations"]
@@ -26,10 +27,11 @@ flowchart TB
         AGENTS["Agents<br/>lead agent · spawned sub-agents ·<br/>connectors · LLM providers"]
         OUTBOUND["Outbound Slack<br/>replies · reactions ·<br/>progress messages"]
         QUEUE["In-memory job queue"]
+        WORK["Work State backends<br/>(GitHub Issues)"]
     end
 
     subgraph core["crates/core — domain"]
-        DOMAIN["Domain types · typed errors ·<br/>trait-based ports"]
+        DOMAIN["Domain types · typed errors ·<br/>trait-based ports ·<br/>objectives · work state"]
     end
 
     runtime --> application
@@ -41,13 +43,16 @@ flowchart TB
 ## Crate responsibilities
 
 - `crates/core`: domain types, typed errors, and trait-based ports. Independent from runtime
-  and adapter concerns.
+  and adapter concerns. Includes objective definitions and schedules (`objective`), work items on the
+  tracker and the structured evidence vocabulary (`work`), and the cycle-agent, work-state, and
+  objective-report ports.
 - `crates/application`: use cases and task orchestration — Slack ingress (routing,
   authorization, auto-response gating, enqueue), task execution (worker loop, cancellation),
-  and progress projection.
+  progress projection, and objective autonomy (`objective`: scheduler, durable cycle,
+  decide, human-signal reconciliation, Slack reports).
 - `crates/adapters`: inbound Slack parsing and signature verification, outbound Slack Web API
   adapters, the agent stack (lead agent, dynamically spawned sub-agents, connectors, LLM
-  providers), and the in-memory job queue.
+  providers), the in-memory job queue, and the Work State backends (GitHub Issues today).
 - `crates/runtime`: config loading (`reili.toml` plus env secrets), dependency wiring in
   `bootstrap`, and the two Slack transports (Socket Mode client and axum HTTP server).
 
@@ -60,13 +65,20 @@ flowchart TB
   (`/slack/events`, `/slack/interactions` with signature verification).
 - **Multi-provider LLM backends**: OpenAI, Anthropic, Amazon Bedrock, Bedrock Mantle, and
   Vertex AI are pluggable providers. Each provider only builds its rig clients and settings
-  (`LlmBackend`); one `LlmRunner` runs the task-runner port on any of them. The lead and
-  sub-agents can run on different models of the same provider.
+  (`LlmBackend`); one `LlmRunner` runs every port on any of them. The lead and sub-agents can run
+  on different models of the same provider.
 - **Connector model**: Datadog, GitHub, JIRA (via MCP servers), and esa each contribute an
   allowlisted, read-only tool group to the catalog that the lead agent draws from when
   spawning sub-agents.
 - **Cancellation**: the Slack `Cancel` button flows through the interaction handler to an
   in-flight job registry that cancels queued or running tasks.
+- **Objective autonomy**: `LlmRunner` implements both `TaskRunnerPort` (Slack tasks) and
+  `CycleAgentPort` (objective cycles). Objective work lives on the team's tracker (GitHub Issues
+  today) as ordinary items, knowledge in the Slack Canvas; Reili keeps no state of its own.
+- **Pluggable Work State**: `WorkStatePort` hides the tracker behind backend-neutral
+  record keys (`#12`, `OPS-123`) and labels for objective, assignee, and needs-decision. The
+  runtime selects the backend from
+  `[work_state.<backend>]`.
 
 For the runtime investigation flow, see the [Architecture section in README.md](../README.md#architecture).
 For contributor workflows and architecture rules, see [DEVELOPERS.md](../DEVELOPERS.md).
