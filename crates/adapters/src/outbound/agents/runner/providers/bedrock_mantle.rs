@@ -1,14 +1,12 @@
 use std::future::Future;
 use std::time::SystemTime;
 
-use async_trait::async_trait;
 use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
 use aws_sigv4::http_request::{SignableBody, SignableRequest, SigningSettings, sign};
 use aws_sigv4::sign::v4;
 use bytes::Bytes;
-use reili_core::error::{AgentRunFailedError, PortError};
+use reili_core::error::PortError;
 use reili_core::secret::SecretString;
-use reili_core::task::{RunTaskInput, TaskRunOutcome, TaskRunnerPort};
 use rig::http_client::{
     Error as HttpClientError, HeaderMap, HeaderValue, HttpClientExt, LazyBody, Method,
     MultipartForm, Request, Response, Result as HttpClientResult, StreamingResponse, Uri,
@@ -17,13 +15,12 @@ use rig::providers::{anthropic, openai};
 use rig::wasm_compat::WasmCompatSend;
 use serde_json::json;
 
+use super::super::llm_runner::{AgentClients, LlmBackend, LlmClients};
 use super::super::provider_settings::{
     CreateBedrockMantleProviderSettingsInput, LlmProviderSettings,
     create_bedrock_mantle_provider_settings,
 };
-use super::super::task_runner::{RunLlmTaskRunnerInput, run_task};
 use super::bedrock::{BedrockAwsConfig, load_sdk_config};
-use crate::outbound::agents::connector::ConnectorSet;
 
 const BEDROCK_MANTLE_SIGNING_SERVICE: &str = "bedrock-mantle";
 /// Bedrock Mantle authenticates via a `Bearer` `Authorization` header (API key) or SigV4 (IAM
@@ -81,58 +78,55 @@ impl BedrockMantleModelFamily {
     }
 }
 
-pub struct BedrockMantleTaskRunnerInput {
+pub struct BedrockMantleBackendInput {
     pub model_id: String,
     pub sub_agent_model_id: String,
     pub region: String,
     pub auth: BedrockMantleAuth,
     pub sub_agent_region: String,
     pub sub_agent_auth: BedrockMantleAuth,
-    pub connectors: ConnectorSet,
-    pub language: String,
-    pub additional_system_prompt: Option<String>,
 }
 
-pub struct BedrockMantleTaskRunner {
-    provider_settings: LlmProviderSettings,
-    client: BedrockMantleClient,
-    sub_agent_client: BedrockMantleClient,
-    connectors: ConnectorSet,
-    language: String,
-    additional_system_prompt: Option<String>,
-}
-
-impl BedrockMantleTaskRunner {
-    pub async fn new(input: BedrockMantleTaskRunnerInput) -> Result<Self, PortError> {
-        let family = BedrockMantleModelFamily::from_model_id(&input.model_id)?;
-        let sub_agent_family = BedrockMantleModelFamily::from_model_id(&input.sub_agent_model_id)?;
-        if family != sub_agent_family {
-            return Err(PortError::new(format!(
-                "lead model `{}` and sub-agent model `{}` belong to different Bedrock Mantle API families; both must be openai/xai-family or both anthropic-family",
-                input.model_id, input.sub_agent_model_id
-            )));
-        }
-
-        let client = create_bedrock_mantle_client(family, &input.region, &input.auth).await?;
-        let sub_agent_client =
-            create_bedrock_mantle_client(family, &input.sub_agent_region, &input.sub_agent_auth)
-                .await?;
-
-        Ok(Self {
-            provider_settings: build_provider_settings(
-                family,
-                CreateBedrockMantleProviderSettingsInput {
-                    model_id: input.model_id,
-                    sub_agent_model_id: input.sub_agent_model_id,
-                },
-            ),
-            client,
-            sub_agent_client,
-            connectors: input.connectors,
-            language: input.language,
-            additional_system_prompt: input.additional_system_prompt,
-        })
+pub async fn bedrock_mantle_backend(
+    input: BedrockMantleBackendInput,
+) -> Result<LlmBackend, PortError> {
+    let family = BedrockMantleModelFamily::from_model_id(&input.model_id)?;
+    let sub_agent_family = BedrockMantleModelFamily::from_model_id(&input.sub_agent_model_id)?;
+    if family != sub_agent_family {
+        return Err(PortError::new(format!(
+            "lead model `{}` and sub-agent model `{}` belong to different Bedrock Mantle API families; both must be openai/xai-family or both anthropic-family",
+            input.model_id, input.sub_agent_model_id
+        )));
     }
+
+    let lead = create_bedrock_mantle_client(family, &input.region, &input.auth).await?;
+    let sub_agent =
+        create_bedrock_mantle_client(family, &input.sub_agent_region, &input.sub_agent_auth)
+            .await?;
+    let clients = match (lead, sub_agent) {
+        (BedrockMantleClient::OpenAi(lead), BedrockMantleClient::OpenAi(sub_agent)) => {
+            LlmClients::BedrockMantleOpenAi(AgentClients { lead, sub_agent })
+        }
+        (BedrockMantleClient::Anthropic(lead), BedrockMantleClient::Anthropic(sub_agent)) => {
+            LlmClients::BedrockMantleAnthropic(AgentClients { lead, sub_agent })
+        }
+        _ => {
+            return Err(PortError::new(
+                "lead and sub-agent Bedrock Mantle clients use different API families",
+            ));
+        }
+    };
+
+    Ok(LlmBackend {
+        clients,
+        settings: build_provider_settings(
+            family,
+            CreateBedrockMantleProviderSettingsInput {
+                model_id: input.model_id,
+                sub_agent_model_id: input.sub_agent_model_id,
+            },
+        ),
+    })
 }
 
 fn build_provider_settings(
@@ -151,47 +145,6 @@ fn build_provider_settings(
         });
     }
     settings
-}
-
-#[async_trait]
-impl TaskRunnerPort for BedrockMantleTaskRunner {
-    async fn run(&self, input: RunTaskInput) -> Result<TaskRunOutcome, AgentRunFailedError> {
-        match (&self.client, &self.sub_agent_client) {
-            (
-                BedrockMantleClient::OpenAi(client),
-                BedrockMantleClient::OpenAi(sub_agent_client),
-            ) => {
-                run_task(RunLlmTaskRunnerInput {
-                    client: client.clone(),
-                    sub_agent_client: sub_agent_client.clone(),
-                    settings: self.provider_settings.clone(),
-                    connectors: self.connectors.clone(),
-                    language: self.language.clone(),
-                    additional_system_prompt: self.additional_system_prompt.clone(),
-                    run: input,
-                })
-                .await
-            }
-            (
-                BedrockMantleClient::Anthropic(client),
-                BedrockMantleClient::Anthropic(sub_agent_client),
-            ) => {
-                run_task(RunLlmTaskRunnerInput {
-                    client: client.clone(),
-                    sub_agent_client: sub_agent_client.clone(),
-                    settings: self.provider_settings.clone(),
-                    connectors: self.connectors.clone(),
-                    language: self.language.clone(),
-                    additional_system_prompt: self.additional_system_prompt.clone(),
-                    run: input,
-                })
-                .await
-            }
-            _ => unreachable!(
-                "lead/sub-agent Bedrock Mantle model family mismatch already rejected in BedrockMantleTaskRunner::new"
-            ),
-        }
-    }
 }
 
 /// The rig completion client for a Bedrock Mantle backend. Which variant is built is decided by
@@ -484,18 +437,10 @@ impl HttpClientExt for BedrockMantleHttpClient {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use reili_core::secret::SecretString;
-
     use super::{
-        BedrockMantleAuth, BedrockMantleIamRole, BedrockMantleModelFamily,
-        BedrockMantleTaskRunnerInput, CreateBedrockMantleProviderSettingsInput,
+        BedrockMantleModelFamily, CreateBedrockMantleProviderSettingsInput,
         bedrock_mantle_base_url, build_provider_settings,
     };
-    use crate::outbound::agents::connector::ConnectorSet;
-    use crate::outbound::agents::{DatadogConnector, DatadogMcpToolConfig, GitHubConnector};
-    use crate::outbound::github::GitHubMcpConfig;
 
     #[test]
     fn enables_hosted_web_search_tool_for_openai_compatible_family() {
@@ -563,62 +508,6 @@ mod tests {
             error.message.contains("amazon.nova-pro"),
             "{}",
             error.message
-        );
-    }
-
-    #[test]
-    fn input_supports_api_key_and_iam_role_auth_per_role() {
-        let connectors = ConnectorSet::new(vec![
-            Arc::new(DatadogConnector::new(DatadogMcpToolConfig {
-                api_key: SecretString::from("api"),
-                app_key: SecretString::from("app"),
-                site: "datadoghq.com".to_string(),
-            })),
-            Arc::new(GitHubConnector::new(
-                GitHubMcpConfig {
-                    url: "https://api.githubcopilot.com/mcp/".to_string(),
-                    app_id: "12345".to_string(),
-                    private_key: SecretString::from("private-key"),
-                    installation_id: 99,
-                },
-                "example-org".to_string(),
-            )),
-        ]);
-        let input = BedrockMantleTaskRunnerInput {
-            model_id: "openai.gpt-5.6-sol".to_string(),
-            sub_agent_model_id: "openai.gpt-5.6-terra".to_string(),
-            region: "us-east-1".to_string(),
-            auth: BedrockMantleAuth::ApiKey(SecretString::from("mantle-api-key")),
-            sub_agent_region: "us-west-2".to_string(),
-            sub_agent_auth: BedrockMantleAuth::IamRole(BedrockMantleIamRole {
-                profile: Some("prod-sso".to_string()),
-                assume_role_arn: Some("arn:aws:iam::111111111111:role/ReiliMantle".to_string()),
-            }),
-            connectors,
-            language: "English".to_string(),
-            additional_system_prompt: Some("Prefer runbook links.".to_string()),
-        };
-
-        assert_eq!(input.region, "us-east-1");
-        match input.auth {
-            BedrockMantleAuth::ApiKey(secret) => assert_eq!(secret.expose(), "mantle-api-key"),
-            BedrockMantleAuth::IamRole(_) => panic!("expected api key auth"),
-        }
-        assert_eq!(input.sub_agent_region, "us-west-2");
-        match input.sub_agent_auth {
-            BedrockMantleAuth::IamRole(role) => {
-                assert_eq!(role.profile.as_deref(), Some("prod-sso"));
-                assert_eq!(
-                    role.assume_role_arn.as_deref(),
-                    Some("arn:aws:iam::111111111111:role/ReiliMantle")
-                );
-            }
-            BedrockMantleAuth::ApiKey(_) => panic!("expected iam role auth"),
-        }
-        assert_eq!(input.connectors.len(), 2);
-        assert_eq!(
-            input.additional_system_prompt.as_deref(),
-            Some("Prefer runbook links.")
         );
     }
 }

@@ -3,13 +3,12 @@ use std::sync::Arc;
 use reili_adapters::inbound::slack::SlackSignatureVerifier;
 use reili_adapters::logger::TracingLogger;
 use reili_adapters::outbound::agents::{
-    AnthropicTaskRunner, AnthropicTaskRunnerInput, BedrockAwsConfig as AdaptersBedrockAwsConfig,
-    BedrockMantleAuth as AdaptersBedrockMantleAuth,
-    BedrockMantleIamRole as AdaptersBedrockMantleIamRole, BedrockMantleTaskRunner,
-    BedrockMantleTaskRunnerInput, BedrockTaskRunner, BedrockTaskRunnerInput, ConnectorSet,
-    DatadogConnector, DatadogMcpToolConfig, EsaConnector, GitHubConnector, JiraConnector,
-    OpenAiTaskRunner, OpenAiTaskRunnerInput, VertexAiGeminiClient, VertexAiTaskRunner,
-    VertexAiTaskRunnerInput,
+    AnthropicBackendInput, BedrockAwsConfig as AdaptersBedrockAwsConfig, BedrockBackendInput,
+    BedrockMantleAuth as AdaptersBedrockMantleAuth, BedrockMantleBackendInput,
+    BedrockMantleIamRole as AdaptersBedrockMantleIamRole, ConnectorSet, DatadogConnector,
+    DatadogMcpToolConfig, EsaConnector, GitHubConnector, JiraConnector, LlmBackend, LlmRunner,
+    LlmRunnerInput, OpenAiBackendInput, VertexAiBackendInput, VertexAiGeminiClient,
+    anthropic_backend, bedrock_backend, bedrock_mantle_backend, openai_backend, vertex_ai_backend,
 };
 use reili_adapters::outbound::anthropic::{
     AnthropicWebSearchAdapter, AnthropicWebSearchAdapterConfig,
@@ -480,72 +479,56 @@ fn build_jira_connector(config: JiraConfig) -> JiraConnector {
 async fn create_task_runner(
     input: CreateTaskRunnerInput<'_>,
 ) -> Result<Arc<dyn TaskRunnerPort>, RuntimeBootstrapError> {
-    match input.llm_provider {
-        LlmProviderConfig::OpenAi(config) => {
-            Ok(Arc::new(OpenAiTaskRunner::new(OpenAiTaskRunnerInput {
-                api_key: config.api_key.clone(),
-                model: config.model.clone(),
-                sub_agent_model: config.sub_agent_model.clone(),
-                reasoning_effort: config.reasoning_effort.clone(),
-                connectors: input.connectors,
-                language: input.language,
-                additional_system_prompt: input.additional_system_prompt,
-            })))
-        }
-        LlmProviderConfig::Anthropic(config) => Ok(Arc::new(AnthropicTaskRunner::new(
-            AnthropicTaskRunnerInput {
-                api_key: config.api_key.clone(),
-                model: config.model.clone(),
-                sub_agent_model: config.sub_agent_model.clone(),
-                connectors: input.connectors,
-                language: input.language,
-                additional_system_prompt: input.additional_system_prompt,
-            },
-        ))),
-        LlmProviderConfig::Bedrock(config) => {
-            let runner = BedrockTaskRunner::new(BedrockTaskRunnerInput {
-                model_id: config.model_id.clone(),
-                sub_agent_model_id: config.sub_agent_model_id.clone(),
-                aws: to_adapters_bedrock_aws_config(&config.aws),
-                sub_agent_aws: to_adapters_bedrock_aws_config(&config.sub_agent_aws),
-                connectors: input.connectors,
-                language: input.language,
-                additional_system_prompt: input.additional_system_prompt,
-            })
-            .await
-            .map_err(bedrock_client_initialization_error)?;
+    Ok(Arc::new(LlmRunner::new(LlmRunnerInput {
+        backend: create_llm_backend(input.llm_provider).await?,
+        connectors: input.connectors,
+        language: input.language,
+        additional_system_prompt: input.additional_system_prompt,
+    })))
+}
 
-            Ok(Arc::new(runner))
-        }
+async fn create_llm_backend(
+    llm_provider: &LlmProviderConfig,
+) -> Result<LlmBackend, RuntimeBootstrapError> {
+    match llm_provider {
+        LlmProviderConfig::OpenAi(config) => openai_backend(OpenAiBackendInput {
+            api_key: config.api_key.clone(),
+            model: config.model.clone(),
+            sub_agent_model: config.sub_agent_model.clone(),
+            reasoning_effort: config.reasoning_effort.clone(),
+        })
+        .map_err(openai_client_initialization_error),
+        LlmProviderConfig::Anthropic(config) => anthropic_backend(AnthropicBackendInput {
+            api_key: config.api_key.clone(),
+            model: config.model.clone(),
+            sub_agent_model: config.sub_agent_model.clone(),
+        })
+        .map_err(anthropic_client_initialization_error),
+        LlmProviderConfig::Bedrock(config) => bedrock_backend(BedrockBackendInput {
+            model_id: config.model_id.clone(),
+            sub_agent_model_id: config.sub_agent_model_id.clone(),
+            aws: to_adapters_bedrock_aws_config(&config.aws),
+            sub_agent_aws: to_adapters_bedrock_aws_config(&config.sub_agent_aws),
+        })
+        .await
+        .map_err(bedrock_client_initialization_error),
         LlmProviderConfig::BedrockMantle(config) => {
-            let runner = BedrockMantleTaskRunner::new(BedrockMantleTaskRunnerInput {
+            bedrock_mantle_backend(BedrockMantleBackendInput {
                 model_id: config.model_id.clone(),
                 sub_agent_model_id: config.sub_agent_model_id.clone(),
                 region: config.region.clone(),
                 auth: to_adapters_bedrock_mantle_auth(&config.auth),
                 sub_agent_region: config.sub_agent_region.clone(),
                 sub_agent_auth: to_adapters_bedrock_mantle_auth(&config.sub_agent_auth),
-                connectors: input.connectors,
-                language: input.language,
-                additional_system_prompt: input.additional_system_prompt,
             })
             .await
-            .map_err(bedrock_mantle_client_initialization_error)?;
-
-            Ok(Arc::new(runner))
+            .map_err(bedrock_mantle_client_initialization_error)
         }
-        LlmProviderConfig::VertexAi(config) => {
-            let client = build_vertex_ai_client(&config.project_id, &config.location)?;
-
-            Ok(Arc::new(VertexAiTaskRunner::new(VertexAiTaskRunnerInput {
-                client,
-                model_id: config.model_id.clone(),
-                sub_agent_model_id: config.sub_agent_model_id.clone(),
-                connectors: input.connectors,
-                language: input.language,
-                additional_system_prompt: input.additional_system_prompt,
-            })))
-        }
+        LlmProviderConfig::VertexAi(config) => Ok(vertex_ai_backend(VertexAiBackendInput {
+            client: build_vertex_ai_client(&config.project_id, &config.location)?,
+            model_id: config.model_id.clone(),
+            sub_agent_model_id: config.sub_agent_model_id.clone(),
+        })),
     }
 }
 

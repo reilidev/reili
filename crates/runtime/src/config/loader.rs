@@ -404,7 +404,7 @@ fn resolve_llm_provider<'a>(
 /// Resolves the `search_web` backend, falling back to the lead backend when
 /// `ai.web_search_backend` is unset. The one exception: falling back to a lead that is an
 /// openai/xai-family `bedrock_mantle` backend resolves to `Ok(None)` instead of an error, since
-/// that lead already searches the web natively (see `BedrockMantleTaskRunner`) — an explicit
+/// that lead already searches the web natively (see `bedrock_mantle_backend`) — an explicit
 /// `ai.web_search_backend` override still has to name a supported provider.
 fn resolve_web_search_llm_provider(
     ai: &AiFileConfig,
