@@ -1,0 +1,212 @@
+use std::sync::Arc;
+
+use reili_core::logger::Logger;
+use reili_core::secret::SecretString;
+use reili_core::task::{
+    TASK_RUNNER_PROGRESS_OWNER_ID, TaskCancellation, TaskProgressEventPort, TaskResources,
+    TaskRuntime,
+};
+use rig::agent::Agent;
+use rig::prelude::{AgentClientExt, CompletionClient};
+
+use super::super::connector::PreparedConnector;
+use super::super::runner::provider_settings::LlmProviderSettings;
+use super::super::runner::usage_collector::LlmUsageCollector;
+use super::super::tools::{
+    ReportProgressTool, ReportProgressToolInput, SaveMemoryTool, SaveMemoryToolInput,
+    SaveSharedMemoryTool, SearchSlackMessagesTool, SearchWebTool, SpawnAgentTool,
+    SpawnAgentToolInput, SpawnedSubAgentSpec,
+};
+use super::instructions::{BuildTaskInstructionsInput, build_task_instructions};
+use super::spawn::{
+    render_spawn_tool_catalog, spawn_catalog_tool_names, spawn_tool_catalog_groups,
+};
+use super::sub_agent::{
+    BuildSpawnedSubAgentInput, CreateSubAgentFactoryInput, SubAgentConfig, SubAgentFactory,
+};
+
+pub struct TaskAgentFactory<C>
+where
+    C: CompletionClient,
+{
+    client: C,
+    sub_agent_client: C,
+    config: TaskAgentConfig,
+}
+
+pub struct CreateTaskAgentFactoryInput<C>
+where
+    C: CompletionClient,
+{
+    pub client: C,
+    pub sub_agent_client: C,
+    pub config: TaskAgentConfig,
+}
+
+pub struct BuildTaskAgentInput {
+    pub run_context: TaskAgentRunContext,
+    pub prepared_connectors: Vec<Arc<dyn PreparedConnector>>,
+}
+
+impl<C> TaskAgentFactory<C>
+where
+    C: CompletionClient,
+{
+    pub fn new(input: CreateTaskAgentFactoryInput<C>) -> Self {
+        Self {
+            client: input.client,
+            sub_agent_client: input.sub_agent_client,
+            config: input.config,
+        }
+    }
+}
+
+impl<C> TaskAgentFactory<C>
+where
+    C: CompletionClient + Clone + Send + Sync + 'static,
+    C::CompletionModel: 'static,
+{
+    #[must_use]
+    pub fn build(&self, input: BuildTaskAgentInput) -> Agent {
+        let sub_agent_factory = SubAgentFactory::new(CreateSubAgentFactoryInput {
+            client: self.sub_agent_client.clone(),
+            config: self.sub_agent_config(),
+        });
+        let memory_context_section = build_memory_context_section(&input.run_context.memory_items);
+        let catalog_groups = spawn_tool_catalog_groups(
+            &input.prepared_connectors,
+            input.run_context.resources.web_search_port.is_some(),
+        );
+
+        let builder = self
+            .client
+            .clone()
+            .agent(self.config.settings.task_runner_model.clone())
+            .name("TaskRunner")
+            .preamble(&build_task_instructions(BuildTaskInstructionsInput {
+                additional_system_prompt: self.config.instructions.additional_system_prompt.clone(),
+                spawn_tool_catalog: render_spawn_tool_catalog(&catalog_groups),
+            }))
+            .default_max_turns(self.config.settings.task_runner_max_turns)
+            .additional_params(self.config.settings.additional_params.clone());
+        let builder = with_max_tokens(builder, self.config.settings.task_runner_max_tokens);
+
+        // spawn_agent replaces per-connector sub-agent tools: the lead composes each
+        // sub-agent's instructions and tool selection per delegation.
+        let agent_factory = {
+            let sub_agent_factory = sub_agent_factory.clone();
+            let run_context = input.run_context.clone();
+            let prepared_connectors = input.prepared_connectors.clone();
+            Arc::new(move |spec: SpawnedSubAgentSpec| {
+                sub_agent_factory.build_spawned_sub_agent(BuildSpawnedSubAgentInput {
+                    run_context: run_context.clone(),
+                    prepared_connectors: prepared_connectors.clone(),
+                    spec,
+                })
+            })
+        };
+
+        let builder = builder
+            .tool(ReportProgressTool::new(ReportProgressToolInput {
+                on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
+                owner_id: TASK_RUNNER_PROGRESS_OWNER_ID.to_string(),
+            }))
+            .tool(SearchSlackMessagesTool::new(
+                Arc::clone(&input.run_context.resources.slack_message_search_port),
+                input.run_context.slack_action_token.clone(),
+            ))
+            .tool(SpawnAgentTool::new(SpawnAgentToolInput {
+                agent_factory,
+                available_tool_names: spawn_catalog_tool_names(&catalog_groups),
+                on_progress_event: Arc::clone(&input.run_context.execution.on_progress_event),
+                tool_concurrency: self.config.settings.tool_concurrency,
+                shared_prompt_context: memory_context_section,
+            }));
+
+        let builder = match &input.run_context.resources.web_search_port {
+            Some(web_search_port) => builder.tool(SearchWebTool::new(Arc::clone(web_search_port))),
+            None => builder,
+        };
+
+        // save_memory / save_shared_memory are lead-only tools; sub-agents surface facts for the
+        // lead to persist. Both are registered only when a Canvas memory backend is configured.
+        let builder = match &input.run_context.resources.canvas_memory_port {
+            Some(canvas_memory_port) => builder
+                .tool(SaveMemoryTool::new(SaveMemoryToolInput {
+                    canvas_memory_port: Arc::clone(canvas_memory_port),
+                    channel_id: input.run_context.execution.runtime.channel.clone(),
+                    channel_name: None,
+                    source_message_ts: input.run_context.execution.runtime.thread_ts.clone(),
+                }))
+                .tool(SaveSharedMemoryTool::new(SaveMemoryToolInput {
+                    canvas_memory_port: Arc::clone(canvas_memory_port),
+                    channel_id: input.run_context.execution.runtime.channel.clone(),
+                    channel_name: None,
+                    source_message_ts: input.run_context.execution.runtime.thread_ts.clone(),
+                })),
+            None => builder,
+        };
+
+        builder.build()
+    }
+
+    fn sub_agent_config(&self) -> SubAgentConfig {
+        SubAgentConfig {
+            settings: self.config.settings.clone(),
+            language: self.config.instructions.language.clone(),
+            additional_system_prompt: self.config.instructions.additional_system_prompt.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct TaskAgentConfig {
+    pub settings: LlmProviderSettings,
+    pub instructions: AgentInstructionsConfig,
+}
+
+#[derive(Clone)]
+pub struct AgentInstructionsConfig {
+    pub language: String,
+    pub additional_system_prompt: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct TaskAgentRunContext {
+    pub resources: Arc<TaskResources>,
+    pub execution: TaskAgentExecutionContext,
+    pub slack_action_token: Option<SecretString>,
+    pub memory_items: Vec<reili_core::task::TaskMemoryItem>,
+}
+
+#[derive(Clone)]
+pub struct TaskAgentExecutionContext {
+    pub logger: Arc<dyn Logger>,
+    pub runtime: TaskRuntime,
+    pub cancellation: TaskCancellation,
+    pub on_progress_event: Arc<dyn TaskProgressEventPort>,
+    pub usage_collector: LlmUsageCollector,
+}
+
+pub(super) fn with_max_tokens<ToolState>(
+    builder: rig::agent::AgentBuilder<ToolState>,
+    max_tokens: Option<u64>,
+) -> rig::agent::AgentBuilder<ToolState> {
+    match max_tokens {
+        Some(value) => builder.max_tokens(value),
+        None => builder,
+    }
+}
+
+fn build_memory_context_section(
+    memory_items: &[reili_core::task::TaskMemoryItem],
+) -> Option<String> {
+    if memory_items.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "# Memory Context\n{}",
+        super::prompt::build_memory_context(memory_items)
+    ))
+}
