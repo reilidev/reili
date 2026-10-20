@@ -1,8 +1,10 @@
 mod env;
 mod error;
 mod file;
+mod github_connection;
 mod loader;
 mod model;
+mod named_connector;
 mod objective_file;
 mod objective_loader;
 

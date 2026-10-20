@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
+use std::fmt;
+use std::marker::PhantomData;
 use std::path::Path;
 
-use serde::de::{Error as DeError, Unexpected};
+use serde::de::{Error as DeError, MapAccess, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer};
 
 use super::ConfigError;
@@ -326,9 +328,25 @@ pub(crate) struct ConnectorFileConfig {
     pub jira: Option<JiraConnectorFileConfig>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// `[connector.datadog]`. Datadog is always on: without a `[connector.datadog.connection.<name>]`
+/// table, a connection with every default is used.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
 pub(crate) struct DatadogConnectorFileConfig {
+    /// Name of the `[connector.datadog.connection.<name>]` the Datadog MCP connector uses. Optional
+    /// only while at most one connection is defined.
+    #[serde(deserialize_with = "optional_non_empty_string")]
+    pub mcp_connection: Option<String>,
+    /// Datadog connections keyed by the name other settings use to select them.
+    #[serde(deserialize_with = "deserialize_named_datadog_connections")]
+    pub connection: BTreeMap<String, DatadogConnectionFileConfig>,
+    #[serde(flatten, deserialize_with = "reject_unnamed_datadog_settings")]
+    _unnamed_settings: (),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub(crate) struct DatadogConnectionFileConfig {
     #[serde(
         default = "default_datadog_site",
         deserialize_with = "require_non_empty_string"
@@ -346,7 +364,7 @@ pub(crate) struct DatadogConnectorFileConfig {
     pub app_key_env: String,
 }
 
-impl Default for DatadogConnectorFileConfig {
+impl Default for DatadogConnectionFileConfig {
     fn default() -> Self {
         Self {
             site: default_datadog_site(),
@@ -365,11 +383,19 @@ pub(crate) struct GitHubConnectorFileConfig {
     pub mcp_url: String,
     #[serde(deserialize_with = "require_non_empty_string")]
     pub search_scope_org: String,
-    pub app: GitHubAppFileConfig,
+    /// Name of the `[connector.github.connection.<name>]` the MCP connector authenticates with. Optional
+    /// only while a single connection is defined.
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
+    pub mcp_connection: Option<String>,
+    /// GitHub connections keyed by the name other settings use to select them.
+    #[serde(default, deserialize_with = "deserialize_named_github_connections")]
+    pub connection: BTreeMap<String, GitHubConnectionFileConfig>,
+    #[serde(flatten, deserialize_with = "reject_unnamed_github_settings")]
+    _unnamed_settings: (),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub(crate) struct GitHubAppFileConfig {
+pub(crate) struct GitHubConnectionFileConfig {
     #[serde(deserialize_with = "require_positive_u64_string")]
     pub app_id: String,
     #[serde(deserialize_with = "require_positive_u32")]
@@ -381,8 +407,22 @@ pub(crate) struct GitHubAppFileConfig {
     pub private_key_env: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// Optional `[connector.esa]` block. esa stays disabled until a connection is defined.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub(crate) struct EsaConnectorFileConfig {
+    /// Name of the `[connector.esa.connection.<name>]` the esa sub-agent uses. Optional only
+    /// while a single connection is defined.
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
+    pub agent_connection: Option<String>,
+    /// esa teams keyed by the name other settings use to select them.
+    #[serde(default, deserialize_with = "deserialize_named_esa_connections")]
+    pub connection: BTreeMap<String, EsaConnectionFileConfig>,
+    #[serde(flatten, deserialize_with = "reject_unnamed_esa_settings")]
+    _unnamed_settings: (),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct EsaConnectionFileConfig {
     #[serde(deserialize_with = "require_non_empty_string")]
     pub team_name: String,
     #[serde(
@@ -392,8 +432,22 @@ pub(crate) struct EsaConnectorFileConfig {
     pub access_token_env: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// Optional `[connector.jira]` block. JIRA stays disabled until a connection is defined.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub(crate) struct JiraConnectorFileConfig {
+    /// Name of the `[connector.jira.connection.<name>]` the investigation sub-agent uses. Optional
+    /// only while a single connection is defined.
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
+    pub mcp_connection: Option<String>,
+    /// Rovo MCP connections keyed by the name other settings use to select them.
+    #[serde(default, deserialize_with = "deserialize_named_jira_connections")]
+    pub connection: BTreeMap<String, JiraConnectionFileConfig>,
+    #[serde(flatten, deserialize_with = "reject_unnamed_jira_settings")]
+    _unnamed_settings: (),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct JiraConnectionFileConfig {
     #[serde(deserialize_with = "require_non_empty_string")]
     pub site: String,
     #[serde(
@@ -410,6 +464,284 @@ pub(crate) fn parse_file_config(path: &Path, contents: &str) -> Result<FileConfi
     })
 }
 
+/// How a table of named connector instances reads in error messages.
+struct NamedTablesSpec {
+    /// What one instance is called, e.g. `GitHub connection`.
+    kind: &'static str,
+    /// The table holding the instances, e.g. `[connector.github.connection]`.
+    parent: &'static str,
+    /// A sample instance table, e.g. `[connector.github.connection.default]`.
+    example: &'static str,
+    /// Keys that used to sit directly in `parent`, before instances became named tables.
+    unnamed_keys: &'static [&'static str],
+    /// Whether an empty `parent` is an error.
+    require_one: bool,
+}
+
+fn deserialize_named_github_connections<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, GitHubConnectionFileConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_named_tables(
+        deserializer,
+        NamedTablesSpec {
+            kind: "GitHub connection",
+            parent: "[connector.github.connection]",
+            example: "[connector.github.connection.default]",
+            unnamed_keys: &["app_id", "installation_id", "private_key_env"],
+            require_one: true,
+        },
+    )
+}
+
+fn deserialize_named_jira_connections<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, JiraConnectionFileConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_named_tables(
+        deserializer,
+        NamedTablesSpec {
+            kind: "Jira connection",
+            parent: "[connector.jira.connection]",
+            example: "[connector.jira.connection.default]",
+            unnamed_keys: &[],
+            require_one: false,
+        },
+    )
+}
+
+fn deserialize_named_tables<'de, D, T>(
+    deserializer: D,
+    spec: NamedTablesSpec,
+) -> Result<BTreeMap<String, T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    struct NamedTablesVisitor<T> {
+        spec: NamedTablesSpec,
+        instances: PhantomData<T>,
+    }
+
+    impl<'de, T> Visitor<'de> for NamedTablesVisitor<T>
+    where
+        T: Deserialize<'de>,
+    {
+        type Value = BTreeMap<String, T>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            write!(
+                formatter,
+                "{}s as named tables such as `{}`",
+                self.spec.kind, self.spec.example
+            )
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let spec = &self.spec;
+            let mut instances = BTreeMap::new();
+            while let Some(key) = map.next_key::<String>()? {
+                if spec.unnamed_keys.contains(&key.as_str()) {
+                    return Err(A::Error::custom(format!(
+                        "`{key}` must sit in a named table such as `{}`, not directly under `{}`",
+                        spec.example, spec.parent
+                    )));
+                }
+                let name = non_empty_string::<A::Error>(key)?;
+                let instance = map.next_value::<T>()?;
+                if instances.insert(name.clone(), instance).is_some() {
+                    return Err(A::Error::custom(format!(
+                        "duplicate {} name `{name}`",
+                        spec.kind
+                    )));
+                }
+            }
+            if spec.require_one && instances.is_empty() {
+                return Err(A::Error::custom(format!(
+                    "define at least one {}, such as `{}`",
+                    spec.kind, spec.example
+                )));
+            }
+            Ok(instances)
+        }
+    }
+
+    deserializer.deserialize_map(NamedTablesVisitor {
+        spec,
+        instances: PhantomData,
+    })
+}
+
+fn deserialize_named_datadog_connections<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, DatadogConnectionFileConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_named_tables(
+        deserializer,
+        NamedTablesSpec {
+            kind: "Datadog connection",
+            parent: "[connector.datadog.connection]",
+            example: "[connector.datadog.connection.default]",
+            unnamed_keys: &[],
+            require_one: false,
+        },
+    )
+}
+
+fn deserialize_named_esa_connections<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, EsaConnectionFileConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_named_tables(
+        deserializer,
+        NamedTablesSpec {
+            kind: "esa connection",
+            parent: "[connector.esa.connection]",
+            example: "[connector.esa.connection.default]",
+            unnamed_keys: &[],
+            require_one: false,
+        },
+    )
+}
+
+/// A connector table whose settings moved into named tables. It collects every key that is not a
+/// field of the table itself, so a leftover from the unnamed layout fails with a migration hint
+/// instead of being ignored (which would silently fall back to defaults or disable the connector).
+struct UnnamedSettingsSpec {
+    /// The connector table, e.g. `[connector.jira]`.
+    parent: &'static str,
+    /// A sample connection table, e.g. `[connector.jira.connection.default]`.
+    example: &'static str,
+    /// Keys that used to sit directly in `parent`.
+    unnamed_keys: &'static [&'static str],
+    /// Keys of `parent` that were renamed, as (old, new) pairs.
+    renamed_keys: &'static [(&'static str, &'static str)],
+    /// Fields `parent` itself accepts, reported for any other unknown key.
+    fields: &'static [&'static str],
+}
+
+fn reject_unnamed_github_settings<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    reject_unnamed_settings(
+        deserializer,
+        &UnnamedSettingsSpec {
+            parent: "[connector.github]",
+            example: "[connector.github.connection.default]",
+            unnamed_keys: &[],
+            renamed_keys: &[("app", "connection")],
+            fields: &[
+                "mcp_url",
+                "search_scope_org",
+                "mcp_connection",
+                "connection",
+            ],
+        },
+    )
+}
+
+fn reject_unnamed_datadog_settings<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    reject_unnamed_settings(
+        deserializer,
+        &UnnamedSettingsSpec {
+            parent: "[connector.datadog]",
+            example: "[connector.datadog.connection.default]",
+            unnamed_keys: &["site", "api_key_env", "app_key_env"],
+            renamed_keys: &[],
+            fields: &["mcp_connection", "connection"],
+        },
+    )
+}
+
+fn reject_unnamed_esa_settings<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    reject_unnamed_settings(
+        deserializer,
+        &UnnamedSettingsSpec {
+            parent: "[connector.esa]",
+            example: "[connector.esa.connection.default]",
+            unnamed_keys: &["team_name", "access_token_env"],
+            renamed_keys: &[],
+            fields: &["agent_connection", "connection"],
+        },
+    )
+}
+
+fn reject_unnamed_jira_settings<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    reject_unnamed_settings(
+        deserializer,
+        &UnnamedSettingsSpec {
+            parent: "[connector.jira]",
+            example: "[connector.jira.connection.default]",
+            unnamed_keys: &["site", "service_account_api_token_env"],
+            renamed_keys: &[],
+            fields: &["mcp_connection", "connection"],
+        },
+    )
+}
+
+fn reject_unnamed_settings<'de, D>(
+    deserializer: D,
+    spec: &UnnamedSettingsSpec,
+) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct RejectUnnamedSettingsVisitor<'a>(&'a UnnamedSettingsSpec);
+
+    impl<'de> Visitor<'de> for RejectUnnamedSettingsVisitor<'_> {
+        type Value = ();
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            write!(formatter, "the fields of `{}`", self.0.parent)
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let Some(key) = map.next_key::<String>()? else {
+                return Ok(());
+            };
+            if let Some((_, new)) = self.0.renamed_keys.iter().find(|(old, _)| *old == key) {
+                return Err(A::Error::custom(format!(
+                    "`{key}` was renamed to `{new}`: define a named table such as `{}`",
+                    self.0.example
+                )));
+            }
+            if self.0.unnamed_keys.contains(&key.as_str()) {
+                return Err(A::Error::custom(format!(
+                    "`{key}` must sit in a named table such as `{}`, not directly under `{}`",
+                    self.0.example, self.0.parent
+                )));
+            }
+            Err(A::Error::unknown_field(&key, self.0.fields))
+        }
+    }
+
+    deserializer.deserialize_map(RejectUnnamedSettingsVisitor(spec))
+}
+
 fn require_non_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -417,7 +749,7 @@ where
     non_empty_string(String::deserialize(deserializer)?)
 }
 
-fn optional_non_empty_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+pub(super) fn optional_non_empty_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -747,6 +1079,351 @@ signing_secret_env = ""
     }
 
     #[test]
+    fn parses_several_named_github_connections_and_the_mcp_connection_selection() {
+        let toml = valid_config()
+            .replace(
+                "search_scope_org = \"example-org\"\n",
+                "search_scope_org = \"example-org\"\nmcp_connection = \"reader\"\n",
+            )
+            .replace(
+                "[connector.github.connection.default]",
+                "[connector.github.connection.reader]",
+            )
+            + r#"
+[connector.github.connection.work_state]
+app_id = "99999"
+installation_id = "4242"
+private_key_env = "WORK_STATE_APP_PRIVATE_KEY"
+"#;
+
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+        let github = &config.connector.github;
+
+        assert_eq!(github.mcp_connection.as_deref(), Some("reader"));
+        assert_eq!(
+            github
+                .connection
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["reader", "work_state"]
+        );
+        assert_eq!(github.connection["work_state"].app_id, "99999");
+        assert_eq!(github.connection["work_state"].installation_id, 4242);
+        assert_eq!(
+            github.connection["work_state"].private_key_env,
+            "WORK_STATE_APP_PRIVATE_KEY"
+        );
+        assert_eq!(
+            github.connection["reader"].private_key_env,
+            "GITHUB_APP_PRIVATE_KEY"
+        );
+    }
+
+    #[test]
+    fn rejects_github_settings_outside_a_named_table_at_parse_time() {
+        let toml = valid_config().replace(
+            "[connector.github.connection.default]\n",
+            "[connector.github.connection]\n",
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(
+            message.contains("`app_id` must sit in a named table"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn rejects_the_old_github_app_table_with_a_migration_hint_at_parse_time() {
+        let toml = valid_config().replace(
+            "[connector.github.connection.default]\n",
+            "[connector.github.app]\n",
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(
+            message.contains(
+                "`app` was renamed to `connection`: define a named table such as `[connector.github.connection.default]`"
+            ),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_github_connector_keys_at_parse_time() {
+        let toml = valid_config().replace(
+            "search_scope_org = \"example-org\"\n",
+            "search_scope_org = \"example-org\"\nmcp_conection = \"reader\"\n",
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(
+            message.contains("unknown field `mcp_conection`"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_github_connection_table_without_any_named_connection_at_parse_time() {
+        let toml = valid_config().replace(
+            "[connector.github.connection.default]\napp_id = \"12345\"\ninstallation_id = \"67890\"\n",
+            "[connector.github.connection]\n",
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(
+            message.contains("define at least one GitHub connection"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn rejects_an_empty_github_connection_name_at_parse_time() {
+        let toml = valid_config().replace(
+            "[connector.github.connection.default]",
+            "[connector.github.connection.\" \"]",
+        );
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("non-empty string"), "{message}");
+    }
+
+    #[test]
+    fn jira_connector_is_optional_and_has_no_connections_by_default() {
+        let config =
+            parse_file_config(Path::new(TEST_PATH), &valid_config()).expect("parse should succeed");
+        assert!(config.connector.jira.is_none());
+
+        let toml = valid_config() + "\n[connector.jira]\n";
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+        let jira = config.connector.jira.expect("connector.jira present");
+
+        assert!(jira.connection.is_empty());
+        assert_eq!(jira.mcp_connection, None);
+    }
+
+    #[test]
+    fn parses_named_jira_connections_and_the_mcp_connection_selection() {
+        let toml = valid_config()
+            + r#"
+[connector.jira]
+mcp_connection = "reader"
+
+[connector.jira.connection.reader]
+site = "acme.atlassian.net"
+
+[connector.jira.connection.work_state]
+site = "work.atlassian.net"
+service_account_api_token_env = "JIRA_WORK_STATE_API_TOKEN"
+"#;
+
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+        let jira = config.connector.jira.expect("connector.jira present");
+
+        assert_eq!(jira.mcp_connection.as_deref(), Some("reader"));
+        assert_eq!(
+            jira.connection
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["reader", "work_state"]
+        );
+        assert_eq!(
+            jira.connection["reader"].service_account_api_token_env,
+            "JIRA_SERVICE_ACCOUNT_API_TOKEN"
+        );
+        assert_eq!(jira.connection["work_state"].site, "work.atlassian.net");
+        assert_eq!(
+            jira.connection["work_state"].service_account_api_token_env,
+            "JIRA_WORK_STATE_API_TOKEN"
+        );
+    }
+
+    #[test]
+    fn rejects_jira_settings_outside_a_named_table_at_parse_time() {
+        for setting in [
+            "site = \"acme.atlassian.net\"",
+            "service_account_api_token_env = \"JIRA_SERVICE_ACCOUNT_API_TOKEN\"",
+        ] {
+            let toml = valid_config() + &format!("\n[connector.jira]\n{setting}\n");
+
+            let message = parse_error_message(&toml);
+
+            assert!(
+                message.contains(
+                    "must sit in a named table such as `[connector.jira.connection.default]`"
+                ),
+                "{setting}: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_jira_connector_keys_at_parse_time() {
+        let toml = valid_config() + "\n[connector.jira]\nmcp_acount = \"reader\"\n";
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("unknown field `mcp_acount`"), "{message}");
+    }
+
+    #[test]
+    fn rejects_a_jira_connection_without_a_site_at_parse_time() {
+        let toml = valid_config()
+            + "\n[connector.jira.connection.default]\nservice_account_api_token_env = \"JIRA_TOKEN\"\n";
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("missing field `site`"), "{message}");
+    }
+
+    #[test]
+    fn parses_named_datadog_connections_with_per_connection_defaults() {
+        let toml = valid_config()
+            + r#"
+[connector.datadog]
+mcp_connection = "reader"
+
+[connector.datadog.connection.reader]
+
+[connector.datadog.connection.eu]
+site = "datadoghq.eu"
+api_key_env = "DATADOG_EU_API_KEY"
+"#;
+
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+        let datadog = &config.connector.datadog;
+
+        assert_eq!(datadog.mcp_connection.as_deref(), Some("reader"));
+        assert_eq!(datadog.connection["reader"].site, "datadoghq.com");
+        assert_eq!(datadog.connection["reader"].api_key_env, "DATADOG_API_KEY");
+        assert_eq!(datadog.connection["reader"].app_key_env, "DATADOG_APP_KEY");
+        assert_eq!(datadog.connection["eu"].site, "datadoghq.eu");
+        assert_eq!(datadog.connection["eu"].api_key_env, "DATADOG_EU_API_KEY");
+        assert_eq!(datadog.connection["eu"].app_key_env, "DATADOG_APP_KEY");
+    }
+
+    #[test]
+    fn datadog_connector_is_optional_and_has_no_connections_by_default() {
+        let config =
+            parse_file_config(Path::new(TEST_PATH), &valid_config()).expect("parse should succeed");
+
+        assert!(config.connector.datadog.connection.is_empty());
+        assert_eq!(config.connector.datadog.mcp_connection, None);
+    }
+
+    #[test]
+    fn parses_named_esa_connections_and_the_agent_connection_selection() {
+        let toml = valid_config()
+            + r#"
+[connector.esa]
+agent_connection = "docs"
+
+[connector.esa.connection.docs]
+team_name = "docs"
+
+[connector.esa.connection.wiki]
+team_name = "wiki"
+access_token_env = "ESA_WIKI_ACCESS_TOKEN"
+"#;
+
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+        let esa = config.connector.esa.expect("connector.esa present");
+
+        assert_eq!(esa.agent_connection.as_deref(), Some("docs"));
+        assert_eq!(esa.connection["docs"].team_name, "docs");
+        assert_eq!(esa.connection["docs"].access_token_env, "ESA_ACCESS_TOKEN");
+        assert_eq!(
+            esa.connection["wiki"].access_token_env,
+            "ESA_WIKI_ACCESS_TOKEN"
+        );
+    }
+
+    #[test]
+    fn rejects_datadog_and_esa_settings_outside_a_named_table_at_parse_time() {
+        for (table, setting) in [
+            ("datadog", "site = \"datadoghq.eu\""),
+            ("datadog", "api_key_env = \"DATADOG_API_KEY\""),
+            ("datadog", "app_key_env = \"DATADOG_APP_KEY\""),
+            ("esa", "team_name = \"docs\""),
+            ("esa", "access_token_env = \"ESA_ACCESS_TOKEN\""),
+        ] {
+            let toml = valid_config() + &format!("\n[connector.{table}]\n{setting}\n");
+
+            let message = parse_error_message(&toml);
+
+            assert!(
+                message.contains(&format!(
+                    "must sit in a named table such as `[connector.{table}.connection.default]`"
+                )),
+                "{setting}: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_datadog_and_esa_connector_keys_at_parse_time() {
+        for table in ["datadog", "esa"] {
+            let toml = valid_config() + &format!("\n[connector.{table}]\nmcp_acount = \"x\"\n");
+
+            let message = parse_error_message(&toml);
+
+            assert!(
+                message.contains("unknown field `mcp_acount`"),
+                "{table}: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_an_esa_connection_without_a_team_name_at_parse_time() {
+        let toml = valid_config() + "\n[connector.esa.connection.docs]\n";
+
+        let message = parse_error_message(&toml);
+
+        assert!(message.contains("missing field `team_name`"), "{message}");
+    }
+
+    #[test]
+    fn parses_work_state_github_connection_selection() {
+        let toml = valid_config()
+            + r#"
+[work_state.github]
+repository = "example-org/reili-work"
+connection = "work_state"
+"#;
+
+        let config = parse_file_config(Path::new(TEST_PATH), &toml).expect("parse should succeed");
+        let github = config.work_state.github.expect("work_state.github present");
+
+        assert_eq!(github.connection.as_deref(), Some("work_state"));
+    }
+
+    #[test]
+    fn rejects_work_state_github_credentials_at_parse_time() {
+        for credential in [
+            "app_id = \"12345\"",
+            "installation_id = \"67890\"",
+            "private_key_env = \"GITHUB_APP_PRIVATE_KEY\"",
+        ] {
+            let toml = valid_config()
+                + &format!(
+                    "\n[work_state.github]\nrepository = \"example-org/reili-work\"\n{credential}\n"
+                );
+
+            let message = parse_error_message(&toml);
+
+            assert!(message.contains("unknown field"), "{credential}: {message}");
+        }
+    }
+
+    #[test]
     fn accepts_slack_authorization_with_actors_only_at_parse_time() {
         for authorization_config in [
             r#"[channel.slack.authorization]
@@ -962,7 +1639,7 @@ model = "gpt-5.4"
 [connector.github]
 search_scope_org = "example-org"
 
-[connector.github.app]
+[connector.github.connection.default]
 app_id = "12345"
 installation_id = "67890"
 "#
