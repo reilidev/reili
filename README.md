@@ -163,10 +163,11 @@ Non-secret settings live in `reili.toml`, including:
   and LLM-judged auto-responses, plus optional Slack actor authorization
 - selected AI backend and backend-specific non-secret settings, including optional separate
   backends for the lead agent, sub-agents, and the `search_web` tool
-- Datadog site
-- GitHub MCP URL, GitHub App ID, installation ID, and search scope org
-- optional esa team name and access-token env var
-- optional JIRA site and service-account-API-token env var
+- Datadog connections (`[connector.datadog.connection.<name>]`): site and API/application key env vars
+- GitHub MCP URL and search scope org, plus one or more named GitHub connections
+  (`[connector.github.connection.<name>]`: App ID, installation ID, and private-key env var)
+- optional esa connections (`[connector.esa.connection.<name>]`): team name and access-token env var
+- optional JIRA connections (`[connector.jira.connection.<name>]`): site and service-account-API-token env var
 - optional Slack Canvas memory (`[memory.slack]`): `canvas_id` and an optional per-channel `cap`
 - optional OpenTelemetry trace export (`[tracing.otlp]`): OTLP/gRPC `endpoint` and an optional
   `service_name`
@@ -196,8 +197,9 @@ Required secrets depend on your selected Slack mode and backend:
 - `DATADOG_API_KEY`
 - `DATADOG_APP_KEY`
 - `GITHUB_APP_PRIVATE_KEY`
-- `ESA_ACCESS_TOKEN` when `[connector.esa]` is configured
-- `JIRA_SERVICE_ACCOUNT_API_TOKEN` when `[connector.jira]` is configured
+- `ESA_ACCESS_TOKEN` when a `[connector.esa.connection.<name>]` is configured
+- `JIRA_SERVICE_ACCOUNT_API_TOKEN` when a `[connector.jira.connection.<name>]` is configured
+  (or the env var you name in that connection)
 - `LLM_OPENAI_API_KEY` when the selected backend uses `provider = "openai"`
 - `LLM_ANTHROPIC_API_KEY` when the selected backend uses `provider = "anthropic"`
 - The env var named by `api_key_env` (e.g. `LLM_BEDROCK_MANTLE_API_KEY`) when the selected backend
@@ -208,24 +210,33 @@ of raw GitHub MCP read tools to the GitHub agent. File reads are exposed through
 `read_file` wrapper that returns a bounded, line-numbered window (`offset`/`limit`) over the
 server-side `get_file_contents` tool, so large files are read incrementally instead of loading the
 whole file into context.
-GitHub App ID, installation ID, scope org, and MCP URL are configured in `reili.toml`.
+Datadog needs no connection table: without one, the defaults apply (`datadoghq.com`, `DATADOG_API_KEY`,
+`DATADOG_APP_KEY`). To change them, define `[connector.datadog.connection.<name>]`; with several
+connections, name the one the Datadog connector uses with `mcp_connection` in `[connector.datadog]`.
+GitHub connections are named tables, `[connector.github.connection.<name>]`, each holding one GitHub
+App installation, so other settings can pick one by name: `mcp_connection` in `[connector.github]`
+for the MCP connector and `connection` in `[work_state.github]` for Work State. Either may be
+omitted while only one connection is defined.
+Scope org and MCP URL are configured in `reili.toml` too.
 
 The Datadog integration talks to the Datadog-hosted MCP server and internally requests the
 `core,security,dashboards,synthetics` toolsets. Reili still exposes only an allowlisted read-only
 subset of those tools, including dashboard detail retrieval and Synthetic test reads when Datadog
 returns them for your plan and application key permissions.
 
-The optional esa integration is enabled only when `[connector.esa]` is present in `reili.toml`.
-Omit `[connector.esa]` to disable both.
+The optional esa integration is enabled only when a `[connector.esa.connection.<name>]` is defined in
+`reili.toml`; omit the connection tables to disable both. With several connections, name the one the esa
+sub-agent uses with `agent_connection` in `[connector.esa]`.
 
-The optional JIRA integration is enabled only when `[connector.jira]` is present in `reili.toml`.
-When configured, it talks to the Atlassian Rovo MCP server (`https://mcp.atlassian.com/v1/mcp`)
+The optional JIRA integration is enabled only when a `[connector.jira.connection.<name>]` is defined
+in `reili.toml`. While a single connection is defined it is used as is; with several, name the one
+the investigation sub-agent uses with `mcp_connection` in `[connector.jira]`. When configured, it talks to the Atlassian Rovo MCP server (`https://mcp.atlassian.com/v1/mcp`)
 using a service account API token, and exposes a small allowlisted set of read-only Jira MCP tools —
 JQL search, issue detail, remote issue links, and available workflow transitions — to spawned
 sub-agents. Which JIRA projects Reili can read is governed by the service account token's own
 permissions on the Atlassian side, not by Reili configuration. The configured `site` is stamped
 onto every call as the Atlassian `cloudId`, so a sub-agent can never target a different Atlassian
-site. Omit `[connector.jira]` to disable it.
+site. Omit the connection tables to disable it.
 
 The optional memory feature is enabled only when `[memory.slack]` is present in `reili.toml`. Reili
 stores reusable, durable investigation facts in a single shared Slack Canvas that you create
@@ -434,9 +445,11 @@ issues are the record.
 Replies from repository owners, members, and collaborators steer the next scheduled cycle. Reili
 highlights the latest team reply separately from progress history, carries decisions forward, and
 removes `reili:needs-decision` when it resumes work; the team does not need to remove it manually.
-No extra secret is needed by default: Work State reuses the `[connector.github.app]` credentials
-(install the App on that repository with Issues read & write), unless `[work_state.github]` names a
-separate App.
+Work State authenticates with one of the named `[connector.github.connection.<name>]` connections.
+While only one is defined, it is used as is: install its App on that repository with Issues read &
+write. To keep the read-only MCP App apart from the one that writes issues, define a second
+connection and select each by name with `mcp_connection` in `[connector.github]` and `connection`
+in `[work_state.github]`.
 Work State sits behind a backend-neutral port, so other trackers (for example JIRA) can be added
 as backends without changing the objective cycle.
 See [`config/default.toml`](./config/default.toml) for every objective setting.

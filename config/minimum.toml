@@ -26,6 +26,6 @@ model = "gpt-5.4"
 [connector.github]
 search_scope_org = "example-org"
 
-[connector.github.app]
+[connector.github.connection.default]
 app_id = "123456"
 installation_id = "12345678"

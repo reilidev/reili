@@ -14,7 +14,7 @@ This document is for contributors and maintainers of `Reili`.
   - AWS credentials for Amazon Bedrock
   - Google Application Default Credentials for Vertex AI
 - Optional: an esa access token with the `read` scope, only when the esa knowledge base
-  integration (`[connector.esa]`) is configured
+  integration (`[connector.esa.connection.<name>]`) is configured
 
 ## Repository Layout
 
@@ -53,9 +53,9 @@ Non-secret settings live in `reili.toml`, including:
 - Slack connection mode, channel opt-in, and actor authorization
 - AI backend selection (`default_backend` plus optional per-role `lead_backend`,
   `sub_agent_backend`, and `judge_backend`) and backend-specific non-secret settings
-- Datadog site
-- GitHub MCP URL, GitHub App ID, installation ID, and search scope org
-- esa team name when the `[connector.esa]` integration is configured
+- Datadog connections (`[connector.datadog.connection.<name>]`)
+- GitHub MCP URL and search scope org, plus named GitHub connections (`[connector.github.connection.<name>]`)
+- esa team name when a `[connector.esa.connection.<name>]` is configured
 
 3. Prepare local secrets:
 
@@ -71,7 +71,7 @@ Common required secrets:
 - `DATADOG_API_KEY`
 - `DATADOG_APP_KEY`
 - `GITHUB_APP_PRIVATE_KEY`
-- `ESA_ACCESS_TOKEN` when `[connector.esa]` is configured
+- `ESA_ACCESS_TOKEN` when a `[connector.esa.connection.<name>]` is configured
 
 Slack mode-specific secrets:
 

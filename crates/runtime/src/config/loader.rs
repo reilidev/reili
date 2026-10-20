@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 use super::ConfigError;
 use super::env::{EnvironmentReader, ProcessEnvironment, read_required_secret};
 use super::file::{
-    AiBackendFileConfig, AiFileConfig, FileConfig, SlackAuthorizationFileConfig,
-    SlackChannelFileConfig, SlackFileConfig, parse_file_config,
+    AiBackendFileConfig, AiFileConfig, DatadogConnectionFileConfig, FileConfig,
+    SlackAuthorizationFileConfig, SlackChannelFileConfig, SlackFileConfig, parse_file_config,
 };
+use super::github_connection::{GitHubConnectionReference, resolve_github_connection};
 use super::model::{
     AnthropicLlmConfig, AppConfig, BedrockAwsConfig, BedrockLlmConfig, BedrockMantleAuthConfig,
     BedrockMantleLlmConfig, EsaConfig, GitHubConfig, JiraConfig, JudgeProviderConfig, LlmConfig,
@@ -14,6 +15,7 @@ use super::model::{
     SlackAuthorizationConfig, SlackCanvasMemoryConfig, SlackChannelConfig, SlackConnectionMode,
     VertexAiLlmConfig, WebSearchProviderConfig,
 };
+use super::named_connector::{NamedSelection, select_named};
 use super::objective_loader::{resolve_objectives, resolve_work_state};
 use crate::config::SecretString;
 use reili_adapters::outbound::agents::BedrockMantleModelFamily;
@@ -124,6 +126,7 @@ fn resolve_app_config(
     };
     let web_search_llm =
         resolve_web_search_llm_provider(&file_config.ai, lead_id, lead_field, env)?;
+    let datadog = resolve_datadog_config(&file_config, env)?;
     let github = resolve_github_config(&file_config, env)?;
     let esa = resolve_esa_config(&file_config, env)?;
     let jira = resolve_jira_config(&file_config, env)?;
@@ -142,17 +145,9 @@ fn resolve_app_config(
         worker_concurrency: DEFAULT_WORKER_CONCURRENCY,
         job_max_retry: DEFAULT_JOB_MAX_RETRY,
         job_backoff_ms: DEFAULT_JOB_BACKOFF_MS,
-        datadog_api_key: read_required_secret(
-            env,
-            &file_config.connector.datadog.api_key_env,
-            "connector.datadog.api_key_env",
-        )?,
-        datadog_app_key: read_required_secret(
-            env,
-            &file_config.connector.datadog.app_key_env,
-            "connector.datadog.app_key_env",
-        )?,
-        datadog_site: file_config.connector.datadog.site,
+        datadog_api_key: datadog.api_key,
+        datadog_app_key: datadog.app_key,
+        datadog_site: datadog.site,
         llm: LlmConfig {
             provider: llm_provider,
         },
@@ -682,16 +677,62 @@ fn resolve_github_config(
     file_config: &FileConfig,
     env: &dyn EnvironmentReader,
 ) -> Result<GitHubConfig, ConfigError> {
+    let github = &file_config.connector.github;
+    let credentials = resolve_github_connection(
+        &GitHubConnectionReference {
+            connections: &github.connection,
+            selected: github.mcp_connection.as_deref(),
+            selector_field: "connector.github.mcp_connection",
+        },
+        env,
+    )?;
     Ok(GitHubConfig {
-        url: file_config.connector.github.mcp_url.clone(),
-        app_id: file_config.connector.github.app.app_id.clone(),
-        private_key: normalize_multiline_secret(read_required_secret(
+        url: github.mcp_url.clone(),
+        app_id: credentials.app_id,
+        private_key: credentials.private_key,
+        installation_id: credentials.installation_id,
+        scope_org: github.search_scope_org.clone(),
+    })
+}
+
+struct ResolvedDatadog {
+    site: String,
+    api_key: SecretString,
+    app_key: SecretString,
+}
+
+/// Datadog is always on: with no `[connector.datadog.connection.<name>]` and no `mcp_connection`, an
+/// connection with every default is used.
+fn resolve_datadog_config(
+    file_config: &FileConfig,
+    env: &dyn EnvironmentReader,
+) -> Result<ResolvedDatadog, ConfigError> {
+    let datadog = &file_config.connector.datadog;
+    let implicit_connection;
+    let (name, connection) = if datadog.connection.is_empty() && datadog.mcp_connection.is_none() {
+        implicit_connection = DatadogConnectionFileConfig::default();
+        ("default", &implicit_connection)
+    } else {
+        select_named(&NamedSelection {
+            instances: &datadog.connection,
+            selected: datadog.mcp_connection.as_deref(),
+            selector_field: "connector.datadog.mcp_connection",
+            kind: "Datadog connection",
+            table: "[connector.datadog.connection.<name>]",
+        })?
+    };
+    Ok(ResolvedDatadog {
+        site: connection.site.clone(),
+        api_key: read_required_secret(
             env,
-            &file_config.connector.github.app.private_key_env,
-            "connector.github.app.private_key_env",
-        )?),
-        installation_id: file_config.connector.github.app.installation_id,
-        scope_org: file_config.connector.github.search_scope_org.clone(),
+            &connection.api_key_env,
+            &format!("connector.datadog.connection.{name}.api_key_env"),
+        )?,
+        app_key: read_required_secret(
+            env,
+            &connection.app_key_env,
+            &format!("connector.datadog.connection.{name}.app_key_env"),
+        )?,
     })
 }
 
@@ -702,13 +743,23 @@ fn resolve_esa_config(
     let Some(esa) = file_config.connector.esa.as_ref() else {
         return Ok(None);
     };
+    if esa.connection.is_empty() && esa.agent_connection.is_none() {
+        return Ok(None);
+    }
 
+    let (name, connection) = select_named(&NamedSelection {
+        instances: &esa.connection,
+        selected: esa.agent_connection.as_deref(),
+        selector_field: "connector.esa.agent_connection",
+        kind: "esa connection",
+        table: "[connector.esa.connection.<name>]",
+    })?;
     Ok(Some(EsaConfig {
-        team_name: esa.team_name.clone(),
+        team_name: connection.team_name.clone(),
         access_token: read_required_secret(
             env,
-            &esa.access_token_env,
-            "connector.esa.access_token_env",
+            &connection.access_token_env,
+            &format!("connector.esa.connection.{name}.access_token_env"),
         )?,
     }))
 }
@@ -720,13 +771,23 @@ fn resolve_jira_config(
     let Some(jira) = file_config.connector.jira.as_ref() else {
         return Ok(None);
     };
+    if jira.connection.is_empty() && jira.mcp_connection.is_none() {
+        return Ok(None);
+    }
 
+    let (name, connection) = select_named(&NamedSelection {
+        instances: &jira.connection,
+        selected: jira.mcp_connection.as_deref(),
+        selector_field: "connector.jira.mcp_connection",
+        kind: "Jira connection",
+        table: "[connector.jira.connection.<name>]",
+    })?;
     Ok(Some(JiraConfig {
-        site: jira.site.clone(),
+        site: connection.site.clone(),
         service_account_api_token: read_required_secret(
             env,
-            &jira.service_account_api_token_env,
-            "connector.jira.service_account_api_token_env",
+            &connection.service_account_api_token_env,
+            &format!("connector.jira.connection.{name}.service_account_api_token_env"),
         )?,
     }))
 }
@@ -756,10 +817,6 @@ fn resolve_otlp_tracing_config(file_config: &FileConfig) -> Option<OtlpTracingCo
                 .clone()
                 .unwrap_or_else(|| DEFAULT_OTEL_SERVICE_NAME.to_string()),
         })
-}
-
-fn normalize_multiline_secret(secret: SecretString) -> SecretString {
-    SecretString::new(secret.expose().replace("\\n", "\n"))
 }
 
 fn optional_trimmed(value: Option<&str>) -> Option<String> {
@@ -824,7 +881,7 @@ mod tests {
                 ),
                 (
                     "JIRA_SERVICE_ACCOUNT_API_TOKEN".to_string(),
-                    "jira-service-account-token".to_string(),
+                    "jira-service-connection-token".to_string(),
                 ),
             ]);
 
@@ -1156,11 +1213,11 @@ mod tests {
     #[test]
     fn rejects_unsupported_inactive_backend_provider_at_parse_time() {
         let toml = valid_openai_config().replace(
-            "[connector.datadog]\n",
+            "[connector.datadog.connection.default]\n",
             r#"[ai.backends.unused]
 provider = "unsupported-provider"
 
-[connector.datadog]
+[connector.datadog.connection.default]
 "#,
         );
 
@@ -1554,12 +1611,188 @@ auto_response_policy = "React to incidents."
         );
     }
 
+    fn with_connector_tables(tables: &str) -> String {
+        valid_openai_config().replace("[ai]\n", &format!("{tables}\n[ai]\n"))
+    }
+
+    const TWO_DATADOG_CONNECTIONS: &str = r#"[connector.datadog]
+mcp_connection = "reader"
+
+[connector.datadog.connection.reader]
+site = "ap1.datadoghq.com"
+api_key_env = "DATADOG_READER_API_KEY"
+app_key_env = "DATADOG_READER_APP_KEY"
+
+[connector.datadog.connection.other]
+site = "datadoghq.eu"
+api_key_env = "DATADOG_OTHER_API_KEY"
+app_key_env = "DATADOG_OTHER_APP_KEY"
+"#;
+
+    #[test]
+    fn datadog_connector_uses_the_connection_named_by_mcp_connection() {
+        let toml = valid_openai_config().replace(
+            "[connector.datadog.connection.default]\nsite = \"datadoghq.com\"\napi_key_env = \"DATADOG_API_KEY\"\napp_key_env = \"DATADOG_APP_KEY\"\n\n",
+            "",
+        );
+        let toml = toml.replace("[ai]\n", &format!("{TWO_DATADOG_CONNECTIONS}\n[ai]\n"));
+        let env = FixedEnvironment::with_overrides(&[
+            ("DATADOG_READER_API_KEY", "reader-api"),
+            ("DATADOG_READER_APP_KEY", "reader-app"),
+        ]);
+
+        let config = resolve_app_config(parse_runtime_config(&toml), &env)
+            .expect("the other connection's keys are never read without a selector");
+
+        assert_eq!(config.datadog_site, "ap1.datadoghq.com");
+        assert_eq!(config.datadog_api_key.expose(), "reader-api");
+        assert_eq!(config.datadog_app_key.expose(), "reader-app");
+    }
+
+    #[test]
+    fn requires_naming_the_mcp_connection_when_several_datadog_connections_are_defined() {
+        let toml = valid_openai_config()
+            .replace(
+                "[connector.datadog.connection.default]\nsite = \"datadoghq.com\"\napi_key_env = \"DATADOG_API_KEY\"\napp_key_env = \"DATADOG_APP_KEY\"\n\n",
+                "",
+            )
+            .replace(
+                "[ai]\n",
+                &format!("{}\n[ai]\n", TWO_DATADOG_CONNECTIONS.replace("mcp_connection = \"reader\"\n", "")),
+            );
+        let env = FixedEnvironment::with_overrides(&[]);
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &env)
+            .expect_err("ambiguous datadog connection must fail");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("connector.datadog.mcp_connection"),
+            "{message}"
+        );
+        assert!(message.contains("`other`, `reader`"), "{message}");
+    }
+
+    #[test]
+    fn rejects_a_datadog_mcp_connection_that_is_not_defined() {
+        let toml = valid_openai_config().replace(
+            "[ai]\n",
+            "[connector.datadog]\nmcp_connection = \"reader\"\n\n[ai]\n",
+        );
+        let env = FixedEnvironment::with_overrides(&[]);
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &env)
+            .expect_err("unknown datadog connection must fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("unknown Datadog connection `reader`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn datadog_defaults_apply_without_any_connection_table() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml = valid_openai_config().replace(
+            "[connector.datadog.connection.default]\nsite = \"datadoghq.com\"\napi_key_env = \"DATADOG_API_KEY\"\napp_key_env = \"DATADOG_APP_KEY\"\n\n",
+            "[connector.datadog]\n\n",
+        );
+
+        let config = resolve_app_config(parse_runtime_config(&toml), &env).expect("resolve");
+
+        assert_eq!(config.datadog_site, "datadoghq.com");
+        assert_eq!(config.datadog_api_key.expose(), "dd-api-key");
+        assert_eq!(config.datadog_app_key.expose(), "dd-app-key");
+    }
+
+    #[test]
+    fn reports_the_datadog_connection_in_a_missing_env_field() {
+        let env = FixedEnvironment::with_overrides(&[("DATADOG_APP_KEY", "")]);
+        let toml = valid_openai_config().replace(
+            "[connector.datadog.connection.default]\nsite = \"datadoghq.com\"\napi_key_env = \"DATADOG_API_KEY\"\napp_key_env = \"DATADOG_APP_KEY\"\n\n",
+            "",
+        );
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &env)
+            .expect_err("missing datadog app key must fail");
+
+        match error {
+            ConfigError::MissingRequiredEnv { env, field } => {
+                assert_eq!(env, "DATADOG_APP_KEY");
+                assert_eq!(field, "connector.datadog.connection.default.app_key_env");
+            }
+            other => panic!("expected missing-env error, got {other}"),
+        }
+    }
+
+    const TWO_ESA_CONNECTIONS: &str = r#"[connector.esa]
+agent_connection = "docs"
+
+[connector.esa.connection.docs]
+team_name = "docs"
+access_token_env = "ESA_DOCS_ACCESS_TOKEN"
+
+[connector.esa.connection.wiki]
+team_name = "wiki"
+access_token_env = "ESA_WIKI_ACCESS_TOKEN"
+"#;
+
+    #[test]
+    fn esa_connector_uses_the_connection_named_by_agent_connection() {
+        let env = FixedEnvironment::with_overrides(&[("ESA_DOCS_ACCESS_TOKEN", "docs-token")]);
+
+        let config = resolve_app_config(
+            parse_runtime_config(&with_connector_tables(TWO_ESA_CONNECTIONS)),
+            &env,
+        )
+        .expect("the wiki connection's token is never read without a selector");
+
+        let esa = config.esa.expect("esa config");
+        assert_eq!(esa.team_name, "docs");
+        assert_eq!(esa.access_token.expose(), "docs-token");
+    }
+
+    #[test]
+    fn requires_naming_the_agent_connection_when_several_esa_connections_are_defined() {
+        let toml = with_connector_tables(
+            &TWO_ESA_CONNECTIONS.replace("agent_connection = \"docs\"\n", ""),
+        );
+
+        let error = resolve_app_config(
+            parse_runtime_config(&toml),
+            &FixedEnvironment::with_overrides(&[]),
+        )
+        .expect_err("ambiguous esa connection must fail");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("connector.esa.agent_connection"),
+            "{message}"
+        );
+        assert!(message.contains("`docs`, `wiki`"), "{message}");
+    }
+
+    #[test]
+    fn omits_esa_connector_when_no_connection_is_defined() {
+        let env = FixedEnvironment::with_overrides(&[("ESA_ACCESS_TOKEN", "")]);
+
+        let config = resolve_app_config(
+            parse_runtime_config(&with_connector_tables("[connector.esa]\n")),
+            &env,
+        )
+        .expect("resolve config");
+
+        assert!(config.esa.is_none());
+    }
+
     #[test]
     fn resolves_optional_esa_connector_when_configured() {
         let env = FixedEnvironment::with_overrides(&[]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "[ai]\n",
-            r#"[connector.esa]
+            r#"[connector.esa.connection.default]
 team_name = "docs"
 access_token_env = "ESA_ACCESS_TOKEN"
 
@@ -1589,7 +1822,7 @@ access_token_env = "ESA_ACCESS_TOKEN"
         let env = FixedEnvironment::with_overrides(&[]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "[ai]\n",
-            r#"[connector.esa]
+            r#"[connector.esa.connection.default]
 team_name = "docs"
 
 [ai]
@@ -1609,7 +1842,7 @@ team_name = "docs"
         let env = FixedEnvironment::with_overrides(&[("ESA_ACCESS_TOKEN", "")]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "[ai]\n",
-            r#"[connector.esa]
+            r#"[connector.esa.connection.default]
 team_name = "docs"
 
 [ai]
@@ -1622,10 +1855,82 @@ team_name = "docs"
         match error {
             ConfigError::MissingRequiredEnv { env, field } => {
                 assert_eq!(env, "ESA_ACCESS_TOKEN");
-                assert_eq!(field, "connector.esa.access_token_env");
+                assert_eq!(field, "connector.esa.connection.default.access_token_env");
             }
             other => panic!("expected missing-env error, got {other}"),
         }
+    }
+
+    fn with_jira_connections(connections: &str) -> String {
+        valid_openai_config().replace("[ai]\n", &format!("{connections}\n[ai]\n"))
+    }
+
+    const TWO_JIRA_CONNECTIONS: &str = r#"[connector.jira]
+mcp_connection = "reader"
+
+[connector.jira.connection.reader]
+site = "acme.atlassian.net"
+service_account_api_token_env = "JIRA_READER_API_TOKEN"
+
+[connector.jira.connection.work_state]
+site = "work.atlassian.net"
+service_account_api_token_env = "JIRA_WORK_STATE_API_TOKEN"
+"#;
+
+    #[test]
+    fn jira_connector_uses_the_connection_named_by_mcp_connection() {
+        let env = FixedEnvironment::with_overrides(&[("JIRA_READER_API_TOKEN", "reader-token")]);
+        let file_config = parse_runtime_config(&with_jira_connections(TWO_JIRA_CONNECTIONS));
+
+        let config = resolve_app_config(file_config, &env)
+            .expect("the work_state connection's token is never read without a selector");
+
+        let jira = config.jira.expect("jira config");
+        assert_eq!(jira.site, "acme.atlassian.net");
+        assert_eq!(jira.service_account_api_token.expose(), "reader-token");
+    }
+
+    #[test]
+    fn requires_naming_the_mcp_connection_when_several_jira_connections_are_defined() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml = with_jira_connections(TWO_JIRA_CONNECTIONS)
+            .replace("mcp_connection = \"reader\"\n", "");
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &env)
+            .expect_err("ambiguous jira connection must fail");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("connector.jira.mcp_connection"),
+            "{message}"
+        );
+        assert!(message.contains("`reader`, `work_state`"), "{message}");
+    }
+
+    #[test]
+    fn rejects_an_mcp_connection_that_is_not_defined() {
+        let env = FixedEnvironment::with_overrides(&[]);
+        let toml =
+            with_jira_connections(TWO_JIRA_CONNECTIONS).replace("\"reader\"\n\n", "\"writer\"\n\n");
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &env)
+            .expect_err("unknown jira connection must fail");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("unknown Jira connection `writer`"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn omits_jira_connector_when_no_connection_is_defined() {
+        let env = FixedEnvironment::with_overrides(&[("JIRA_SERVICE_ACCOUNT_API_TOKEN", "")]);
+        let file_config = parse_runtime_config(&with_jira_connections("[connector.jira]\n"));
+
+        let config = resolve_app_config(file_config, &env).expect("resolve config");
+
+        assert!(config.jira.is_none());
     }
 
     #[test]
@@ -1633,7 +1938,7 @@ team_name = "docs"
         let env = FixedEnvironment::with_overrides(&[]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "[ai]\n",
-            r#"[connector.jira]
+            r#"[connector.jira.connection.default]
 site = "acme.atlassian.net"
 service_account_api_token_env = "JIRA_SERVICE_ACCOUNT_API_TOKEN"
 
@@ -1647,7 +1952,7 @@ service_account_api_token_env = "JIRA_SERVICE_ACCOUNT_API_TOKEN"
         assert_eq!(jira.site, "acme.atlassian.net");
         assert_eq!(
             jira.service_account_api_token.expose(),
-            "jira-service-account-token"
+            "jira-service-connection-token"
         );
     }
 
@@ -1666,7 +1971,7 @@ service_account_api_token_env = "JIRA_SERVICE_ACCOUNT_API_TOKEN"
         let env = FixedEnvironment::with_overrides(&[]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "[ai]\n",
-            r#"[connector.jira]
+            r#"[connector.jira.connection.default]
 site = "acme.atlassian.net"
 
 [ai]
@@ -1681,7 +1986,7 @@ site = "acme.atlassian.net"
                 .expect("jira config")
                 .service_account_api_token
                 .expose(),
-            "jira-service-account-token"
+            "jira-service-connection-token"
         );
     }
 
@@ -1690,7 +1995,7 @@ site = "acme.atlassian.net"
         let env = FixedEnvironment::with_overrides(&[("JIRA_SERVICE_ACCOUNT_API_TOKEN", "")]);
         let file_config = parse_runtime_config(&valid_openai_config().replace(
             "[ai]\n",
-            r#"[connector.jira]
+            r#"[connector.jira.connection.default]
 site = "acme.atlassian.net"
 
 [ai]
@@ -1703,7 +2008,10 @@ site = "acme.atlassian.net"
         match error {
             ConfigError::MissingRequiredEnv { env, field } => {
                 assert_eq!(env, "JIRA_SERVICE_ACCOUNT_API_TOKEN");
-                assert_eq!(field, "connector.jira.service_account_api_token_env");
+                assert_eq!(
+                    field,
+                    "connector.jira.connection.default.service_account_api_token_env"
+                );
             }
             other => panic!("expected missing-env error, got {other}"),
         }
@@ -1746,7 +2054,7 @@ provider = "openai"
 model = "gpt-5.3-codex"
 api_key_env = "LLM_OPENAI_API_KEY"
 
-[connector.datadog]
+[connector.datadog.connection.default]
 site = "datadoghq.com"
 api_key_env = "DATADOG_API_KEY"
 app_key_env = "DATADOG_APP_KEY"
@@ -1755,7 +2063,7 @@ app_key_env = "DATADOG_APP_KEY"
 mcp_url = "https://api.githubcopilot.com/mcp/"
 search_scope_org = "example-org"
 
-[connector.github.app]
+[connector.github.connection.default]
 app_id = "12345"
 installation_id = "67890"
 private_key_env = "GITHUB_APP_PRIVATE_KEY"
@@ -1783,7 +2091,7 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
                 .replace("[channel.slack.socket]\napp_token_env = \"SLACK_APP_TOKEN\"\n\n", "")
                 .replacen("api_key_env = \"LLM_OPENAI_API_KEY\"\n", "", 1)
                 .replace(
-                    "[connector.datadog]\nsite = \"datadoghq.com\"\napi_key_env = \"DATADOG_API_KEY\"\napp_key_env = \"DATADOG_APP_KEY\"\n\n",
+                    "[connector.datadog.connection.default]\nsite = \"datadoghq.com\"\napi_key_env = \"DATADOG_API_KEY\"\napp_key_env = \"DATADOG_APP_KEY\"\n\n",
                     "",
                 )
                 .replace("site = \"datadoghq.com\"\n", "")
@@ -2503,7 +2811,7 @@ provider = "anthropic"
 model = "claude-haiku-4-5"
 api_key_env = "LLM_ANTHROPIC_API_KEY"
 
-[connector.datadog]
+[connector.datadog.connection.default]
 site = "datadoghq.com"
 api_key_env = "DATADOG_API_KEY"
 app_key_env = "DATADOG_APP_KEY"
@@ -2512,7 +2820,7 @@ app_key_env = "DATADOG_APP_KEY"
 mcp_url = "https://api.githubcopilot.com/mcp/"
 search_scope_org = "example-org"
 
-[connector.github.app]
+[connector.github.connection.default]
 app_id = "12345"
 installation_id = "67890"
 private_key_env = "GITHUB_APP_PRIVATE_KEY"
@@ -2557,7 +2865,7 @@ bot_token_env = "SLACK_BOT_TOKEN"
 app_token_env = "SLACK_APP_TOKEN"
 
 {ai_block}
-[connector.datadog]
+[connector.datadog.connection.default]
 site = "datadoghq.com"
 api_key_env = "DATADOG_API_KEY"
 app_key_env = "DATADOG_APP_KEY"
@@ -2566,7 +2874,7 @@ app_key_env = "DATADOG_APP_KEY"
 mcp_url = "https://api.githubcopilot.com/mcp/"
 search_scope_org = "example-org"
 
-[connector.github.app]
+[connector.github.connection.default]
 app_id = "12345"
 installation_id = "67890"
 private_key_env = "GITHUB_APP_PRIVATE_KEY"
@@ -2745,6 +3053,170 @@ max_llm_tokens_per_cycle = 400000
         let error = resolve_app_config(parse_runtime_config(&toml), &env).expect_err("missing");
 
         assert!(error.to_string().contains("work_state.github"));
+    }
+
+    fn with_separate_work_state_connection(toml: &str) -> String {
+        toml.replace(
+            "search_scope_org = \"example-org\"\n",
+            "search_scope_org = \"example-org\"\nmcp_connection = \"reader\"\n",
+        )
+        .replace(
+            "[connector.github.connection.default]",
+            "[connector.github.connection.reader]",
+        ) + r#"
+[connector.github.connection.work_state]
+app_id = "99999"
+installation_id = "4242"
+private_key_env = "WORK_STATE_APP_PRIVATE_KEY"
+"#
+    }
+
+    fn work_state_environment() -> FixedEnvironment {
+        FixedEnvironment::with_overrides(&[("WORK_STATE_APP_PRIVATE_KEY", "work-state-key")])
+    }
+
+    #[test]
+    fn work_state_authenticates_with_its_own_named_github_connection() {
+        let toml = with_separate_work_state_connection(&format!(
+            "{}\n{}",
+            valid_openai_config(),
+            OBJECTIVE_TOML.replace(
+                "repository = \"example-org/reili-work\"\n",
+                "repository = \"example-org/reili-work\"\nconnection = \"work_state\"\n"
+            )
+        ));
+
+        let config = resolve_app_config(parse_runtime_config(&toml), &work_state_environment())
+            .expect("resolve");
+
+        assert_eq!(config.github.app_id, "12345");
+        assert_eq!(config.github.installation_id, 67890);
+        assert!(config.github.private_key.expose().contains("BEGIN RSA"));
+        let Some(WorkStateConfig::GitHub(work_state)) = config.work_state else {
+            panic!("expected the GitHub work state backend");
+        };
+        assert_eq!(work_state.app_id, "99999");
+        assert_eq!(work_state.installation_id, 4242);
+        assert_eq!(work_state.private_key.expose(), "work-state-key");
+    }
+
+    #[test]
+    fn work_state_defaults_to_the_only_github_connection() {
+        let toml = format!("{}\n{OBJECTIVE_TOML}", valid_openai_config());
+
+        let config = resolve_app_config(
+            parse_runtime_config(&toml),
+            &FixedEnvironment::with_overrides(&[]),
+        )
+        .expect("resolve");
+
+        let Some(WorkStateConfig::GitHub(work_state)) = config.work_state else {
+            panic!("expected the GitHub work state backend");
+        };
+        assert_eq!(work_state.app_id, config.github.app_id);
+        assert_eq!(
+            work_state.private_key.expose(),
+            config.github.private_key.expose()
+        );
+    }
+
+    #[test]
+    fn rejects_a_config_without_any_github_connection() {
+        let toml = valid_openai_config().replace(
+            "[connector.github.connection.default]\napp_id = \"12345\"\ninstallation_id = \"67890\"\nprivate_key_env = \"GITHUB_APP_PRIVATE_KEY\"\n",
+            "",
+        );
+
+        let error = resolve_app_config(
+            parse_runtime_config(&toml),
+            &FixedEnvironment::with_overrides(&[]),
+        )
+        .expect_err("a GitHub connection is required");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("connector.github.mcp_connection"),
+            "{message}"
+        );
+        assert!(
+            message.contains(
+                "no GitHub connection is defined in [connector.github.connection.<name>]"
+            ),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn requires_naming_the_mcp_connection_when_several_github_connections_are_defined() {
+        let toml = with_separate_work_state_connection(&valid_openai_config())
+            .replace("mcp_connection = \"reader\"\n", "");
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &work_state_environment())
+            .expect_err("ambiguous mcp connection must fail");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("connector.github.mcp_connection"),
+            "{message}"
+        );
+        assert!(message.contains("`reader`, `work_state`"), "{message}");
+    }
+
+    #[test]
+    fn requires_naming_the_work_state_connection_when_several_github_connections_are_defined() {
+        let toml = with_separate_work_state_connection(&format!(
+            "{}\n{OBJECTIVE_TOML}",
+            valid_openai_config()
+        ));
+
+        let error = resolve_app_config(parse_runtime_config(&toml), &work_state_environment())
+            .expect_err("ambiguous work state connection must fail");
+
+        assert!(
+            error.to_string().contains("work_state.github.connection"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_work_state_connection_that_is_not_defined() {
+        let toml = format!(
+            "{}\n{}",
+            valid_openai_config(),
+            OBJECTIVE_TOML.replace(
+                "repository = \"example-org/reili-work\"\n",
+                "repository = \"example-org/reili-work\"\nconnection = \"writer\"\n"
+            )
+        );
+
+        let error = resolve_app_config(
+            parse_runtime_config(&toml),
+            &FixedEnvironment::with_overrides(&[]),
+        )
+        .expect_err("unknown work state connection must fail");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("work_state.github.connection"),
+            "{message}"
+        );
+        assert!(
+            message.contains("unknown GitHub connection `writer`"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn does_not_read_the_private_key_of_an_unselected_github_connection() {
+        let toml = with_separate_work_state_connection(&valid_openai_config());
+
+        let config = resolve_app_config(
+            parse_runtime_config(&toml),
+            &FixedEnvironment::with_overrides(&[]),
+        )
+        .expect("work_state connection's private key is never read without objectives");
+
+        assert_eq!(config.github.app_id, "12345");
     }
 
     #[test]
