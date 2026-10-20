@@ -168,6 +168,13 @@ api_key_env = "LLM_OPENAI_API_KEY"
 
 # Reili integrations that require credentials or access to external services.
 [connector.datadog]
+# Optional while at most one Datadog connection is defined below: name of the connection the Datadog
+# MCP connector uses. With no connection table, a connection with all the defaults below is used.
+#mcp_connection = "default"
+
+# Datadog connections Reili authenticates with. The table name after `connection.` is arbitrary; other
+# settings (`mcp_connection` above) select a connection by that name.
+[connector.datadog.connection.default]
 # Optional: Datadog site for API access. Defaults to `datadoghq.com`.
 site = "datadoghq.com"
 # Optional: env var name for the Datadog API key. Defaults to `DATADOG_API_KEY`.
@@ -180,9 +187,13 @@ app_key_env = "DATADOG_APP_KEY"
 mcp_url = "https://api.githubcopilot.com/mcp/"
 # Required: GitHub organization scope Reili searches within.
 search_scope_org = "example-org"
+# Optional while a single connection is defined below: name of the connection the MCP connector uses.
+#mcp_connection = "default"
 
-# GitHub App settings used so Reili can authenticate via GitHub App.
-[connector.github.app]
+# GitHub connections, each one GitHub App installation Reili authenticates with. The table name after
+# `connection.` is arbitrary; other settings (`mcp_connection` above, `connection` in
+# [work_state.github]) select a connection by that name. Define at least one.
+[connector.github.connection.default]
 # Required: GitHub App ID.
 app_id = "123456"
 # Required: GitHub App installation ID.
@@ -190,18 +201,38 @@ installation_id = "12345678"
 # Optional: env var name for the GitHub App private key. Defaults to `GITHUB_APP_PRIVATE_KEY`.
 private_key_env = "GITHUB_APP_PRIVATE_KEY"
 
-# Optional: esa knowledge base search. Omit this section to disable the `esa_agent` sub-agent and its tools.
+# Optional: a second connection, e.g. an App that may write issues in the Work State repository while
+# the App above stays read-only. Only the env vars of connections that something selects are read.
+#[connector.github.connection.work_state]
+#app_id = "234567"
+#installation_id = "23456789"
+#private_key_env = "GITHUB_WORK_STATE_APP_PRIVATE_KEY"
+
+# Optional: esa knowledge base search. Omit the connection tables to disable the `esa_agent` sub-agent
+# and its tools.
 #[connector.esa]
+# Optional while a single connection is defined below: name of the connection the esa sub-agent uses.
+#agent_connection = "default"
+
+# esa teams Reili reads from. The table name after `connection.` is arbitrary; other settings
+# (`agent_connection` above) select a connection by that name.
+#[connector.esa.connection.default]
 # Required when configured: esa team name, e.g. `docs` for https://docs.esa.io/.
 #team_name = "docs"
 # Optional when configured: env var name for an esa access token with the `read` scope.
 # Defaults to `ESA_ACCESS_TOKEN`.
 #access_token_env = "ESA_ACCESS_TOKEN"
 
-# Optional: JIRA ticket search and reference via the Atlassian Rovo MCP server. Omit this section
-# to disable the JIRA sub-agent and its tools. Requires an org admin to enable "Authentication via
-# API token" for the Rovo MCP server and to issue a service account API token.
+# Optional: JIRA ticket search and reference via the Atlassian Rovo MCP server. Omit the connection
+# tables to disable the JIRA sub-agent and its tools. Requires an org admin to enable
+# "Authentication via API token" for the Rovo MCP server and to issue a service account API token.
 #[connector.jira]
+# Optional while a single connection is defined below: name of the connection the JIRA sub-agent uses.
+#mcp_connection = "default"
+
+# JIRA connections Reili authenticates with. The table name after `connection.` is arbitrary; other
+# settings (`mcp_connection` above) select a connection by that name.
+#[connector.jira.connection.default]
 # Required when configured: Atlassian Cloud site hostname, e.g. `acme.atlassian.net`.
 #site = "acme.atlassian.net"
 # Optional when configured: env var name for the Rovo MCP service account API token. Defaults to
@@ -224,11 +255,10 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
 #[work_state.github]
 # Required when any [[objectives]] entry exists: `owner/name` of the dedicated Work State repository.
 #repository = "example-org/reili-work"
-# Optional: App credentials default to [connector.github.app]. Install the App on this repository
-# with Issues (read & write) and Metadata (read). Tokens are always down-scoped to this repository.
-#app_id = "123456"
-#installation_id = "12345678"
-#private_key_env = "GITHUB_WORK_STATE_APP_PRIVATE_KEY"
+# Optional while a single connection is defined: name of the [connector.github.connection.<name>] to
+# authenticate with. Install that App on this repository with Issues (read & write) and Metadata
+# (read). Tokens are always down-scoped to this repository.
+#connection = "default"
 # Optional: GitHub Enterprise Server endpoints.
 #api_base_url = "https://api.github.com"
 #web_base_url = "https://github.com"

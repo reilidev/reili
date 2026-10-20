@@ -29,8 +29,8 @@ The runtime can expose only the following tool families:
 - GitHub MCP reads: `search_code`, `search_repositories`, `search_issues`,
   `search_pull_requests`, `get_file_contents`, `pull_request_read`, `actions_get`,
   `actions_list`, `get_job_logs`, `get_dependabot_alert`, `list_dependabot_alerts`
-- esa sub-agent delegation when `[connector.esa]` is configured: `esa_agent`
-- JIRA MCP reads when `[connector.jira]` is configured: `searchJiraIssuesUsingJql`,
+- esa sub-agent delegation when a `[connector.esa.connection.<name>]` is configured: `esa_agent`
+- JIRA MCP reads when a `[connector.jira.connection.<name>]` is configured: `searchJiraIssuesUsingJql`,
   `getJiraIssue`, `getJiraIssueRemoteIssueLinks`, `getTransitionsForJiraIssue`
 - External web lookup: `search_web`
 - Objective cycles only: `submit_cycle_report` (hands the structured report back to Reili;
@@ -153,6 +153,10 @@ Required Datadog credentials:
 - `DATADOG_APP_KEY`: sent as `DD_APPLICATION_KEY`; this is the credential that carries the Datadog RBAC permissions
   listed below
 - `DATADOG_SITE`: controls the Datadog hostname such as `datadoghq.com`
+
+These are the defaults of a connection; set `site`, `api_key_env`, and `app_key_env` in
+`[connector.datadog.connection.<name>]` to change them. With several connections, `mcp_connection` in
+`[connector.datadog]` names the one the Datadog connector uses; only that connection's keys are read.
 
 Required Datadog permissions:
 
@@ -285,6 +289,9 @@ GitHub Work State (`[work_state.github]`):
   App installation is broader
   ([create an installation access token](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app))
 - Required App permissions on that repository: **Issues** (read & write) and **Metadata** (read)
+- The App is the one behind the `[connector.github.connection.<name>]` that
+  `[work_state.github].connection` selects (the only one defined when `connection` is omitted).
+  Defining a second connection for Work State keeps the App behind the GitHub MCP connector read-only
 - Endpoints: `GET/POST /repos/{owner}/{repo}/issues`, `PATCH /repos/{owner}/{repo}/issues/{n}`
   (closing items Reili opened), `GET/POST /repos/{owner}/{repo}/issues/{n}/comments`,
   `POST /repos/{owner}/{repo}/issues/{n}/labels`, `DELETE /repos/{owner}/{repo}/issues/{n}/labels/{name}`
@@ -310,9 +317,10 @@ Restrictions:
 ## esa Permissions and Scope
 
 Reili can optionally search and read an esa team's posts as an internal documentation source.
-This integration is disabled unless `[connector.esa]` is present in `reili.toml`. When the section
-is omitted, Reili does not read `ESA_ACCESS_TOKEN` and does not register `esa_agent`,
-`search_posts`, or `get_post`.
+This integration is disabled unless a `[connector.esa.connection.<name>]` is defined in `reili.toml`.
+When no connection is defined, Reili does not read any esa token and does not register `esa_agent`,
+`search_posts`, or `get_post`. With several connections, `agent_connection` in `[connector.esa]` names
+the one the esa agent uses; only that connection's token is read.
 
 Required esa credential when configured:
 
@@ -320,8 +328,10 @@ Required esa credential when configured:
 
 Required `reili.toml` fields when configured:
 
-- `connector.esa.team_name`: esa team name, e.g. `docs` for `https://docs.esa.io/`
-- `connector.esa.access_token_env`: optional env var name; defaults to `ESA_ACCESS_TOKEN`
+- `connector.esa.connection.<name>.team_name`: esa team name, e.g. `docs` for `https://docs.esa.io/`
+- `connector.esa.connection.<name>.access_token_env`: optional env var name; defaults to
+  `ESA_ACCESS_TOKEN`
+- `connector.esa.agent_connection`: optional while a single connection is defined
 
 esa API endpoints currently used by the runtime:
 
@@ -347,8 +357,10 @@ esa restrictions:
 ## JIRA Permissions and Scope
 
 Reili can optionally search and reference JIRA tickets through the Atlassian Rovo MCP server.
-This integration is disabled unless `[connector.jira]` is present in `reili.toml`. When the section
-is omitted, Reili does not read `JIRA_SERVICE_ACCOUNT_API_TOKEN` and does not register any JIRA tools.
+This integration is disabled unless a `[connector.jira.connection.<name>]` is defined in `reili.toml`.
+When no connection is defined, Reili does not read any JIRA token and does not register any JIRA tools.
+With several connections, `mcp_connection` in `[connector.jira]` names the one the JIRA agent uses; only
+that connection's token is read.
 
 Runtime authentication model:
 
@@ -388,9 +400,10 @@ results.
 
 Required `reili.toml` fields when configured:
 
-- `connector.jira.site`: Atlassian Cloud site hostname, e.g. `acme.atlassian.net`
-- `connector.jira.service_account_api_token_env`: optional env var name; defaults to
+- `connector.jira.connection.<name>.site`: Atlassian Cloud site hostname, e.g. `acme.atlassian.net`
+- `connector.jira.connection.<name>.service_account_api_token_env`: optional env var name; defaults to
   `JIRA_SERVICE_ACCOUNT_API_TOKEN`
+- `connector.jira.mcp_connection`: optional while a single connection is defined
 
 JIRA capabilities currently used by the runtime:
 

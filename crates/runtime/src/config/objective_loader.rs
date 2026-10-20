@@ -5,11 +5,11 @@ use reili_core::objective::{ObjectiveBudget, ObjectiveDefinition, ObjectiveId, O
 use reili_core::work::RepositoryName;
 
 use super::ConfigError;
-use super::env::{EnvironmentReader, read_required_secret};
+use super::env::EnvironmentReader;
 use super::file::FileConfig;
+use super::github_connection::{GitHubConnectionReference, resolve_github_connection};
 use super::model::{GitHubWorkStateBackendConfig, WorkStateConfig};
 use super::objective_file::{ObjectiveFileConfig, WorkStateFileConfig, WorkStateGitHubFileConfig};
-use crate::config::SecretString;
 
 const DEFAULT_GITHUB_API_BASE_URL: &str = "https://api.github.com";
 const DEFAULT_GITHUB_WEB_BASE_URL: &str = "https://github.com";
@@ -52,46 +52,19 @@ fn resolve_github_work_state(
             "must be `owner/name` of the repository the team tracks its work in",
         )
     })?;
-    let app = &file_config.connector.github.app;
-    let installation_id = match github.installation_id.as_deref() {
-        Some(value) => value
-            .trim()
-            .parse::<u32>()
-            .ok()
-            .filter(|id| *id > 0)
-            .ok_or_else(|| {
-                invalid(
-                    "work_state.github.installation_id",
-                    "must be a positive integer string",
-                )
-            })?,
-        None => app.installation_id,
-    };
-    let app_id = match github.app_id.as_deref() {
-        Some(value) if value.trim().parse::<u64>().is_ok_and(|id| id > 0) => {
-            value.trim().to_string()
-        }
-        Some(_) => {
-            return Err(invalid(
-                "work_state.github.app_id",
-                "must be a positive integer string",
-            ));
-        }
-        None => app.app_id.clone(),
-    };
-    let (private_key_env, field) = match github.private_key_env.as_deref() {
-        Some(env_name) => (env_name.to_string(), "work_state.github.private_key_env"),
-        None => (
-            app.private_key_env.clone(),
-            "connector.github.app.private_key_env",
-        ),
-    };
-    let private_key = read_required_secret(env, &private_key_env, field)?;
+    let credentials = resolve_github_connection(
+        &GitHubConnectionReference {
+            connections: &file_config.connector.github.connection,
+            selected: github.connection.as_deref(),
+            selector_field: "work_state.github.connection",
+        },
+        env,
+    )?;
     Ok(GitHubWorkStateBackendConfig {
         repository,
-        app_id,
-        installation_id,
-        private_key: SecretString::new(private_key.expose().replace("\\n", "\n")),
+        app_id: credentials.app_id,
+        installation_id: credentials.installation_id,
+        private_key: credentials.private_key,
         api_base_url: github
             .api_base_url
             .clone()

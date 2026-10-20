@@ -1,5 +1,7 @@
 use serde::Deserialize;
 
+use super::file::optional_non_empty_string;
+
 fn default_true() -> bool {
     true
 }
@@ -15,16 +17,16 @@ pub(crate) struct WorkStateFileConfig {
     pub github: Option<WorkStateGitHubFileConfig>,
 }
 
-/// The repository the team tracks its work in; Reili reads and writes only there. App credentials
-/// default to `[connector.github.app]`; tokens are always down-scoped to this repository and to
-/// `issues: write` + `metadata: read`.
+/// The repository the team tracks its work in; Reili reads and writes only there. `connection` names the
+/// `[connector.github.connection.<name>]` it authenticates with (optional only while a single
+/// connection is defined); tokens are always down-scoped to this repository and to `issues: write` +
+/// `metadata: read`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkStateGitHubFileConfig {
     pub repository: String,
-    pub app_id: Option<String>,
-    pub installation_id: Option<String>,
-    pub private_key_env: Option<String>,
+    #[serde(default, deserialize_with = "optional_non_empty_string")]
+    pub connection: Option<String>,
     pub api_base_url: Option<String>,
     pub web_base_url: Option<String>,
 }
