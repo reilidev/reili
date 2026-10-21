@@ -149,7 +149,7 @@ pub(crate) fn test_app_private_key() -> SecretString {
     static KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     SecretString::from(
         KEY.get_or_init(|| {
-            rsa::RsaPrivateKey::new(&mut rand::thread_rng(), 2048)
+            rsa::RsaPrivateKey::new(&mut rsa::rand_core::OsRng, 2048)
                 .expect("generate test RSA key")
                 .to_pkcs8_pem(LineEnding::LF)
                 .expect("encode test RSA key")
