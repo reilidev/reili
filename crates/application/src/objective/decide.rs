@@ -1,8 +1,6 @@
-use std::collections::BTreeSet;
-
 use reili_core::objective::ObjectiveDefinition;
 use reili_core::work::{
-    RecordKey, RecordRef, WorkItem, WorkItemProposal, WorkItemState, WorkItemStatus,
+    MAX_WORK_ITEMS_PER_CYCLE, RecordRef, WorkItem, WorkItemProposal, WorkItemState, WorkItemStatus,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,70 +51,80 @@ fn resolve_existing_record<'a>(
         .map_or(ExistingRecord::Unknown(record), ExistingRecord::Found)
 }
 
+/// Plans the report's first proposal, this cycle's one focus; the others wait for later cycles.
 #[must_use]
 pub fn plan_changes(input: &PlanChangesInput<'_>) -> Vec<PlannedChange> {
-    let mut changes = Vec::new();
-    let mut creates = Vec::new();
-    let mut claimed: BTreeSet<&RecordKey> = BTreeSet::new();
-    for proposal in input.proposals {
-        let skip = |reason: &str| PlannedChange::Skipped {
-            title: proposal.title.clone(),
-            reason: reason.to_string(),
-        };
-        let create = |follows_up: Option<RecordRef>| PlannedChange::Create {
-            proposal: proposal.clone(),
-            follows_up,
-        };
-        match resolve_existing_record(proposal, input.items) {
-            ExistingRecord::Unknown(record) => {
-                changes.push(skip(&format!("{record} is not an item of this objective")));
-            }
-            ExistingRecord::Found(item) if claimed.contains(&item.record.key) => {
-                changes.push(skip("another proposal in this report already covers it"));
-            }
-            ExistingRecord::Found(item) if item.is_reili_work() => {
-                claimed.insert(&item.record.key);
-                changes.push(PlannedChange::Update {
-                    item: Box::new(item.clone()),
-                    proposal: proposal.clone(),
-                });
-            }
-            ExistingRecord::Found(item) if item.state == WorkItemState::Open => {
-                changes.push(skip(&format!(
-                    "{} is not assigned to Reili; left to the team",
-                    item.record.key
-                )));
-            }
-            ExistingRecord::Found(item) if item.state == WorkItemState::NotPlanned => {
-                changes.push(skip(&format!(
-                    "the team closed {} as not planned",
-                    item.record.key
-                )));
-            }
-            ExistingRecord::Found(_) if proposal.status == WorkItemStatus::Resolved => {
-                changes.push(skip("already done"));
-            }
-            ExistingRecord::Found(item) => creates.push(create(Some(item.record.clone()))),
-            ExistingRecord::NotGiven if proposal.status == WorkItemStatus::Resolved => {
-                changes.push(skip("nothing open to resolve"));
-            }
-            ExistingRecord::NotGiven => creates.push(create(None)),
-        }
-    }
-
+    let (focus, rest) = input
+        .proposals
+        .split_at(input.proposals.len().min(MAX_WORK_ITEMS_PER_CYCLE));
     let limit =
         usize::try_from(input.objective.budget.max_new_work_items_per_cycle).unwrap_or(usize::MAX);
-    for (index, change) in creates.into_iter().enumerate() {
-        if index < limit {
+    let mut created = 0;
+    let mut changes = Vec::new();
+    for proposal in focus {
+        let change = plan_change(proposal, input.items);
+        if !matches!(change, PlannedChange::Create { .. }) {
             changes.push(change);
-        } else if let PlannedChange::Create { proposal, .. } = change {
-            changes.push(PlannedChange::Skipped {
-                title: proposal.title,
-                reason: format!("limit of {limit} new work item(s) per cycle reached"),
-            });
+        } else if created < limit {
+            created += 1;
+            changes.push(change);
+        } else {
+            changes.push(skipped(
+                proposal,
+                &format!("limit of {limit} new work item(s) per cycle reached"),
+            ));
         }
     }
+    changes.extend(rest.iter().map(|proposal| {
+        skipped(
+            proposal,
+            &format!("a cycle works on {MAX_WORK_ITEMS_PER_CYCLE} item(s); left for a later cycle"),
+        )
+    }));
     changes
+}
+
+fn plan_change(proposal: &WorkItemProposal, items: &[WorkItem]) -> PlannedChange {
+    let create = |follows_up: Option<RecordRef>| PlannedChange::Create {
+        proposal: proposal.clone(),
+        follows_up,
+    };
+    match resolve_existing_record(proposal, items) {
+        ExistingRecord::Unknown(record) => skipped(
+            proposal,
+            &format!("{record} is not an item of this objective"),
+        ),
+        ExistingRecord::Found(item) if item.is_reili_work() => PlannedChange::Update {
+            item: Box::new(item.clone()),
+            proposal: proposal.clone(),
+        },
+        ExistingRecord::Found(item) if item.state == WorkItemState::Open => skipped(
+            proposal,
+            &format!(
+                "{} is not assigned to Reili; left to the team",
+                item.record.key
+            ),
+        ),
+        ExistingRecord::Found(item) if item.state == WorkItemState::NotPlanned => skipped(
+            proposal,
+            &format!("the team closed {} as not planned", item.record.key),
+        ),
+        ExistingRecord::Found(_) if proposal.status == WorkItemStatus::Resolved => {
+            skipped(proposal, "already done")
+        }
+        ExistingRecord::Found(item) => create(Some(item.record.clone())),
+        ExistingRecord::NotGiven if proposal.status == WorkItemStatus::Resolved => {
+            skipped(proposal, "nothing open to resolve")
+        }
+        ExistingRecord::NotGiven => create(None),
+    }
+}
+
+fn skipped(proposal: &WorkItemProposal, reason: &str) -> PlannedChange {
+    PlannedChange::Skipped {
+        title: proposal.title.clone(),
+        reason: reason.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -185,75 +193,76 @@ mod tests {
             item(2, WorkItemState::NotPlanned, false),
         ];
 
+        for record in ["#1", "#2", "#9"] {
+            let changes = plan(
+                &items,
+                &[proposal_for(Some(record), WorkItemStatus::InProgress)],
+            );
+
+            assert!(
+                matches!(&changes[..], [PlannedChange::Skipped { .. }]),
+                "{record} is left alone"
+            );
+        }
+    }
+
+    #[test]
+    fn follows_up_on_done_items_with_a_new_one() {
+        let items = vec![item(1, WorkItemState::Done, false)];
+
+        let changes = plan(
+            &items,
+            &[proposal_for(Some("#1"), WorkItemStatus::InProgress)],
+        );
+
+        assert!(matches!(
+            &changes[..],
+            [PlannedChange::Create { follows_up: Some(record), .. }] if record.key.as_str() == "#1"
+        ));
+    }
+
+    #[test]
+    fn opens_no_new_items_when_the_objective_allows_none() {
+        let mut objective = sample_objective("checkout");
+        objective.budget.max_new_work_items_per_cycle = 0;
+
+        let changes = plan_changes(&PlanChangesInput {
+            objective: &objective,
+            items: &[],
+            proposals: &[proposal_for(None, WorkItemStatus::InProgress)],
+        });
+
+        assert!(matches!(
+            &changes[..],
+            [PlannedChange::Skipped { reason, .. }] if reason.contains("limit")
+        ));
+    }
+
+    #[test]
+    fn works_only_on_the_first_proposal() {
+        let items = vec![
+            item(1, WorkItemState::Open, true),
+            item(2, WorkItemState::Open, true),
+        ];
+
         let changes = plan(
             &items,
             &[
                 proposal_for(Some("#1"), WorkItemStatus::InProgress),
                 proposal_for(Some("#2"), WorkItemStatus::InProgress),
-                proposal_for(Some("#9"), WorkItemStatus::InProgress),
-            ],
-        );
-
-        assert_eq!(changes.len(), 3);
-        assert!(
-            changes
-                .iter()
-                .all(|change| matches!(change, PlannedChange::Skipped { .. }))
-        );
-    }
-
-    #[test]
-    fn follows_up_on_done_items_and_limits_new_ones_in_report_order() {
-        let items = vec![item(1, WorkItemState::Done, false)];
-        let mut objective = sample_objective("checkout");
-        objective.budget.max_new_work_items_per_cycle = 2;
-        let mut first = proposal_for(None, WorkItemStatus::InProgress);
-        first.title = "first".to_string();
-        let mut beyond_limit = proposal_for(None, WorkItemStatus::InProgress);
-        beyond_limit.title = "beyond limit".to_string();
-        let mut recurring = proposal_for(Some("#1"), WorkItemStatus::InProgress);
-        recurring.title = "recurring".to_string();
-
-        let changes = plan_changes(&PlanChangesInput {
-            objective: &objective,
-            items: &items,
-            proposals: &[first, recurring, beyond_limit],
-        });
-
-        let created: Vec<&str> = changes
-            .iter()
-            .filter_map(|change| match change {
-                PlannedChange::Create { proposal, .. } => Some(proposal.title.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(created, vec!["first", "recurring"]);
-        assert!(changes.iter().any(|change| matches!(
-            change,
-            PlannedChange::Create { follows_up: Some(record), .. } if record.key.as_str() == "#1"
-        )));
-        assert!(changes.iter().any(|change| matches!(
-            change,
-            PlannedChange::Skipped { reason, .. } if reason.contains("limit")
-        )));
-    }
-
-    #[test]
-    fn continues_an_item_once_when_two_proposals_name_it() {
-        let items = vec![item(1, WorkItemState::Open, true)];
-
-        let changes = plan(
-            &items,
-            &[
-                proposal_for(Some("#1"), WorkItemStatus::InProgress),
-                proposal_for(Some(" #1 "), WorkItemStatus::NeedsDecision),
+                proposal_for(None, WorkItemStatus::InProgress),
             ],
         );
 
         assert!(matches!(
             &changes[..],
-            [PlannedChange::Update { .. }, PlannedChange::Skipped { reason, .. }]
-                if reason.contains("already covers")
+            [
+                PlannedChange::Update { item, .. },
+                PlannedChange::Skipped { reason: second, .. },
+                PlannedChange::Skipped { reason: third, .. },
+            ] if item.record.key.as_str() == "#1"
+                && second.contains("later cycle")
+                && third.contains("later cycle")
         ));
     }
 

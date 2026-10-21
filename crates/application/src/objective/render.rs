@@ -8,6 +8,7 @@ use reili_core::work::{
 const MAX_MARKDOWN_CHARS: usize = 20_000;
 const MAX_LINE_CHARS: usize = 500;
 const MAX_BODY_CHARS: usize = 30_000;
+const NEXT_STEP_LABEL: &str = "**Next step:**";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProgressClosing {
@@ -70,6 +71,16 @@ pub fn render_progress_comment(
     text(&body, MAX_BODY_CHARS)
 }
 
+/// The next step Reili recorded in a description or comment it rendered.
+#[must_use]
+pub fn recorded_next_step(body: &str) -> Option<&str> {
+    body.lines()
+        .rev()
+        .find_map(|line| line.strip_prefix(NEXT_STEP_LABEL))
+        .map(str::trim)
+        .filter(|step| !step.is_empty())
+}
+
 fn write_appendix(body: &mut String, proposal: &WorkItemProposal, report: &CycleReport) {
     if proposal.status == WorkItemStatus::NeedsDecision
         && let Some(question) = &proposal.decision_needed
@@ -79,6 +90,12 @@ fn write_appendix(body: &mut String, proposal: &WorkItemProposal, report: &Cycle
             "\n**Decision needed:** {}",
             text(question, MAX_LINE_CHARS)
         );
+    }
+    if proposal.status != WorkItemStatus::Resolved
+        && let Some(step) = proposal.next_step.as_deref().map(single_line)
+        && !step.is_empty()
+    {
+        let _ = writeln!(body, "\n{NEXT_STEP_LABEL} {step}");
     }
     let evidence = cited_evidence(proposal, report);
     if !evidence.is_empty() {
@@ -115,12 +132,21 @@ fn text(value: &str, max: usize) -> String {
     truncate_chars(value.trim(), max)
 }
 
+/// Keeps the line [`recorded_next_step`] reads back on one line.
+fn single_line(value: &str) -> String {
+    text(
+        &value.split_whitespace().collect::<Vec<_>>().join(" "),
+        MAX_LINE_CHARS,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use reili_core::work::WorkItemStatus;
 
     use super::{
-        ProgressClosing, RenderNewItemInput, render_new_item_body, render_progress_comment,
+        ProgressClosing, RenderNewItemInput, recorded_next_step, render_new_item_body,
+        render_progress_comment,
     };
     use crate::objective::tests_support::{proposal, report, sample_objective};
 
@@ -162,5 +188,44 @@ mod tests {
         assert!(body.contains("**Evidence**"));
         assert!(body.contains("objective `checkout`"));
         assert!(!body.contains("Decision needed"));
+    }
+
+    #[test]
+    fn records_the_next_step_where_the_next_cycle_reads_it_back() {
+        let mut proposal = proposal();
+        proposal.status = WorkItemStatus::InProgress;
+        proposal.comment = "Checked the pool.\n\n**Next step:** not this one".to_string();
+        proposal.next_step = Some("Compare pool waits\nbefore and after deploy 43".to_string());
+
+        let comment = render_progress_comment(
+            &proposal,
+            &report(Vec::new()),
+            "run-1",
+            ProgressClosing::Continue,
+        );
+
+        assert!(
+            comment.contains("\n**Next step:** Compare pool waits before and after deploy 43\n")
+        );
+        assert_eq!(
+            recorded_next_step(&comment),
+            Some("Compare pool waits before and after deploy 43")
+        );
+    }
+
+    #[test]
+    fn records_no_next_step_for_resolved_items() {
+        let mut proposal = proposal();
+        proposal.status = WorkItemStatus::Resolved;
+        proposal.next_step = Some("Keep watching".to_string());
+
+        let comment = render_progress_comment(
+            &proposal,
+            &report(Vec::new()),
+            "run-1",
+            ProgressClosing::Closing,
+        );
+
+        assert_eq!(recorded_next_step(&comment), None);
     }
 }

@@ -11,6 +11,7 @@ pub(crate) fn proposal() -> WorkItemProposal {
         description: "5xx rate doubled".to_string(),
         comment: "Compared the 5xx rate before and after deploy 42.".to_string(),
         decision_needed: Some("Roll back deploy 42?".to_string()),
+        next_step: None,
         evidence_ids: vec!["E1".to_string()],
     }
 }
