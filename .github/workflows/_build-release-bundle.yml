@@ -68,7 +68,7 @@ jobs:
           tar -C dist -czf "dist/${package_name}.tar.gz" "${package_name}"
           sha256sum "dist/${package_name}.tar.gz" > "dist/${package_name}.sha256"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-bundle-${{ inputs.arch }}
           path: |
