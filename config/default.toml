@@ -287,4 +287,5 @@ private_key_env = "GITHUB_APP_PRIVATE_KEY"
 #max_cycle_minutes = 30
 #max_llm_tokens_per_cycle = 2000000
 #max_tool_calls_per_cycle = 200
-#max_new_work_items_per_cycle = 3
+# A cycle works on one item; 0 keeps Reili on its existing items instead of opening new ones.
+#max_new_work_items_per_cycle = 1

@@ -62,7 +62,7 @@ impl Default for ObjectiveBudget {
             max_cycle_duration_secs: 30 * 60,
             max_llm_tokens_per_cycle: 2_000_000,
             max_tool_calls_per_cycle: 200,
-            max_new_work_items_per_cycle: 3,
+            max_new_work_items_per_cycle: 1,
         }
     }
 }

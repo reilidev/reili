@@ -436,12 +436,15 @@ enabled = true
 Reili works on the team's issues like a teammate. The team hands it work by adding the
 `reili:assignee` label and takes it back by removing it. Items for an objective carry the
 `reili-objective:<id>` label; an assigned item without one goes to the default objective (the only
-enabled one, or the one with `default = true`), which adds its label. Each cycle reads the discussion on its
-items, does the read-only work that moves the objective forward (investigating, reviewing changes,
-following up) with dynamically composed sub-agents, writes progress as comments, opens new items for
-new work, adds `reili:needs-decision` when it needs the team, posts its own message to Slack when
-the team should know something, and saves reusable facts to the Canvas memory. There is no state of its own: the
-issues are the record.
+enabled one, or the one with `default = true`), which adds its label. Each cycle moves one item
+forward from where the last cycle left it. It reads the discussion on its items and picks one: an
+item the team replied on first, then an item whose recorded next step it can take, and only when
+none of its items can move, one new piece of work. It does that read-only work (investigating,
+reviewing changes, following up) with dynamically composed sub-agents, writes progress as a comment
+that ends with the next step, opens a new item for new work, adds `reili:needs-decision` when it
+needs the team (including when only the team's fix of its recommendations remains), posts its own
+message to Slack when the team should know something, and saves reusable facts to the Canvas memory.
+There is no state of its own: the issues, with the next step in Reili's latest comment, are the record.
 Replies from repository owners, members, and collaborators steer the next scheduled cycle. Reili
 highlights the latest team reply separately from progress history, carries decisions forward, and
 removes `reili:needs-decision` when it resumes work; the team does not need to remove it manually.

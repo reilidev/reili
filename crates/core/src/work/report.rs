@@ -3,6 +3,10 @@ use serde::Deserialize;
 use super::evidence::EvidenceRef;
 use super::item::WorkItemStatus;
 
+/// A cycle works on one item, so each cycle builds on the record of the last instead of
+/// re-surveying everything.
+pub const MAX_WORK_ITEMS_PER_CYCLE: usize = 1;
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct WorkItemProposal {
     /// Name for the item within this report; `[[key]]` in the Slack message links to it.
@@ -21,6 +25,10 @@ pub struct WorkItemProposal {
     /// The concrete question for the team when `status` is `needs_decision`.
     #[serde(default)]
     pub decision_needed: Option<String>,
+    /// The one action the next cycle on this item takes; recorded on the item so the next cycle
+    /// starts from it.
+    #[serde(default)]
+    pub next_step: Option<String>,
     /// Evidence the text relies on; linked at the end of the description or comment.
     #[serde(default)]
     pub evidence_ids: Vec<String>,

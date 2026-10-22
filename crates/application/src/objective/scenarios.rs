@@ -103,6 +103,7 @@ fn proposal(key: &str, status: WorkItemStatus) -> WorkItemProposal {
         description: "5xx rate doubled after the 09:12 deploy".to_string(),
         comment: "Compared error rates before and after deploy 42.".to_string(),
         decision_needed: Some("Approve raising the pool size?".to_string()),
+        next_step: Some("Compare pool waits before and after deploy 42".to_string()),
         evidence_ids: vec!["E1".to_string()],
     }
 }
@@ -226,6 +227,10 @@ async fn scenario_b_progress_goes_to_comments_and_team_answers_reach_the_agent()
 
     let brief = harness.agent.last_brief();
     assert!(
+        brief.contains("- #1: checkout-api 5xx regression after deploys | waiting for a team decision | 1 NEW team comment(s) |"),
+        "the work queue shows the team answered"
+    );
+    assert!(
         brief.contains("NEW @bob"),
         "the team's answer is marked new"
     );
@@ -247,6 +252,48 @@ async fn scenario_b_progress_goes_to_comments_and_team_answers_reach_the_agent()
         "nothing is posted when Reili leaves the Slack message out"
     );
     assert_eq!(harness.tracker.items().len(), 1, "no duplicate item");
+}
+
+#[tokio::test]
+async fn scenario_b_each_cycle_works_one_item_from_the_step_the_last_one_recorded() {
+    let harness = Harness::new();
+    let scheduler = harness.process(vec![sample_objective("checkout")]);
+    push(
+        &harness,
+        vec![
+            proposal("checkout:5xx-after-deploy", WorkItemStatus::InProgress),
+            proposal("checkout:latency", WorkItemStatus::InProgress),
+        ],
+    );
+    harness.next_slot(&scheduler).await;
+    assert_eq!(harness.tracker.items().len(), 1, "one item per cycle");
+
+    let mut continued = follow_up(
+        "#1",
+        WorkItemStatus::InProgress,
+        "Pool waits doubled after deploy 42.",
+    );
+    continued.next_step = Some("Read the pool config change in deploy 42".to_string());
+    push(&harness, vec![continued]);
+    harness.next_slot(&scheduler).await;
+    harness.next_slot(&scheduler).await;
+
+    let briefs = harness.agent.briefs.lock().expect("lock").clone();
+    assert!(
+        briefs[1].contains("| next step: Compare pool waits before and after deploy 42"),
+        "the second cycle starts from the step the first recorded"
+    );
+    assert!(briefs[2].contains("| next step: Read the pool config change in deploy 42"));
+    assert!(
+        harness
+            .tracker
+            .item(1)
+            .comments
+            .last()
+            .expect("progress comment")
+            .body
+            .contains("**Next step:** Read the pool config change in deploy 42")
+    );
 }
 
 // C. The team hands work to Reili --------------------------------------------------------------------
@@ -372,25 +419,23 @@ async fn scenario_c_reili_closes_its_own_items_when_done() {
 async fn scenario_d_items_taken_away_or_rejected_are_left_alone() {
     let harness = Harness::new();
     let scheduler = harness.process(vec![sample_objective("checkout")]);
-    push(
-        &harness,
-        vec![
-            proposal("checkout:5xx-after-deploy", WorkItemStatus::InProgress),
-            proposal("checkout:latency", WorkItemStatus::InProgress),
-        ],
-    );
-    harness.next_slot(&scheduler).await;
+    for key in ["checkout:5xx-after-deploy", "checkout:latency"] {
+        push(&harness, vec![proposal(key, WorkItemStatus::InProgress)]);
+        harness.next_slot(&scheduler).await;
+    }
     harness.tracker.human_assign(1, false);
     harness.tracker.human_close(2, WorkItemState::NotPlanned);
-    push(
-        &harness,
-        vec![
-            follow_up("#1", WorkItemStatus::InProgress, "Still looking."),
-            follow_up("#2", WorkItemStatus::InProgress, "Still looking."),
-        ],
-    );
-
-    harness.next_slot(&scheduler).await;
+    for record in ["#1", "#2"] {
+        push(
+            &harness,
+            vec![follow_up(
+                record,
+                WorkItemStatus::InProgress,
+                "Still looking.",
+            )],
+        );
+        harness.next_slot(&scheduler).await;
+    }
 
     let brief = harness.agent.last_brief();
     assert!(brief.contains("assigned away from you"));

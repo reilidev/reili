@@ -2,11 +2,9 @@ use std::collections::BTreeSet;
 
 use reili_core::cycle_agent::{ReportSlot, SUBMIT_CYCLE_REPORT_TOOL_NAME};
 use reili_core::error::PortError;
-use reili_core::work::{CycleReport, WorkItemStatus};
+use reili_core::work::{CycleReport, MAX_WORK_ITEMS_PER_CYCLE, WorkItemStatus};
 use rig::tool::{Tool, ToolContext};
 use serde_json::{Value, json};
-
-const MAX_WORK_ITEMS: usize = 10;
 
 #[derive(Clone)]
 pub struct SubmitCycleReportTool {
@@ -21,8 +19,10 @@ impl SubmitCycleReportTool {
 
     fn validate(&self, report: &CycleReport) -> Vec<String> {
         let mut problems = Vec::new();
-        if report.work_items.len() > MAX_WORK_ITEMS {
-            problems.push(format!("at most {MAX_WORK_ITEMS} work items per report"));
+        if report.work_items.len() > MAX_WORK_ITEMS_PER_CYCLE {
+            problems.push(format!(
+                "a cycle works on {MAX_WORK_ITEMS_PER_CYCLE} item(s): report only this cycle's focus"
+            ));
         }
         if report.no_new_findings && !report.work_items.is_empty() {
             problems.push(
@@ -70,6 +70,17 @@ impl SubmitCycleReportTool {
                     item.key
                 ));
             }
+            if item.status == WorkItemStatus::InProgress
+                && item
+                    .next_step
+                    .as_deref()
+                    .is_none_or(|step| step.trim().is_empty())
+            {
+                problems.push(format!(
+                    "work item `{}` is `in_progress` and needs the next cycle's one action in `next_step`",
+                    item.key
+                ));
+            }
             if item.status == WorkItemStatus::NeedsDecision
                 && item
                     .decision_needed
@@ -102,7 +113,7 @@ impl Tool for SubmitCycleReportTool {
     type Output = String;
 
     fn description(&self) -> String {
-        "Submit the final structured report for this objective cycle. Call exactly once, at the end. Reili validates it and writes it to the team's tracker: a progress comment on each of your items you worked on, and a new item (assigned to you) for new work. Cited evidence ids must exist in `evidence`.".to_string()
+        "Submit the final structured report for this objective cycle. Call exactly once, at the end. Reili validates it and writes the one item this cycle focused on to the team's tracker: a progress comment when it continues an existing item, or a new item (assigned to you) for new work. Cited evidence ids must exist in `evidence`.".to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -116,7 +127,11 @@ impl Tool for SubmitCycleReportTool {
                     "description": "References only (URL, query, window); never raw logs or secrets.",
                     "items": evidence_schema()
                 },
-                "work_items": { "type": "array", "items": work_item_schema() },
+                "work_items": {
+                    "type": "array",
+                    "description": "At most one: the item this cycle focused on.",
+                    "items": work_item_schema()
+                },
                 "knowledge_candidates": {
                     "type": "array",
                     "description": "Durable, reusable facts confirmed from primary sources (code, config, runbooks). Never hypotheses or time-bounded observations.",
@@ -176,6 +191,7 @@ fn work_item_schema() -> Value {
             "description": { "type": "string", "description": "For new work: the item's description in GitHub Markdown, written in the shape the work calls for. Required for new work." },
             "comment": { "type": "string", "description": "When continuing an existing item: your progress comment in GitHub Markdown, written in the shape the work calls for. Required when continuing an existing item." },
             "decision_needed": { "type": "string", "description": "The concrete question for the team when status is needs_decision. Reili appends it to the text." },
+            "next_step": { "type": "string", "description": "One line: the one concrete action the next cycle on this item takes. Required for in_progress. Reili appends it to the text and shows it in the next cycle's work queue." },
             "evidence_ids": { "type": "array", "items": { "type": "string" }, "description": "Evidence the text relies on. Reili links each one at the end of the text." }
         },
         "required": ["key", "title", "status"]
@@ -209,6 +225,7 @@ mod tests {
             "title": "errors",
             "status": "in_progress",
             "description": "p",
+            "next_step": "Compare the error rate after deploy 43",
             "evidence_ids": [evidence]
         })
     }
@@ -291,6 +308,26 @@ mod tests {
                 .message
                 .contains("is `needs_decision` and needs")
         );
+        assert!(
+            status_errors
+                .message
+                .contains("report only this cycle's focus")
+        );
+
+        let mut planless = item("E9");
+        planless["next_step"] = json!("  ");
+        let missing_next_step = tool
+            .call(
+                &mut ToolContext::new(),
+                json!({
+                    "no_new_findings": false,
+                    "evidence": [{ "id": "E9", "description": "d" }],
+                    "work_items": [planless]
+                }),
+            )
+            .await
+            .expect_err("rejected");
+        assert!(missing_next_step.message.contains("`next_step`"));
 
         let schema_error = tool
             .call(&mut ToolContext::new(), json!({ "slack_message": 3 }))
